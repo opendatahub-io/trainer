@@ -22,4 +22,4 @@ spec:
                 spec:
                   containers:
                     - name: node
-                      image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+                      image: quay.io/modh/training:py311-rocm62-torch251
