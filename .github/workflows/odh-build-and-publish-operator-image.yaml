@@ -136,7 +136,7 @@ jobs:
           if: (github.ref == 'refs/heads/dev' || (startsWith(github.ref, 'refs/heads/v') && endsWith(github.ref, '-branch')) || startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
           shell: bash
           run: |
-              podman login --username ${{ secrets.QUAY_USERNAME }} --password ${{ secrets.QUAY_TOKEN }} quay.io
+              podman login --username ${{ 'rh-ee-knema' }} --password ${{ secrets.MY_QUAY_KEY }} quay.io
 
         - name: Push to Quay.io
           if:  always() && steps.podman-login-quay.outcome == 'success'
