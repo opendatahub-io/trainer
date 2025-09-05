@@ -1,0 +1,12 @@
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+ARG TARGETARCH
+WORKDIR /
+
+# Copy pre-built binary for the target architecture
+COPY ./manager-${TARGETARCH} ./manager
+
+# Install required utilities
+RUN microdnf update -y && microdnf install -y bind-utils && microdnf clean all
+
+USER 65532:65532
+ENTRYPOINT ["/manager"]

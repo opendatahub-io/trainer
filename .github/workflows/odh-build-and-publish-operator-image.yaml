@@ -64,7 +64,27 @@ jobs:
           run: |
             go mod download
 
-        # Note: Dockerfile.rhoai builds the binary inside the container, so no pre-build needed
+        # Build operators inside the gh runner vm directly and then copy the go binaries to docker images using the Dockerfile.rhoai.multiarch
+        - name: Build linux/amd64 operator binary
+          env:
+            CGO_ENABLED: 1
+            GOOS: linux
+            GOARCH: amd64
+          shell: bash
+          run: |
+            go build -tags strictfipsruntime -a -o manager-$GOARCH cmd/trainer-controller-manager/main.go
+
+        - name: Build linux/arm64 operator binary
+          env:
+            CC: aarch64-linux-gnu-gcc
+            CGO_ENABLED: 1
+            GOOS: linux
+            GOARCH: arm64
+          shell: bash
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+            go build -tags strictfipsruntime -a -o manager-$GOARCH cmd/trainer-controller-manager/main.go
 
         - name: Add docker tags
           id: meta
@@ -87,7 +107,7 @@ jobs:
             labels: ${{ steps.meta.outputs.labels }}
             platforms: linux/amd64,linux/arm64
             containerfiles: |
-              cmd/trainer-controller-manager/Dockerfile.rhoai
+              cmd/trainer-controller-manager/Dockerfile.rhoai.multiarch
             extra-args: |
               --pull
 
