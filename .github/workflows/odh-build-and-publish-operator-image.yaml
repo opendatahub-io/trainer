@@ -107,7 +107,7 @@ jobs:
             labels: ${{ steps.meta.outputs.labels }}
             platforms: linux/amd64,linux/arm64
             containerfiles: |
-              cmd/trainer-controller-manager/Dockerfile.rhoai.multiarch
+              cmd/trainer-controller-manager/Dockerfile.multiarch
             extra-args: |
               --pull
 
