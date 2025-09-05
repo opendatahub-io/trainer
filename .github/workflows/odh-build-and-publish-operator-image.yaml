@@ -1,5 +1,5 @@
 # This is a copy of the publish-core-images.yaml and has been customized to
-# use the quay login credentials.
+# use the quay login credentials and RHOAI Dockerfile.
 # The unused parts of the original have been commented out on purpose.
 name: ODH
 
@@ -107,7 +107,7 @@ jobs:
             labels: ${{ steps.meta.outputs.labels }}
             platforms: linux/amd64,linux/arm64
             containerfiles: |
-              cmd/trainer-controller-manager/Dockerfile
+              cmd/trainer-controller-manager/Dockerfile.rhoai
             extra-args: |
               --pull
 
