@@ -30,6 +30,11 @@ import (
 
 func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenAPIDefinition {
 	return map[string]common.OpenAPIDefinition{
+		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointInfo":                   schema_pkg_apis_trainer_v1alpha1_CheckpointInfo(ref),
+		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointPersistentVolumeConfig": schema_pkg_apis_trainer_v1alpha1_CheckpointPersistentVolumeConfig(ref),
+		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointStorage":                schema_pkg_apis_trainer_v1alpha1_CheckpointStorage(ref),
+		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointingConfig":              schema_pkg_apis_trainer_v1alpha1_CheckpointingConfig(ref),
+		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointingStatus":              schema_pkg_apis_trainer_v1alpha1_CheckpointingStatus(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.ClusterTrainingRuntime":           schema_pkg_apis_trainer_v1alpha1_ClusterTrainingRuntime(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.ClusterTrainingRuntimeList":       schema_pkg_apis_trainer_v1alpha1_ClusterTrainingRuntimeList(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.ContainerOverride":                schema_pkg_apis_trainer_v1alpha1_ContainerOverride(ref),
@@ -54,6 +59,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainJobSpec":                     schema_pkg_apis_trainer_v1alpha1_TrainJobSpec(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainJobStatus":                   schema_pkg_apis_trainer_v1alpha1_TrainJobStatus(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Trainer":                          schema_pkg_apis_trainer_v1alpha1_Trainer(ref),
+		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainingProgress":                 schema_pkg_apis_trainer_v1alpha1_TrainingProgress(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainingRuntime":                  schema_pkg_apis_trainer_v1alpha1_TrainingRuntime(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainingRuntimeList":              schema_pkg_apis_trainer_v1alpha1_TrainingRuntimeList(ref),
 		"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainingRuntimeSpec":              schema_pkg_apis_trainer_v1alpha1_TrainingRuntimeSpec(ref),
@@ -395,6 +401,302 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		"sigs.k8s.io/jobset/api/jobset/v1alpha2.ReplicatedJobStatus":                                schema_jobset_api_jobset_v1alpha2_ReplicatedJobStatus(ref),
 		"sigs.k8s.io/jobset/api/jobset/v1alpha2.StartupPolicy":                                      schema_jobset_api_jobset_v1alpha2_StartupPolicy(ref),
 		"sigs.k8s.io/jobset/api/jobset/v1alpha2.SuccessPolicy":                                      schema_jobset_api_jobset_v1alpha2_SuccessPolicy(ref),
+	}
+}
+
+func schema_pkg_apis_trainer_v1alpha1_CheckpointInfo(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CheckpointInfo represents information about a specific checkpoint.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"path": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Path or URI of the checkpoint.",
+							Default:     "",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"createdAt": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Timestamp when the checkpoint was created.",
+							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.Time"),
+						},
+					},
+					"size": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Size of the checkpoint (in bytes).",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"epoch": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Epoch number when the checkpoint was created.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"step": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Step number when the checkpoint was created.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"metrics": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Training metrics at the time of checkpoint creation.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: "",
+										Type:    []string{"string"},
+										Format:  "",
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"path", "createdAt"},
+			},
+		},
+		Dependencies: []string{
+			"k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
+	}
+}
+
+func schema_pkg_apis_trainer_v1alpha1_CheckpointPersistentVolumeConfig(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CheckpointPersistentVolumeConfig represents PersistentVolume configuration for checkpoints.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"claimName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Name of an existing PVC to use for checkpoint storage. The PVC must exist in the same namespace as the TrainJob.",
+							Default:     "",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"mountPath": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Mount path where the PV should be mounted in the training containers.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"subPath": {
+						SchemaProps: spec.SchemaProps{
+							Description: "SubPath within the PV to use for this TrainJob's checkpoints. Useful for sharing a single PV across multiple TrainJobs.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"claimName"},
+			},
+		},
+	}
+}
+
+func schema_pkg_apis_trainer_v1alpha1_CheckpointStorage(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CheckpointStorage represents storage configuration for checkpoints.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"uri": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Storage URI where checkpoints will be saved (e.g., \"s3://bucket/path\", \"gs://bucket/path\", \"/mnt/shared\"). For PersistentVolume storage, use a local path like \"/checkpoints\" or \"/shared/checkpoints\".",
+							Default:     "",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"secretRef": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Reference to the secret containing credentials for accessing the storage. Secret must be created in the TrainJob's namespace. Not required for PersistentVolume storage.",
+							Ref:         ref("k8s.io/api/core/v1.LocalObjectReference"),
+						},
+					},
+					"accessMode": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Access mode for the storage.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"persistentVolume": {
+						SchemaProps: spec.SchemaProps{
+							Description: "PersistentVolume configuration for checkpoint storage. References an existing PVC that must be created by the platform administrator.",
+							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointPersistentVolumeConfig"),
+						},
+					},
+				},
+				Required: []string{"uri"},
+			},
+		},
+		Dependencies: []string{
+			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointPersistentVolumeConfig", "k8s.io/api/core/v1.LocalObjectReference"},
+	}
+}
+
+func schema_pkg_apis_trainer_v1alpha1_CheckpointingConfig(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CheckpointingConfig represents the configuration for model checkpointing during training.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"enabled": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Whether to enable checkpointing for this TrainJob. Defaults to false.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"storage": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Storage configuration for saving checkpoints.",
+							Default:     map[string]interface{}{},
+							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointStorage"),
+						},
+					},
+					"interval": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Interval for saving checkpoints (e.g., \"5m\", \"100s\", \"1h\"). If not specified, checkpoints will be saved based on training framework defaults.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"maxCheckpoints": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Maximum number of checkpoints to retain. Older checkpoints will be automatically deleted. Defaults to 3.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"resumeFromCheckpoint": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Whether to resume training from the latest checkpoint if available. Defaults to true.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"env": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-map-keys": []interface{}{
+									"name",
+								},
+								"x-kubernetes-list-type": "map",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "Custom environment variables to pass checkpointing configuration to the training container. These will be automatically generated based on the checkpointing config, but can be overridden.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: map[string]interface{}{},
+										Ref:     ref("k8s.io/api/core/v1.EnvVar"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointStorage", "k8s.io/api/core/v1.EnvVar"},
+	}
+}
+
+func schema_pkg_apis_trainer_v1alpha1_CheckpointingStatus(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CheckpointingStatus represents the current status of checkpointing.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"enabled": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Whether checkpointing is currently enabled.",
+							Default:     false,
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"latestCheckpoint": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Path or URI of the latest checkpoint.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"latestCheckpointTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Timestamp when the latest checkpoint was created.",
+							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.Time"),
+						},
+					},
+					"checkpointsCreated": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Total number of checkpoints created.",
+							Default:     0,
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"latestCheckpointSize": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Size of the latest checkpoint (in bytes).",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"availableCheckpoints": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-type": "atomic",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "List of available checkpoints.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: map[string]interface{}{},
+										Ref:     ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointInfo"),
+									},
+								},
+							},
+						},
+					},
+					"error": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Any error encountered during checkpointing.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"enabled", "checkpointsCreated"},
+			},
+		},
+		Dependencies: []string{
+			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointInfo", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
 	}
 }
 
@@ -1437,12 +1739,18 @@ func schema_pkg_apis_trainer_v1alpha1_TrainJobSpec(ref common.ReferenceCallback)
 							Format:      "",
 						},
 					},
+					"checkpointing": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Configuration for model checkpointing during training.",
+							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointingConfig"),
+						},
+					},
 				},
 				Required: []string{"runtimeRef"},
 			},
 		},
 		Dependencies: []string{
-			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Initializer", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.PodSpecOverride", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.RuntimeRef", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Trainer"},
+			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointingConfig", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Initializer", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.PodSpecOverride", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.RuntimeRef", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Trainer"},
 	}
 }
 
@@ -1499,11 +1807,17 @@ func schema_pkg_apis_trainer_v1alpha1_TrainJobStatus(ref common.ReferenceCallbac
 							},
 						},
 					},
+					"trainingProgress": {
+						SchemaProps: spec.SchemaProps{
+							Description: "TrainingProgress tracks the progress of the training job.",
+							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainingProgress"),
+						},
+					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.JobStatus", "k8s.io/apimachinery/pkg/apis/meta/v1.Condition"},
+			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.JobStatus", "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.TrainingProgress", "k8s.io/apimachinery/pkg/apis/meta/v1.Condition"},
 	}
 }
 
@@ -1607,6 +1921,110 @@ func schema_pkg_apis_trainer_v1alpha1_Trainer(ref common.ReferenceCallback) comm
 		},
 		Dependencies: []string{
 			"k8s.io/api/core/v1.EnvVar", "k8s.io/api/core/v1.ResourceRequirements", "k8s.io/apimachinery/pkg/util/intstr.IntOrString"},
+	}
+}
+
+func schema_pkg_apis_trainer_v1alpha1_TrainingProgress(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "TrainingProgress represents the current progress of the training job.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"epoch": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Current epoch number (if applicable).",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"totalEpochs": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Total number of epochs (if known).",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"step": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Current step/iteration number.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"totalSteps": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Total number of steps (if known).",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"loss": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Training loss value (if available).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"accuracy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Training accuracy (if available).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"validationLoss": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Validation loss (if available).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"validationAccuracy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Validation accuracy (if available).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"learningRate": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Learning rate (if available).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"percentComplete": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Percentage of training completion (0-100).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"estimatedTimeRemaining": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Estimated time remaining for training completion.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"lastUpdateTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Last time the progress was updated.",
+							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.Time"),
+						},
+					},
+					"checkpointing": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Checkpointing status and information.",
+							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointingStatus"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.CheckpointingStatus", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
 	}
 }
 

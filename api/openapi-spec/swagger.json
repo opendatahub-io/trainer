@@ -13084,6 +13084,211 @@
           }
         }
       },
+      "trainer.v1alpha1.CheckpointInfo": {
+        "description": "CheckpointInfo represents information about a specific checkpoint.",
+        "type": "object",
+        "required": [
+          "path",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "description": "Timestamp when the checkpoint was created.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.Time"
+              }
+            ]
+          },
+          "epoch": {
+            "description": "Epoch number when the checkpoint was created.",
+            "type": "integer",
+            "format": "int32"
+          },
+          "metrics": {
+            "description": "Training metrics at the time of checkpoint creation.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "path": {
+            "description": "Path or URI of the checkpoint.",
+            "type": "string",
+            "default": ""
+          },
+          "size": {
+            "description": "Size of the checkpoint (in bytes).",
+            "type": "integer",
+            "format": "int64"
+          },
+          "step": {
+            "description": "Step number when the checkpoint was created.",
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "trainer.v1alpha1.CheckpointPersistentVolumeConfig": {
+        "description": "CheckpointPersistentVolumeConfig represents PersistentVolume configuration for checkpoints.",
+        "type": "object",
+        "required": [
+          "claimName"
+        ],
+        "properties": {
+          "claimName": {
+            "description": "Name of an existing PVC to use for checkpoint storage. The PVC must exist in the same namespace as the TrainJob.",
+            "type": "string",
+            "default": ""
+          },
+          "mountPath": {
+            "description": "Mount path where the PV should be mounted in the training containers.",
+            "type": "string"
+          },
+          "subPath": {
+            "description": "SubPath within the PV to use for this TrainJob's checkpoints. Useful for sharing a single PV across multiple TrainJobs.",
+            "type": "string"
+          }
+        }
+      },
+      "trainer.v1alpha1.CheckpointStorage": {
+        "description": "CheckpointStorage represents storage configuration for checkpoints.",
+        "type": "object",
+        "required": [
+          "uri"
+        ],
+        "properties": {
+          "accessMode": {
+            "description": "Access mode for the storage.",
+            "type": "string"
+          },
+          "persistentVolume": {
+            "description": "PersistentVolume configuration for checkpoint storage. References an existing PVC that must be created by the platform administrator.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/trainer.v1alpha1.CheckpointPersistentVolumeConfig"
+              }
+            ]
+          },
+          "secretRef": {
+            "description": "Reference to the secret containing credentials for accessing the storage. Secret must be created in the TrainJob's namespace. Not required for PersistentVolume storage.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/io.k8s.api.core.v1.LocalObjectReference"
+              }
+            ]
+          },
+          "uri": {
+            "description": "Storage URI where checkpoints will be saved (e.g., \"s3://bucket/path\", \"gs://bucket/path\", \"/mnt/shared\"). For PersistentVolume storage, use a local path like \"/checkpoints\" or \"/shared/checkpoints\".",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "trainer.v1alpha1.CheckpointingConfig": {
+        "description": "CheckpointingConfig represents the configuration for model checkpointing during training.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Whether to enable checkpointing for this TrainJob. Defaults to false.",
+            "type": "boolean"
+          },
+          "env": {
+            "description": "Custom environment variables to pass checkpointing configuration to the training container. These will be automatically generated based on the checkpointing config, but can be overridden.",
+            "type": "array",
+            "items": {
+              "default": {},
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/io.k8s.api.core.v1.EnvVar"
+                }
+              ]
+            },
+            "x-kubernetes-list-map-keys": [
+              "name"
+            ],
+            "x-kubernetes-list-type": "map"
+          },
+          "interval": {
+            "description": "Interval for saving checkpoints (e.g., \"5m\", \"100s\", \"1h\"). If not specified, checkpoints will be saved based on training framework defaults.",
+            "type": "string"
+          },
+          "maxCheckpoints": {
+            "description": "Maximum number of checkpoints to retain. Older checkpoints will be automatically deleted. Defaults to 3.",
+            "type": "integer",
+            "format": "int32"
+          },
+          "resumeFromCheckpoint": {
+            "description": "Whether to resume training from the latest checkpoint if available. Defaults to true.",
+            "type": "boolean"
+          },
+          "storage": {
+            "description": "Storage configuration for saving checkpoints.",
+            "default": {},
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/trainer.v1alpha1.CheckpointStorage"
+              }
+            ]
+          }
+        }
+      },
+      "trainer.v1alpha1.CheckpointingStatus": {
+        "description": "CheckpointingStatus represents the current status of checkpointing.",
+        "type": "object",
+        "required": [
+          "enabled",
+          "checkpointsCreated"
+        ],
+        "properties": {
+          "availableCheckpoints": {
+            "description": "List of available checkpoints.",
+            "type": "array",
+            "items": {
+              "default": {},
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/trainer.v1alpha1.CheckpointInfo"
+                }
+              ]
+            },
+            "x-kubernetes-list-type": "atomic"
+          },
+          "checkpointsCreated": {
+            "description": "Total number of checkpoints created.",
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          },
+          "enabled": {
+            "description": "Whether checkpointing is currently enabled.",
+            "type": "boolean",
+            "default": false
+          },
+          "error": {
+            "description": "Any error encountered during checkpointing.",
+            "type": "string"
+          },
+          "latestCheckpoint": {
+            "description": "Path or URI of the latest checkpoint.",
+            "type": "string"
+          },
+          "latestCheckpointSize": {
+            "description": "Size of the latest checkpoint (in bytes).",
+            "type": "integer",
+            "format": "int64"
+          },
+          "latestCheckpointTime": {
+            "description": "Timestamp when the latest checkpoint was created.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.Time"
+              }
+            ]
+          }
+        }
+      },
       "trainer.v1alpha1.ClusterTrainingRuntime": {
         "description": "ClusterTrainingRuntime represents a training runtime which can be referenced as part of `runtimeRef` API in TrainJob. This resource is a cluster-scoped and can be referenced by TrainJob that created in *any* namespace.",
         "type": "object",
@@ -13769,6 +13974,14 @@
               "default": ""
             }
           },
+          "checkpointing": {
+            "description": "Configuration for model checkpointing during training.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/trainer.v1alpha1.CheckpointingConfig"
+              }
+            ]
+          },
           "initializer": {
             "description": "Configuration of the initializer.",
             "allOf": [
@@ -13862,6 +14075,14 @@
               "name"
             ],
             "x-kubernetes-list-type": "map"
+          },
+          "trainingProgress": {
+            "description": "TrainingProgress tracks the progress of the training job.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/trainer.v1alpha1.TrainingProgress"
+              }
+            ]
           }
         }
       },
@@ -13927,6 +14148,76 @@
                 "$ref": "#/components/schemas/io.k8s.api.core.v1.ResourceRequirements"
               }
             ]
+          }
+        }
+      },
+      "trainer.v1alpha1.TrainingProgress": {
+        "description": "TrainingProgress represents the current progress of the training job.",
+        "type": "object",
+        "properties": {
+          "accuracy": {
+            "description": "Training accuracy (if available).",
+            "type": "string"
+          },
+          "checkpointing": {
+            "description": "Checkpointing status and information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/trainer.v1alpha1.CheckpointingStatus"
+              }
+            ]
+          },
+          "epoch": {
+            "description": "Current epoch number (if applicable).",
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedTimeRemaining": {
+            "description": "Estimated time remaining for training completion.",
+            "type": "string"
+          },
+          "lastUpdateTime": {
+            "description": "Last time the progress was updated.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.Time"
+              }
+            ]
+          },
+          "learningRate": {
+            "description": "Learning rate (if available).",
+            "type": "string"
+          },
+          "loss": {
+            "description": "Training loss value (if available).",
+            "type": "string"
+          },
+          "percentComplete": {
+            "description": "Percentage of training completion (0-100).",
+            "type": "string"
+          },
+          "step": {
+            "description": "Current step/iteration number.",
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalEpochs": {
+            "description": "Total number of epochs (if known).",
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalSteps": {
+            "description": "Total number of steps (if known).",
+            "type": "integer",
+            "format": "int64"
+          },
+          "validationAccuracy": {
+            "description": "Validation accuracy (if available).",
+            "type": "string"
+          },
+          "validationLoss": {
+            "description": "Validation loss (if available).",
+            "type": "string"
           }
         }
       },

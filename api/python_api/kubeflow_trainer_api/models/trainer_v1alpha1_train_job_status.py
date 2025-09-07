@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
 from kubeflow_trainer_api.models.io_k8s_apimachinery_pkg_apis_meta_v1_condition import IoK8sApimachineryPkgApisMetaV1Condition
 from kubeflow_trainer_api.models.trainer_v1alpha1_job_status import TrainerV1alpha1JobStatus
+from kubeflow_trainer_api.models.trainer_v1alpha1_training_progress import TrainerV1alpha1TrainingProgress
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -30,7 +31,8 @@ class TrainerV1alpha1TrainJobStatus(BaseModel):
     """ # noqa: E501
     conditions: Optional[List[IoK8sApimachineryPkgApisMetaV1Condition]] = Field(default=None, description="Conditions for the TrainJob.")
     jobs_status: Optional[List[TrainerV1alpha1JobStatus]] = Field(default=None, description="JobsStatus tracks the child Jobs in TrainJob.", alias="jobsStatus")
-    __properties: ClassVar[List[str]] = ["conditions", "jobsStatus"]
+    training_progress: Optional[TrainerV1alpha1TrainingProgress] = Field(default=None, description="TrainingProgress tracks the progress of the training job.", alias="trainingProgress")
+    __properties: ClassVar[List[str]] = ["conditions", "jobsStatus", "trainingProgress"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -85,6 +87,9 @@ class TrainerV1alpha1TrainJobStatus(BaseModel):
                 if _item_jobs_status:
                     _items.append(_item_jobs_status.to_dict())
             _dict['jobsStatus'] = _items
+        # override the default output from pydantic by calling `to_dict()` of training_progress
+        if self.training_progress:
+            _dict['trainingProgress'] = self.training_progress.to_dict()
         return _dict
 
     @classmethod
@@ -98,7 +103,8 @@ class TrainerV1alpha1TrainJobStatus(BaseModel):
 
         _obj = cls.model_validate({
             "conditions": [IoK8sApimachineryPkgApisMetaV1Condition.from_dict(_item) for _item in obj["conditions"]] if obj.get("conditions") is not None else None,
-            "jobsStatus": [TrainerV1alpha1JobStatus.from_dict(_item) for _item in obj["jobsStatus"]] if obj.get("jobsStatus") is not None else None
+            "jobsStatus": [TrainerV1alpha1JobStatus.from_dict(_item) for _item in obj["jobsStatus"]] if obj.get("jobsStatus") is not None else None,
+            "trainingProgress": TrainerV1alpha1TrainingProgress.from_dict(obj["trainingProgress"]) if obj.get("trainingProgress") is not None else None
         })
         return _obj
 

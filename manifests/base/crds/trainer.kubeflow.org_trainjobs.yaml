@@ -53,6 +53,221 @@ spec:
                   Annotations to apply for the derivative JobSet and Jobs.
                   They will be merged with the TrainingRuntime values.
                 type: object
+              checkpointing:
+                description: Configuration for model checkpointing during training.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Whether to enable checkpointing for this TrainJob.
+                      Defaults to false.
+                    type: boolean
+                  env:
+                    description: |-
+                      Custom environment variables to pass checkpointing configuration to the training container.
+                      These will be automatically generated based on the checkpointing config, but can be overridden.
+                    items:
+                      description: EnvVar represents an environment variable present
+                        in a Container.
+                      properties:
+                        name:
+                          description: Name of the environment variable. Must be a
+                            C_IDENTIFIER.
+                          type: string
+                        value:
+                          description: |-
+                            Variable references $(VAR_NAME) are expanded
+                            using the previously defined environment variables in the container and
+                            any service environment variables. If a variable cannot be resolved,
+                            the reference in the input string will be unchanged. Double $$ are reduced
+                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                            Escaped references will never be expanded, regardless of whether the variable
+                            exists or not.
+                            Defaults to "".
+                          type: string
+                        valueFrom:
+                          description: Source for the environment variable's value.
+                            Cannot be used if value is not empty.
+                          properties:
+                            configMapKeyRef:
+                              description: Selects a key of a ConfigMap.
+                              properties:
+                                key:
+                                  description: The key to select.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the ConfigMap or its
+                                    key must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            fieldRef:
+                              description: |-
+                                Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                              properties:
+                                apiVersion:
+                                  description: Version of the schema the FieldPath
+                                    is written in terms of, defaults to "v1".
+                                  type: string
+                                fieldPath:
+                                  description: Path of the field to select in the
+                                    specified API version.
+                                  type: string
+                              required:
+                              - fieldPath
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            resourceFieldRef:
+                              description: |-
+                                Selects a resource of the container: only resources limits and requests
+                                (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                              properties:
+                                containerName:
+                                  description: 'Container name: required for volumes,
+                                    optional for env vars'
+                                  type: string
+                                divisor:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  description: Specifies the output format of the
+                                    exposed resources, defaults to "1"
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                resource:
+                                  description: 'Required: resource to select'
+                                  type: string
+                              required:
+                              - resource
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            secretKeyRef:
+                              description: Selects a key of a secret in the pod's
+                                namespace
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  interval:
+                    description: |-
+                      Interval for saving checkpoints (e.g., "5m", "100s", "1h").
+                      If not specified, checkpoints will be saved based on training framework defaults.
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                  maxCheckpoints:
+                    default: 3
+                    description: |-
+                      Maximum number of checkpoints to retain.
+                      Older checkpoints will be automatically deleted.
+                      Defaults to 3.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resumeFromCheckpoint:
+                    default: true
+                    description: |-
+                      Whether to resume training from the latest checkpoint if available.
+                      Defaults to true.
+                    type: boolean
+                  storage:
+                    description: Storage configuration for saving checkpoints.
+                    properties:
+                      accessMode:
+                        default: ReadWriteMany
+                        description: Access mode for the storage.
+                        enum:
+                        - ReadWriteOnce
+                        - ReadWriteMany
+                        - ReadOnlyMany
+                        type: string
+                      persistentVolume:
+                        description: |-
+                          PersistentVolume configuration for checkpoint storage.
+                          References an existing PVC that must be created by the platform administrator.
+                        properties:
+                          claimName:
+                            description: |-
+                              Name of an existing PVC to use for checkpoint storage.
+                              The PVC must exist in the same namespace as the TrainJob.
+                            type: string
+                          mountPath:
+                            default: /checkpoints
+                            description: Mount path where the PV should be mounted
+                              in the training containers.
+                            type: string
+                          subPath:
+                            description: |-
+                              SubPath within the PV to use for this TrainJob's checkpoints.
+                              Useful for sharing a single PV across multiple TrainJobs.
+                            type: string
+                        required:
+                        - claimName
+                        type: object
+                      secretRef:
+                        description: |-
+                          Reference to the secret containing credentials for accessing the storage.
+                          Secret must be created in the TrainJob's namespace.
+                          Not required for PersistentVolume storage.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      uri:
+                        description: |-
+                          Storage URI where checkpoints will be saved (e.g., "s3://bucket/path", "gs://bucket/path", "/mnt/shared").
+                          For PersistentVolume storage, use a local path like "/checkpoints" or "/shared/checkpoints".
+                        type: string
+                    required:
+                    - uri
+                    type: object
+                type: object
               initializer:
                 description: Configuration of the initializer.
                 properties:
@@ -3079,6 +3294,117 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              trainingProgress:
+                description: TrainingProgress tracks the progress of the training
+                  job.
+                properties:
+                  accuracy:
+                    description: Training accuracy (if available).
+                    type: string
+                  checkpointing:
+                    description: Checkpointing status and information.
+                    properties:
+                      availableCheckpoints:
+                        description: List of available checkpoints.
+                        items:
+                          description: CheckpointInfo represents information about
+                            a specific checkpoint.
+                          properties:
+                            createdAt:
+                              description: Timestamp when the checkpoint was created.
+                              format: date-time
+                              type: string
+                            epoch:
+                              description: Epoch number when the checkpoint was created.
+                              format: int32
+                              type: integer
+                            metrics:
+                              additionalProperties:
+                                type: string
+                              description: Training metrics at the time of checkpoint
+                                creation.
+                              type: object
+                            path:
+                              description: Path or URI of the checkpoint.
+                              type: string
+                            size:
+                              description: Size of the checkpoint (in bytes).
+                              format: int64
+                              type: integer
+                            step:
+                              description: Step number when the checkpoint was created.
+                              format: int64
+                              type: integer
+                          required:
+                          - createdAt
+                          - path
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      checkpointsCreated:
+                        description: Total number of checkpoints created.
+                        format: int32
+                        type: integer
+                      enabled:
+                        description: Whether checkpointing is currently enabled.
+                        type: boolean
+                      error:
+                        description: Any error encountered during checkpointing.
+                        type: string
+                      latestCheckpoint:
+                        description: Path or URI of the latest checkpoint.
+                        type: string
+                      latestCheckpointSize:
+                        description: Size of the latest checkpoint (in bytes).
+                        format: int64
+                        type: integer
+                      latestCheckpointTime:
+                        description: Timestamp when the latest checkpoint was created.
+                        format: date-time
+                        type: string
+                    required:
+                    - checkpointsCreated
+                    - enabled
+                    type: object
+                  epoch:
+                    description: Current epoch number (if applicable).
+                    format: int32
+                    type: integer
+                  estimatedTimeRemaining:
+                    description: Estimated time remaining for training completion.
+                    type: string
+                  lastUpdateTime:
+                    description: Last time the progress was updated.
+                    format: date-time
+                    type: string
+                  learningRate:
+                    description: Learning rate (if available).
+                    type: string
+                  loss:
+                    description: Training loss value (if available).
+                    type: string
+                  percentComplete:
+                    description: Percentage of training completion (0-100).
+                    type: string
+                  step:
+                    description: Current step/iteration number.
+                    format: int64
+                    type: integer
+                  totalEpochs:
+                    description: Total number of epochs (if known).
+                    format: int32
+                    type: integer
+                  totalSteps:
+                    description: Total number of steps (if known).
+                    format: int64
+                    type: integer
+                  validationAccuracy:
+                    description: Validation accuracy (if available).
+                    type: string
+                  validationLoss:
+                    description: Validation loss (if available).
+                    type: string
+                type: object
             type: object
         type: object
     served: true

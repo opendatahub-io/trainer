@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: trl-training-example
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Resources to include
+resources:
+- pvc.yaml
+- training-runtime.yaml
+- trainjob.yaml
+# Uncomment the line below to include debug pod for testing checkpoint API
+# - debug-checkpoint-api-pod.yaml
+
+# ConfigMap generation from external files
+configMapGenerator:
+- name: advanced-trl-script
+  files:
+  - trl_training.py
+  options:
+    disableNameSuffixHash: true
+
+# Common labels applied to all resources
+labels:
+- pairs:
+    app.kubernetes.io/name: trl-demo
+    app.kubernetes.io/component: training
+    experiment: advanced-controller-checkpointing
+
+# Images (can be customized for different environments)
+images:
+- name: quay.io/abdhumal/trainer
+  newTag: v2.1.0-checkpoint-v13
+
+# Patches for different configurations (using new syntax)
+patches: []

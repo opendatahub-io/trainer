@@ -1,0 +1,117 @@
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainJob
+metadata:
+  name: trl-demo
+  labels:
+    app.kubernetes.io/name: "trl-demo"
+    app.kubernetes.io/component: "training"
+    experiment: "advanced-controller-checkpointing"
+spec:
+  runtimeRef:
+    apiGroup: trainer.kubeflow.org
+    kind: TrainingRuntime
+    name: torch-cuda-251-runtime
+
+  # 🚀 V2 INITIALIZERS: Proper dedicated images and configuration
+  initializer:
+    # 📊 Dataset Initializer: Uses dedicated V2 initializer image
+    dataset:
+      storageUri: "hf://tatsu-lab/alpaca"
+      env:
+        - name: HF_HOME
+          value: "/workspace/cache"
+        - name: DATASET_NAME
+          value: "tatsu-lab/alpaca"
+        - name: DATASET_CONFIG
+          value: "main"
+        - name: DATASET_SPLIT
+          value: "train[:500]"
+        - name: DATASET_FORMAT
+          value: "json"
+    
+    # 🤖 Model Initializer: Uses dedicated V2 initializer image
+    model:
+      storageUri: "hf://gpt2"
+      env:
+        - name: HF_HOME
+          value: "/workspace/cache"
+        - name: MODEL_NAME
+          value: "gpt2"
+        - name: MODEL_REVISION
+          value: "main"
+        - name: DOWNLOAD_MODE
+          value: "force_redownload"
+
+  # 🌐 ADVANCED DISTRIBUTED TRAINING
+  trainer:
+    numNodes: 2
+    numProcPerNode: 1
+    resourcesPerNode:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+    
+    # Job-specific training hyperparameters
+    env:
+      # Training hyperparameters (extended for debugging)
+      - name: LEARNING_RATE
+        value: "5e-5"
+      - name: BATCH_SIZE
+        value: "1"  # Smaller batch for more steps
+      - name: MAX_EPOCHS
+        value: "10"  # More epochs for longer training
+      - name: WARMUP_STEPS
+        value: "5"
+      - name: EVAL_STEPS
+        value: "10"
+      - name: SAVE_STEPS
+        value: "5"   # More frequent saves
+      - name: LOGGING_STEPS
+        value: "2"   # More frequent logging
+      - name: GRADIENT_ACCUMULATION_STEPS
+        value: "2"
+      
+      # Model configuration
+      - name: MODEL_NAME
+        value: "gpt2"
+      - name: LORA_R
+        value: "16"
+      - name: LORA_ALPHA
+        value: "32"
+      - name: LORA_DROPOUT
+        value: "0.1"
+      - name: MAX_SEQ_LENGTH
+        value: "512"
+      
+      # Dataset configuration
+      - name: DATASET_NAME
+        value: "tatsu-lab/alpaca"
+      - name: DATASET_TRAIN_SPLIT
+        value: "train[:500]"
+      - name: DATASET_TEST_SPLIT
+        value: "train[500:520]"
+      
+  # 💾 CONTROLLER-MANAGED CHECKPOINTING with advanced configuration
+  checkpointing:
+    enabled: true
+    interval: "30s"
+    maxCheckpoints: 5
+    resumeFromCheckpoint: true
+    storage:
+      accessMode: ReadWriteMany
+      persistentVolume:
+        claimName: shared-checkpoint-storage
+        mountPath: /workspace
+        subPath: checkpoints
+      uri: "/workspace/checkpoints"
+    env:
+      - name: CHECKPOINT_STRATEGY
+        value: "adaptive"
+      - name: CHECKPOINT_SAVE_TYPE
+        value: "best_and_latest"
+
+  managedBy: trainer.kubeflow.org/trainjob-controller
+  suspend: false

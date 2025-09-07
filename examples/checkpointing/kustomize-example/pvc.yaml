@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-checkpoint-storage
+  labels:
+    app.kubernetes.io/name: "trl-demo"
+    app.kubernetes.io/component: "storage"
+    purpose: "checkpoint-storage"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: nfs-csi
+  volumeMode: Filesystem

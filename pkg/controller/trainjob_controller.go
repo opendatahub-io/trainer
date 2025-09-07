@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -55,11 +57,12 @@ type TrainJobWatcher interface {
 }
 
 type TrainJobReconciler struct {
-	log      logr.Logger
-	client   client.Client
-	recorder record.EventRecorder
-	runtimes map[string]jobruntimes.Runtime
-	watchers iter.Seq[TrainJobWatcher]
+	log                  logr.Logger
+	client               client.Client
+	recorder             record.EventRecorder
+	runtimes             map[string]jobruntimes.Runtime
+	watchers             iter.Seq[TrainJobWatcher]
+	checkpointingManager *CheckpointingManager
 }
 
 type TrainJobReconcilerOptions struct {
@@ -77,21 +80,24 @@ func WithWatchers(watchers ...TrainJobWatcher) TrainJobReconcilerOption {
 var _ reconcile.Reconciler = (*TrainJobReconciler)(nil)
 var _ predicate.TypedPredicate[*trainer.TrainJob] = (*TrainJobReconciler)(nil)
 
-func NewTrainJobReconciler(client client.Client, recorder record.EventRecorder, runtimes map[string]jobruntimes.Runtime, opts ...TrainJobReconcilerOption) *TrainJobReconciler {
+func NewTrainJobReconciler(client client.Client, config *rest.Config, recorder record.EventRecorder, runtimes map[string]jobruntimes.Runtime, opts ...TrainJobReconcilerOption) *TrainJobReconciler {
 	options := &TrainJobReconcilerOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
 	return &TrainJobReconciler{
-		log:      ctrl.Log.WithName("trainjob-controller"),
-		client:   client,
-		recorder: recorder,
-		runtimes: runtimes,
-		watchers: options.Watchers,
+		log:                  ctrl.Log.WithName("trainjob-controller"),
+		client:               client,
+		recorder:             recorder,
+		runtimes:             runtimes,
+		watchers:             options.Watchers,
+		checkpointingManager: NewCheckpointingManager(client, config),
 	}
 }
 
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs/finalizers,verbs=get;update;patch
@@ -142,9 +148,26 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		err = errors.Join(err, terminalCondErr)
 	}
 
-	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
+	// Update training progress if checkpointing is enabled
+	if progressErr := r.checkpointingManager.UpdateTrainingProgress(ctx, &trainJob); progressErr != nil {
+		log.V(4).Info("Failed to update training progress", "error", progressErr)
+		// Don't fail the reconciliation for progress update errors
 	}
+
+	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
+		if statusErr := r.client.Status().Update(ctx, &trainJob); statusErr != nil {
+			err = errors.Join(err, statusErr)
+		}
+	}
+
+	// Requeue for continuous progress updates during active training
+	if !isTrainJobFinished(&trainJob) && IsCheckpointingEnabled(&trainJob) {
+		// Adaptive requeue interval based on training progress
+		interval := getProgressUpdateInterval(&trainJob)
+		log.V(5).Info("Requeuing for progress update", "interval", interval)
+		return ctrl.Result{RequeueAfter: interval}, err
+	}
+
 	return ctrl.Result{}, err
 }
 
@@ -269,6 +292,57 @@ func setTerminalCondition(ctx context.Context, runtime jobruntimes.Runtime, trai
 func isTrainJobFinished(trainJob *trainer.TrainJob) bool {
 	return meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete) ||
 		meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
+}
+
+// getProgressUpdateInterval determines the optimal requeue interval for progress updates
+func getProgressUpdateInterval(trainJob *trainer.TrainJob) time.Duration {
+	const (
+		FastInterval    = 15 * time.Second // Early training phase
+		MediumInterval  = 30 * time.Second // Active training
+		SlowInterval    = 60 * time.Second // Stable training
+		DefaultInterval = 30 * time.Second // Fallback
+	)
+
+	// Check if we have progress information to make adaptive decisions
+	if trainJob.Status.TrainingProgress == nil {
+		return FastInterval // New training, check frequently
+	}
+
+	progress := trainJob.Status.TrainingProgress
+
+	// Early training phase - more frequent updates
+	if progress.Step != nil && progress.TotalSteps != nil {
+		if *progress.Step < 10 || (*progress.Step < *progress.TotalSteps/10) {
+			return FastInterval
+		}
+	}
+
+	// Check if training is progressing rapidly (recent updates)
+	if progress.LastUpdateTime != nil {
+		timeSinceUpdate := time.Since(progress.LastUpdateTime.Time)
+		if timeSinceUpdate < 1*time.Minute {
+			return MediumInterval // Active training
+		} else if timeSinceUpdate > 5*time.Minute {
+			return SlowInterval // Stable or slow training
+		}
+	}
+
+	// Use custom interval from checkpointing config if available
+	if trainJob.Spec.Checkpointing != nil && trainJob.Spec.Checkpointing.Interval != nil {
+		if customInterval, err := time.ParseDuration(*trainJob.Spec.Checkpointing.Interval); err == nil {
+			// Use half the checkpoint interval for progress updates
+			progressInterval := customInterval / 2
+			if progressInterval < FastInterval {
+				return FastInterval
+			}
+			if progressInterval > SlowInterval {
+				return SlowInterval
+			}
+			return progressInterval
+		}
+	}
+
+	return DefaultInterval
 }
 
 func (r *TrainJobReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {

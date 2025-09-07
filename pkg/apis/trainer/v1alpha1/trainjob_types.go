@@ -25,6 +25,9 @@ import (
 const (
 	// TrainJobKind is the Kind name for the TrainJob.
 	TrainJobKind string = "TrainJob"
+
+	// TrainJobResourcesCreationFailedReason is used when TrainJob resources creation fails.
+	TrainJobResourcesCreationFailedReason = "ResourcesCreationFailed"
 )
 
 // +genclient
@@ -130,6 +133,9 @@ type TrainJobSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self in ['trainer.kubeflow.org/trainjob-controller', 'kueue.x-k8s.io/multikueue']", message="ManagedBy must be trainer.kubeflow.org/trainjob-controller or kueue.x-k8s.io/multikueue if set"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="ManagedBy value is immutable"
 	ManagedBy *string `json:"managedBy,omitempty"`
+
+	// Configuration for model checkpointing during training.
+	Checkpointing *CheckpointingConfig `json:"checkpointing,omitempty"`
 }
 
 // RuntimeRef represents the reference to the existing training runtime.
@@ -292,6 +298,77 @@ type ContainerOverride struct {
 	VolumeMounts []corev1.VolumeMount `json:"volumeMounts,omitempty"`
 }
 
+// CheckpointingConfig represents the configuration for model checkpointing during training.
+type CheckpointingConfig struct {
+	// Whether to enable checkpointing for this TrainJob.
+	// Defaults to false.
+	// +kubebuilder:default=false
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Storage configuration for saving checkpoints.
+	Storage CheckpointStorage `json:"storage,omitempty"`
+
+	// Interval for saving checkpoints (e.g., "5m", "100s", "1h").
+	// If not specified, checkpoints will be saved based on training framework defaults.
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
+	Interval *string `json:"interval,omitempty"`
+
+	// Maximum number of checkpoints to retain.
+	// Older checkpoints will be automatically deleted.
+	// Defaults to 3.
+	// +kubebuilder:default=3
+	// +kubebuilder:validation:Minimum=1
+	MaxCheckpoints *int32 `json:"maxCheckpoints,omitempty"`
+
+	// Whether to resume training from the latest checkpoint if available.
+	// Defaults to true.
+	// +kubebuilder:default=true
+	ResumeFromCheckpoint *bool `json:"resumeFromCheckpoint,omitempty"`
+
+	// Custom environment variables to pass checkpointing configuration to the training container.
+	// These will be automatically generated based on the checkpointing config, but can be overridden.
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
+}
+
+// CheckpointStorage represents storage configuration for checkpoints.
+type CheckpointStorage struct {
+	// Storage URI where checkpoints will be saved (e.g., "s3://bucket/path", "gs://bucket/path", "/mnt/shared").
+	// For PersistentVolume storage, use a local path like "/checkpoints" or "/shared/checkpoints".
+	URI string `json:"uri"`
+
+	// Reference to the secret containing credentials for accessing the storage.
+	// Secret must be created in the TrainJob's namespace.
+	// Not required for PersistentVolume storage.
+	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
+
+	// Access mode for the storage.
+	// +kubebuilder:validation:Enum=ReadWriteOnce;ReadWriteMany;ReadOnlyMany
+	// +kubebuilder:default="ReadWriteMany"
+	AccessMode *string `json:"accessMode,omitempty"`
+
+	// PersistentVolume configuration for checkpoint storage.
+	// References an existing PVC that must be created by the platform administrator.
+	PersistentVolume *CheckpointPersistentVolumeConfig `json:"persistentVolume,omitempty"`
+}
+
+// CheckpointPersistentVolumeConfig represents PersistentVolume configuration for checkpoints.
+type CheckpointPersistentVolumeConfig struct {
+	// Name of an existing PVC to use for checkpoint storage.
+	// The PVC must exist in the same namespace as the TrainJob.
+	// +kubebuilder:validation:Required
+	ClaimName string `json:"claimName"`
+
+	// Mount path where the PV should be mounted in the training containers.
+	// +kubebuilder:default="/checkpoints"
+	MountPath *string `json:"mountPath,omitempty"`
+
+	// SubPath within the PV to use for this TrainJob's checkpoints.
+	// Useful for sharing a single PV across multiple TrainJobs.
+	SubPath *string `json:"subPath,omitempty"`
+}
+
 // TrainJobStatus represents the current status of TrainJob.
 type TrainJobStatus struct {
 	// Conditions for the TrainJob.
@@ -307,6 +384,9 @@ type TrainJobStatus struct {
 	// +listType=map
 	// +listMapKey=name
 	JobsStatus []JobStatus `json:"jobsStatus,omitempty"`
+
+	// TrainingProgress tracks the progress of the training job.
+	TrainingProgress *TrainingProgress `json:"trainingProgress,omitempty"`
 }
 
 type JobStatus struct {
@@ -329,6 +409,100 @@ type JobStatus struct {
 
 	// Suspended is the number of child Jobs which are in a suspended state.
 	Suspended int32 `json:"suspended"`
+}
+
+// TrainingProgress represents the current progress of the training job.
+type TrainingProgress struct {
+	// Current epoch number (if applicable).
+	Epoch *int32 `json:"epoch,omitempty"`
+
+	// Total number of epochs (if known).
+	TotalEpochs *int32 `json:"totalEpochs,omitempty"`
+
+	// Current step/iteration number.
+	Step *int64 `json:"step,omitempty"`
+
+	// Total number of steps (if known).
+	TotalSteps *int64 `json:"totalSteps,omitempty"`
+
+	// Training loss value (if available).
+	// +kubebuilder:validation:Type=string
+	Loss *string `json:"loss,omitempty"`
+
+	// Training accuracy (if available).
+	// +kubebuilder:validation:Type=string
+	Accuracy *string `json:"accuracy,omitempty"`
+
+	// Validation loss (if available).
+	// +kubebuilder:validation:Type=string
+	ValidationLoss *string `json:"validationLoss,omitempty"`
+
+	// Validation accuracy (if available).
+	// +kubebuilder:validation:Type=string
+	ValidationAccuracy *string `json:"validationAccuracy,omitempty"`
+
+	// Learning rate (if available).
+	// +kubebuilder:validation:Type=string
+	LearningRate *string `json:"learningRate,omitempty"`
+
+	// Percentage of training completion (0-100).
+	// +kubebuilder:validation:Type=string
+	PercentComplete *string `json:"percentComplete,omitempty"`
+
+	// Estimated time remaining for training completion.
+	EstimatedTimeRemaining *string `json:"estimatedTimeRemaining,omitempty"`
+
+	// Last time the progress was updated.
+	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
+
+	// Checkpointing status and information.
+	Checkpointing *CheckpointingStatus `json:"checkpointing,omitempty"`
+}
+
+// CheckpointingStatus represents the current status of checkpointing.
+type CheckpointingStatus struct {
+	// Whether checkpointing is currently enabled.
+	Enabled bool `json:"enabled"`
+
+	// Path or URI of the latest checkpoint.
+	LatestCheckpoint *string `json:"latestCheckpoint,omitempty"`
+
+	// Timestamp when the latest checkpoint was created.
+	LatestCheckpointTime *metav1.Time `json:"latestCheckpointTime,omitempty"`
+
+	// Total number of checkpoints created.
+	CheckpointsCreated int32 `json:"checkpointsCreated"`
+
+	// Size of the latest checkpoint (in bytes).
+	LatestCheckpointSize *int64 `json:"latestCheckpointSize,omitempty"`
+
+	// List of available checkpoints.
+	// +listType=atomic
+	AvailableCheckpoints []CheckpointInfo `json:"availableCheckpoints,omitempty"`
+
+	// Any error encountered during checkpointing.
+	Error *string `json:"error,omitempty"`
+}
+
+// CheckpointInfo represents information about a specific checkpoint.
+type CheckpointInfo struct {
+	// Path or URI of the checkpoint.
+	Path string `json:"path"`
+
+	// Timestamp when the checkpoint was created.
+	CreatedAt metav1.Time `json:"createdAt"`
+
+	// Size of the checkpoint (in bytes).
+	Size *int64 `json:"size,omitempty"`
+
+	// Epoch number when the checkpoint was created.
+	Epoch *int32 `json:"epoch,omitempty"`
+
+	// Step number when the checkpoint was created.
+	Step *int64 `json:"step,omitempty"`
+
+	// Training metrics at the time of checkpoint creation.
+	Metrics map[string]string `json:"metrics,omitempty"`
 }
 
 func init() {

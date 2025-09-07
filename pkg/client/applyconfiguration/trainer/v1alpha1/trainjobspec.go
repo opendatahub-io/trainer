@@ -19,14 +19,15 @@ package v1alpha1
 // TrainJobSpecApplyConfiguration represents a declarative configuration of the TrainJobSpec type for use
 // with apply.
 type TrainJobSpecApplyConfiguration struct {
-	RuntimeRef       *RuntimeRefApplyConfiguration       `json:"runtimeRef,omitempty"`
-	Initializer      *InitializerApplyConfiguration      `json:"initializer,omitempty"`
-	Trainer          *TrainerApplyConfiguration          `json:"trainer,omitempty"`
-	Labels           map[string]string                   `json:"labels,omitempty"`
-	Annotations      map[string]string                   `json:"annotations,omitempty"`
-	PodSpecOverrides []PodSpecOverrideApplyConfiguration `json:"podSpecOverrides,omitempty"`
-	Suspend          *bool                               `json:"suspend,omitempty"`
-	ManagedBy        *string                             `json:"managedBy,omitempty"`
+	RuntimeRef       *RuntimeRefApplyConfiguration          `json:"runtimeRef,omitempty"`
+	Initializer      *InitializerApplyConfiguration         `json:"initializer,omitempty"`
+	Trainer          *TrainerApplyConfiguration             `json:"trainer,omitempty"`
+	Labels           map[string]string                      `json:"labels,omitempty"`
+	Annotations      map[string]string                      `json:"annotations,omitempty"`
+	PodSpecOverrides []PodSpecOverrideApplyConfiguration    `json:"podSpecOverrides,omitempty"`
+	Suspend          *bool                                  `json:"suspend,omitempty"`
+	ManagedBy        *string                                `json:"managedBy,omitempty"`
+	Checkpointing    *CheckpointingConfigApplyConfiguration `json:"checkpointing,omitempty"`
 }
 
 // TrainJobSpecApplyConfiguration constructs a declarative configuration of the TrainJobSpec type for use with
@@ -113,5 +114,13 @@ func (b *TrainJobSpecApplyConfiguration) WithSuspend(value bool) *TrainJobSpecAp
 // If called multiple times, the ManagedBy field is set to the value of the last call.
 func (b *TrainJobSpecApplyConfiguration) WithManagedBy(value string) *TrainJobSpecApplyConfiguration {
 	b.ManagedBy = &value
+	return b
+}
+
+// WithCheckpointing sets the Checkpointing field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Checkpointing field is set to the value of the last call.
+func (b *TrainJobSpecApplyConfiguration) WithCheckpointing(value *CheckpointingConfigApplyConfiguration) *TrainJobSpecApplyConfiguration {
+	b.Checkpointing = value
 	return b
 }

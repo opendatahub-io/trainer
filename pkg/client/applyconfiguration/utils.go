@@ -30,6 +30,16 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=trainer.kubeflow.org, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithKind("CheckpointInfo"):
+		return &trainerv1alpha1.CheckpointInfoApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CheckpointingConfig"):
+		return &trainerv1alpha1.CheckpointingConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CheckpointingStatus"):
+		return &trainerv1alpha1.CheckpointingStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CheckpointPersistentVolumeConfig"):
+		return &trainerv1alpha1.CheckpointPersistentVolumeConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CheckpointStorage"):
+		return &trainerv1alpha1.CheckpointStorageApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterTrainingRuntime"):
 		return &trainerv1alpha1.ClusterTrainingRuntimeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ContainerOverride"):
@@ -68,6 +78,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &trainerv1alpha1.TorchMLPolicySourceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Trainer"):
 		return &trainerv1alpha1.TrainerApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TrainingProgress"):
+		return &trainerv1alpha1.TrainingProgressApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TrainingRuntime"):
 		return &trainerv1alpha1.TrainingRuntimeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TrainingRuntimeSpec"):

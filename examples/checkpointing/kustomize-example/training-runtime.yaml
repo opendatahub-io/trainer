@@ -1,0 +1,176 @@
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainingRuntime
+metadata:
+  name: torch-cuda-251-runtime
+  labels:
+    trainer.kubeflow.org/framework: torch
+    project: trl-demo
+spec:
+  mlPolicy:
+    numNodes: 2
+    torch:
+      numProcPerNode: auto
+  template:
+    spec:
+      replicatedJobs:
+        # V2 Dataset Initializer with dedicated image
+        - name: dataset-initializer
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: dataset-initializer
+            spec:
+              template:
+                spec:
+                  restartPolicy: Never
+                  containers:
+                    - name: dataset-initializer
+                      image: ghcr.io/kubeflow/trainer/dataset-initializer:v2.0.0
+                      env:
+                        - name: HF_HOME
+                          value: "/workspace/cache"
+                        - name: DATASET_NAME
+                          value: "tatsu-lab/alpaca"
+                        - name: DATASET_CONFIG
+                          value: "main"
+                        - name: DATASET_SPLIT
+                          value: "train[:500]"
+                        - name: DATASET_FORMAT
+                          value: "json"
+                      resources:
+                        limits:
+                          cpu: "2"
+                          memory: "4Gi"
+                        requests:
+                          cpu: "1"
+                          memory: "2Gi"
+                      volumeMounts:
+                        - name: shared-workspace
+                          mountPath: /workspace
+                  volumes:
+                    - name: shared-workspace
+                      persistentVolumeClaim:
+                        claimName: shared-checkpoint-storage
+
+        # V2 Model Initializer with dedicated image
+        - name: model-initializer
+          dependsOn:
+            - name: dataset-initializer
+              status: Complete
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: model-initializer
+            spec:
+              template:
+                spec:
+                  restartPolicy: Never
+                  containers:
+                    - name: model-initializer
+                      image: ghcr.io/kubeflow/trainer/model-initializer:v2.0.0
+                      env:
+                        - name: HF_HOME
+                          value: "/workspace/cache"
+                        - name: MODEL_NAME
+                          value: "gpt2"
+                        - name: MODEL_REVISION
+                          value: "main"
+                        - name: DOWNLOAD_MODE
+                          value: "force_redownload"
+                      resources:
+                        limits:
+                          cpu: "2"
+                          memory: "4Gi"
+                        requests:
+                          cpu: "1"
+                          memory: "2Gi"
+                      volumeMounts:
+                        - name: shared-workspace
+                          mountPath: /workspace
+                  volumes:
+                    - name: shared-workspace
+                      persistentVolumeClaim:
+                        claimName: shared-checkpoint-storage
+
+        # Advanced Training Node with distributed coordination
+        - name: node
+          dependsOn:
+            - name: model-initializer
+              status: Complete
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: quay.io/modh/training:py311-cuda124-torch251
+                      volumeMounts:
+                        - name: shared-workspace
+                          mountPath: /workspace
+                        - name: training-script
+                          mountPath: /workspace/trl_training.py
+                          subPath: trl_training.py
+                      env:
+                        # Python and caching configuration
+                        - name: PYTHONUNBUFFERED
+                          value: "1"
+                        - name: TRANSFORMERS_CACHE
+                          value: "/workspace/cache/transformers"
+                        - name: HF_HOME
+                          value: "/workspace/cache"
+                        - name: HF_DATASETS_CACHE
+                          value: "/workspace/cache/datasets"
+                        
+                        # Common infrastructure variables (shared across all jobs)
+                        # Job-specific training parameters are configured in TrainJob.spec.trainer.env
+                        
+                        # Distributed training debugging
+                        - name: NCCL_DEBUG
+                          value: "INFO"
+                        - name: NCCL_DEBUG_SUBSYS
+                          value: "ALL"
+                        - name: NCCL_SOCKET_IFNAME
+                          value: "eth0"
+                        - name: NCCL_IB_DISABLE
+                          value: "1"
+                        - name: NCCL_P2P_DISABLE
+                          value: "1"
+                        - name: NCCL_TREE_THRESHOLD
+                          value: "0"
+                        - name: TORCH_DISTRIBUTED_DEBUG
+                          value: "INFO"
+                        - name: TORCH_SHOW_CPP_STACKTRACES
+                          value: "1"
+                        
+                        # Controller-managed progress tracking
+                        - name: TRAINING_PROGRESS_FILE
+                          value: "/workspace/training_progress.json"
+                        
+                        # Training operator automatically injects:
+                        # PET_NNODES, PET_NPROC_PER_NODE, PET_NODE_RANK, PET_MASTER_ADDR, PET_MASTER_PORT
+                        # Controller automatically injects:
+                        # CHECKPOINT_ENABLED, CHECKPOINT_URI, CHECKPOINT_INTERVAL, TRAINING_PROGRESS_FILE, etc.
+                      
+                      command:
+                        - python
+                        - /workspace/trl_training.py
+                      
+                      resources:
+                        requests:
+                          cpu: "2"
+                          memory: "4Gi"
+                        limits:
+                          cpu: "4"
+                          memory: "8Gi"
+                  
+                  volumes:
+                    - name: shared-workspace
+                      persistentVolumeClaim:
+                        claimName: shared-checkpoint-storage
+                    - name: training-script
+                      configMap:
+                        name: advanced-trl-script
+                        defaultMode: 0755

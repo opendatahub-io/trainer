@@ -1,0 +1,372 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: checkpoint-api-test-scripts
+data:
+  test-progress-api.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "=================================="
+    
+    TRAINJOB_NAME=${TRAINJOB_NAME:-"trl-demo"}
+    NAMESPACE=${TRAINJOB_NAMESPACE:-"default"}
+    
+    echo "     TrainJob: $TRAINJOB_NAME in namespace: $NAMESPACE"
+    echo ""
+    
+    # Function to get TrainJob status
+    get_trainjob_status() {
+        kubectl get trainjob $TRAINJOB_NAME -n $NAMESPACE -o yaml
+    }
+    
+    # Function to get training progress specifically
+    get_training_progress() {
+        kubectl get --raw "/apis/trainer.kubeflow.org/v1alpha1/namespaces/$NAMESPACE/trainjobs/$TRAINJOB_NAME" | jq '.status.trainingProgress'
+    }
+    
+    # Function to get checkpointing status
+    get_checkpointing_status() {
+        kubectl get --raw "/apis/trainer.kubeflow.org/v1alpha1/namespaces/$NAMESPACE/trainjobs/$TRAINJOB_NAME" | jq '.status.trainingProgress.checkpointing'
+    }
+    
+    # Function to list training pods
+    list_training_pods() {
+        kubectl get pods -n $NAMESPACE -l jobset.sigs.k8s.io/jobset-name=$TRAINJOB_NAME
+    }
+    
+    # Function to check progress file in pods
+    check_progress_files() {
+        local pods=$(kubectl get pods -n $NAMESPACE -l jobset.sigs.k8s.io/jobset-name=$TRAINJOB_NAME -o jsonpath='{.items[*].metadata.name}')
+        
+        for pod in $pods; do
+            echo "       Checking pod: $pod"
+            if kubectl get pod $pod -n $NAMESPACE -o jsonpath='{.status.phase}' | grep -q "Running"; then
+                echo "    Progress file content:"
+                kubectl exec -n $NAMESPACE $pod -- cat /workspace/training_progress.json 2>/dev/null || echo "         No progress file found"
+                echo ""
+            else
+                echo "    ⏸      Pod not running"
+            fi
+        done
+    }
+    
+    # Function to monitor progress continuously
+    monitor_progress() {
+        echo "     Monitoring progress (press Ctrl+C to stop)..."
+        while true; do
+            echo "$(date): Checking progress..."
+            get_training_progress
+            echo "---"
+            sleep 10
+        done
+    }
+    
+    # Function to test controller logs
+    check_controller_logs() {
+        echo "     Checking controller logs..."
+        
+        # Try different possible deployment names and namespaces
+        local deployments=(
+            "opendatahub/kubeflow-trainer-controller-manager"
+            "opendatahub/trainer-controller-manager"
+            "kubeflow/kubeflow-trainer-controller-manager"
+            "kubeflow/trainer-controller-manager"
+        )
+        
+        local found=false
+        for deployment in "${deployments[@]}"; do
+            local ns=$(echo $deployment | cut -d'/' -f1)
+            local name=$(echo $deployment | cut -d'/' -f2)
+            
+            echo "       Trying deployment: $name in namespace: $ns"
+            if kubectl get deployment $name -n $ns >/dev/null 2>&1; then
+                echo "       Found deployment: $deployment"
+                kubectl logs -n $ns deployment/$name --tail=50 | grep -E "(progress|checkpoint|$TRAINJOB_NAME)" || echo "  📝 No matching logs found in this deployment"
+                found=true
+                break
+            else
+                echo "       Deployment not found: $deployment"
+            fi
+        done
+        
+        if [ "$found" = false ]; then
+            echo "       Listing all deployments to help debug:"
+            echo "  --- OpenDataHub namespace ---"
+            kubectl get deployments -n opendatahub 2>/dev/null || echo "       opendatahub namespace not found"
+            echo "  --- Kubeflow namespace ---"
+            kubectl get deployments -n kubeflow 2>/dev/null || echo "       kubeflow namespace not found"
+            echo "  --- All namespaces with 'trainer' deployments ---"
+            kubectl get deployments --all-namespaces | grep -i trainer || echo "       No trainer deployments found"
+        fi
+    }
+    
+    # Main test execution
+    case "${1:-status}" in
+        "status")
+            get_trainjob_status
+            ;;
+        "progress")
+            get_training_progress
+            ;;
+        "checkpointing")
+            get_checkpointing_status
+            ;;
+        "pods")
+            list_training_pods
+            ;;
+        "files")
+            check_progress_files
+            ;;
+        "monitor")
+            monitor_progress
+            ;;
+        "logs")
+            check_controller_logs
+            ;;
+        "all")
+            echo "     Running comprehensive checkpoint API test..."
+            echo ""
+            get_trainjob_status
+            echo ""
+            get_training_progress
+            echo ""
+            get_checkpointing_status
+            echo ""
+            list_training_pods
+            echo ""
+            check_progress_files
+            echo ""
+            check_controller_logs
+            ;;
+        *)
+            echo "Usage: $0 [status|progress|checkpointing|pods|files|monitor|logs|all]"
+            echo ""
+            echo "Commands:"
+            echo "  status       - Get full TrainJob status"
+            echo "  progress     - Get training progress only"
+            echo "  checkpointing- Get checkpointing status only"
+            echo "  pods         - List training pods"
+            echo "  files        - Check progress files in pods"
+            echo "  monitor      - Monitor progress continuously"
+            echo "  logs         - Check controller logs"
+            echo "  all          - Run all tests"
+            ;;
+    esac
+
+  create-mock-progress.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Creating mock progress file for testing"
+    echo "========================================="
+    
+    PROGRESS_FILE="/workspace/training_progress.json"
+    
+    # Create mock progress data
+    cat > $PROGRESS_FILE << EOF
+    {
+      "epoch": 3,
+      "totalEpochs": 10,
+      "step": 150,
+      "totalSteps": 500,
+      "loss": "0.4523",
+      "accuracy": "0.8234",
+      "validationLoss": "0.4891",
+      "validationAccuracy": "0.8012",
+      "learningRate": "0.000050",
+      "percentComplete": "30.0",
+      "estimatedTimeRemaining": "14m32s",
+      "lastUpdateTime": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    }
+    EOF
+    
+    echo "     Created mock progress file:"
+    cat $PROGRESS_FILE
+    echo ""
+    echo "     Mock progress file created at: $PROGRESS_FILE"
+
+  test-kubectl-exec.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Testing kubectl exec functionality"
+    echo "===================================="
+    
+    TRAINJOB_NAME=${TRAINJOB_NAME:-"trl-demo"}
+    NAMESPACE=${TRAINJOB_NAMESPACE:-"abdhumal-test"}
+    
+    # Get running training pods
+    pods=$(kubectl get pods -n $NAMESPACE -l jobset.sigs.k8s.io/jobset-name=$TRAINJOB_NAME --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}')
+    
+    if [ -z "$pods" ]; then
+        echo "     No running training pods found"
+        exit 1
+    fi
+    
+    for pod in $pods; do
+        echo "Testing kubectl exec on pod: $pod"
+        
+        # Test basic exec
+        echo "       Basic exec test:"
+        kubectl exec -n $NAMESPACE $pod -- echo "Hello from $pod"
+        
+        # Test file system access
+        echo "       File system test:"
+        kubectl exec -n $NAMESPACE $pod -- ls -la /workspace/ || echo "       /workspace not accessible"
+        
+        # Test progress file read
+        echo "  Progress file test:"
+        kubectl exec -n $NAMESPACE $pod -- cat /workspace/training_progress.json 2>/dev/null || echo "       No progress file"
+        
+        # Test environment variables
+        echo "  Environment variables:"
+        kubectl exec -n $NAMESPACE $pod -- env | grep -E "(TRAINING_PROGRESS_FILE|CHECKPOINT|TRAINJOB)" || echo "       No relevant env vars"
+        
+        echo ""
+    done
+
+  benchmark-controller.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "⚡ Benchmarking Controller Performance"
+    echo "===================================="
+    
+    TRAINJOB_NAME=${TRAINJOB_NAME:-"trl-demo"}
+    NAMESPACE=${TRAINJOB_NAMESPACE:-"abdhumal-test"}
+    
+    echo "     Starting performance benchmark..."
+    echo "TrainJob: $TRAINJOB_NAME"
+    echo "Namespace: $NAMESPACE"
+    echo ""
+    
+    # Monitor reconciliation frequency
+    echo "     Monitoring reconciliation events (60 seconds)..."
+    
+    # Find the correct controller deployment
+    local controller_deployment=""
+    local controller_namespace=""
+    
+    local deployments=(
+        "opendatahub/kubeflow-trainer-controller-manager"
+        "opendatahub/trainer-controller-manager"
+        "kubeflow/kubeflow-trainer-controller-manager"
+        "kubeflow/trainer-controller-manager"
+    )
+    
+    for deployment in "${deployments[@]}"; do
+        local ns=$(echo $deployment | cut -d'/' -f1)
+        local name=$(echo $deployment | cut -d'/' -f2)
+        
+        if kubectl get deployment $name -n $ns >/dev/null 2>&1; then
+            controller_deployment=$name
+            controller_namespace=$ns
+            echo "Using controller: $controller_deployment in namespace: $controller_namespace"
+            break
+        fi
+    done
+    
+    if [ -z "$controller_deployment" ]; then
+        echo "     No trainer controller deployment found"
+        return 1
+    fi
+    
+    timeout 60s kubectl logs -n $controller_namespace deployment/$controller_deployment -f | grep -E "(Reconciling TrainJob|Requeuing for progress)" | while read line; do
+        echo "$(date '+%H:%M:%S'): $line"
+    done || true
+    
+    echo ""
+    echo "     Progress update frequency analysis:"
+    
+    # Check progress updates over time
+    for i in {1..6}; do
+        echo "  Check $i/6:"
+        progress=$(kubectl get --raw "/apis/trainer.kubeflow.org/v1alpha1/namespaces/$NAMESPACE/trainjobs/$TRAINJOB_NAME" | jq -r '.status.trainingProgress.lastUpdateTime // "null"')
+        step=$(kubectl get --raw "/apis/trainer.kubeflow.org/v1alpha1/namespaces/$NAMESPACE/trainjobs/$TRAINJOB_NAME" | jq -r '.status.trainingProgress.step // "null"')
+        echo "    Time: $(date '+%H:%M:%S'), LastUpdate: $progress, Step: $step"
+        sleep 10
+    done
+    
+    echo ""
+    echo "     Benchmark complete"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: checkpoint-api-tester
+  labels:
+    app: checkpoint-tester
+    purpose: api-testing
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: tester
+    image: quay.io/openshift/origin-cli:latest
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    command: ["/bin/bash"]
+    args: 
+    - "-c"
+    - |
+      echo "     Checkpoint API Tester Pod Started"
+      echo "==================================="
+      
+      # Install jq for JSON processing
+      curl -L -o /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
+      chmod +x /usr/local/bin/jq
+      
+      # Copy test scripts
+      cp /scripts/* /usr/local/bin/
+      chmod +x /usr/local/bin/*.sh
+      
+      echo "     Available test commands:"
+      echo "  test-progress-api.sh [status|progress|checkpointing|pods|files|monitor|logs|all]"
+      echo "  create-mock-progress.sh"
+      echo "  test-kubectl-exec.sh"
+      echo "  benchmark-controller.sh"
+      echo ""
+      echo "🔧 Example usage:"
+      echo "  kubectl exec -n \$TRAINJOB_NAMESPACE checkpoint-api-tester -- test-progress-api.sh all"
+      echo "  kubectl exec -n \$TRAINJOB_NAMESPACE checkpoint-api-tester -- benchmark-controller.sh"
+      echo ""
+      echo "Pod ready. Sleeping indefinitely..."
+      sleep infinity
+    env:
+    - name: TRAINJOB_NAME
+      value: "trl-demo"
+    - name: TRAINJOB_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    volumeMounts:
+    - name: test-scripts
+      mountPath: /scripts
+    - name: workspace
+      mountPath: /workspace
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  volumes:
+  - name: test-scripts
+    configMap:
+      name: checkpoint-api-test-scripts
+      defaultMode: 0755
+  - name: workspace
+    persistentVolumeClaim:
+      claimName: shared-checkpoint-storage

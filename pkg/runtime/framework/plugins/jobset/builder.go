@@ -17,6 +17,11 @@ limitations under the License.
 package jobset
 
 import (
+	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
+
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/utils/ptr"
 	jobsetv1alpha2ac "sigs.k8s.io/jobset/client-go/applyconfiguration/jobset/v1alpha2"
@@ -147,6 +152,39 @@ func (b *Builder) Trainer(info *runtime.Info, trainJob *trainer.TrainJob) *Build
 							apply.EnvVars(jobTrainer.Env...)...,
 						)
 					}
+
+					// Add checkpointing environment variables if enabled
+					if trainJob.Spec.Checkpointing != nil && ptr.Deref(trainJob.Spec.Checkpointing.Enabled, false) {
+						checkpointingEnvs := b.generateCheckpointingEnvVars(trainJob)
+						for _, envVar := range checkpointingEnvs {
+							apply.UpsertEnvVar(&b.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers[j].Env, *envVar)
+						}
+					}
+				}
+			}
+
+			// Add checkpointing volumes and volume mounts if enabled
+			if trainJob.Spec.Checkpointing != nil && ptr.Deref(trainJob.Spec.Checkpointing.Enabled, false) {
+				volumes, volumeMounts := b.generateCheckpointingVolumes(trainJob)
+
+				// Add volumes to the pod spec
+				if len(volumes) > 0 {
+					volumeConfigs := make([]corev1ac.VolumeApplyConfiguration, len(volumes))
+					for idx, v := range volumes {
+						volumeConfigs[idx] = *v
+					}
+					apply.UpsertVolumes(&b.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Volumes, volumeConfigs...)
+				}
+
+				// Add volume mounts to the trainer container
+				for j, container := range rJob.Template.Spec.Template.Spec.Containers {
+					if *container.Name == constants.Node && len(volumeMounts) > 0 {
+						mountConfigs := make([]corev1ac.VolumeMountApplyConfiguration, len(volumeMounts))
+						for k, vm := range volumeMounts {
+							mountConfigs[k] = *vm
+						}
+						apply.UpsertVolumeMounts(&b.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers[j].VolumeMounts, mountConfigs...)
+					}
 				}
 			}
 		}
@@ -170,4 +208,118 @@ func (b *Builder) Suspend(suspend *bool) *Builder {
 
 func (b *Builder) Build() *jobsetv1alpha2ac.JobSetApplyConfiguration {
 	return b.JobSetApplyConfiguration
+}
+
+// generateCheckpointingEnvVars generates environment variables for checkpointing configuration
+func (b *Builder) generateCheckpointingEnvVars(trainJob *trainer.TrainJob) []*corev1ac.EnvVarApplyConfiguration {
+	if trainJob.Spec.Checkpointing == nil {
+		return nil
+	}
+
+	config := trainJob.Spec.Checkpointing
+	envVars := []*corev1ac.EnvVarApplyConfiguration{
+		corev1ac.EnvVar().WithName("CHECKPOINT_ENABLED").WithValue("true"),
+		corev1ac.EnvVar().WithName("CHECKPOINT_URI").WithValue(config.Storage.URI),
+		corev1ac.EnvVar().WithName("CHECKPOINT_INTERVAL").WithValue(ptr.Deref(config.Interval, "5m")),
+		corev1ac.EnvVar().WithName("CHECKPOINT_MAX_RETAIN").WithValue(strconv.Itoa(int(ptr.Deref(config.MaxCheckpoints, 3)))),
+		corev1ac.EnvVar().WithName("CHECKPOINT_RESUME").WithValue(strconv.FormatBool(ptr.Deref(config.ResumeFromCheckpoint, true))),
+		corev1ac.EnvVar().WithName("CHECKPOINT_LOCAL_PATH").WithValue("/tmp/checkpoints"),
+		corev1ac.EnvVar().WithName("TRAINJOB_PROGRESS_FILE").WithValue("/tmp/training_progress.json"),
+		corev1ac.EnvVar().WithName("CHECKPOINT_ACCESS_MODE").WithValue(ptr.Deref(config.Storage.AccessMode, "ReadWriteMany")),
+		corev1ac.EnvVar().WithName("TRAINJOB_NAME").WithValue(trainJob.Name),
+		corev1ac.EnvVar().WithName("TRAINJOB_NAMESPACE").WithValue(trainJob.Namespace),
+		corev1ac.EnvVar().WithName("TRAINJOB_UID").WithValue(string(trainJob.UID)),
+	}
+
+	// Add custom environment variables from the checkpointing config
+	for _, env := range config.Env {
+		envVars = append(envVars, corev1ac.EnvVar().WithName(env.Name).WithValue(env.Value))
+	}
+
+	return envVars
+}
+
+// generateCheckpointingVolumes generates volumes and volume mounts for checkpointing
+func (b *Builder) generateCheckpointingVolumes(trainJob *trainer.TrainJob) ([]*corev1ac.VolumeApplyConfiguration, []*corev1ac.VolumeMountApplyConfiguration) {
+	if trainJob.Spec.Checkpointing == nil {
+		return nil, nil
+	}
+
+	config := trainJob.Spec.Checkpointing
+	volumes := []*corev1ac.VolumeApplyConfiguration{}
+	volumeMounts := []*corev1ac.VolumeMountApplyConfiguration{}
+
+	// Create volume for checkpoint storage
+	if config.Storage.PersistentVolume != nil {
+		volumeName := "checkpoint-storage"
+
+		// Use the specified PVC name
+		claimName := config.Storage.PersistentVolume.ClaimName
+
+		// Create PVC volume
+		volumes = append(volumes, corev1ac.Volume().
+			WithName(volumeName).
+			WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+				WithClaimName(claimName)))
+
+		// Determine mount path
+		mountPath := "/tmp/checkpoints"
+		if config.Storage.PersistentVolume != nil && config.Storage.PersistentVolume.MountPath != nil {
+			mountPath = *config.Storage.PersistentVolume.MountPath
+		}
+
+		// Create volume mount
+		volumeMount := corev1ac.VolumeMount().
+			WithName(volumeName).
+			WithMountPath(mountPath)
+
+		// Add subPath if specified
+		if config.Storage.PersistentVolume != nil && config.Storage.PersistentVolume.SubPath != nil {
+			volumeMount.WithSubPath(*config.Storage.PersistentVolume.SubPath)
+		}
+
+		volumeMounts = append(volumeMounts, volumeMount)
+	} else if strings.HasPrefix(config.Storage.URI, "/") {
+		// Legacy support: Local filesystem path - assume PVC exists
+		volumeName := "checkpoint-storage"
+		claimName := fmt.Sprintf("%s-checkpoint-pvc", trainJob.Name)
+
+		// Create PVC volume
+		volumes = append(volumes, corev1ac.Volume().
+			WithName(volumeName).
+			WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+				WithClaimName(claimName)))
+
+		// Use default mount path
+		mountPath := "/tmp/checkpoints"
+		volumeMounts = append(volumeMounts, corev1ac.VolumeMount().
+			WithName(volumeName).
+			WithMountPath(mountPath))
+	}
+
+	// Create volume for progress file
+	progressVolumeName := "progress-storage"
+	volumes = append(volumes, corev1ac.Volume().
+		WithName(progressVolumeName).
+		WithEmptyDir(corev1ac.EmptyDirVolumeSource()))
+
+	volumeMounts = append(volumeMounts, corev1ac.VolumeMount().
+		WithName(progressVolumeName).
+		WithMountPath(filepath.Dir("/tmp/training_progress.json")))
+
+	// Add secret volume if specified (for object storage credentials)
+	if config.Storage.SecretRef != nil {
+		secretVolumeName := "checkpoint-credentials"
+		volumes = append(volumes, corev1ac.Volume().
+			WithName(secretVolumeName).
+			WithSecret(corev1ac.SecretVolumeSource().
+				WithSecretName(config.Storage.SecretRef.Name)))
+
+		volumeMounts = append(volumeMounts, corev1ac.VolumeMount().
+			WithName(secretVolumeName).
+			WithMountPath("/etc/checkpoint-credentials").
+			WithReadOnly(true))
+	}
+
+	return volumes, volumeMounts
 }
