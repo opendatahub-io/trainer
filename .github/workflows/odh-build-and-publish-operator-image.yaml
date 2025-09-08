@@ -37,7 +37,7 @@ jobs:
       runs-on: ubuntu-latest
       env:
         GOPATH: ${{ github.workspace }}/go
-        REPO_NAME: ${{ vars.QUAY_REPO_NAME || 'opendatahub' }}
+        REPO_NAME: ${{ 'rh-ee-knema' }}
       steps:
         - name: Environment dump
           shell: bash
@@ -64,7 +64,7 @@ jobs:
           run: |
             go mod download
 
-        # Build operators inside the gh runner vm directly and then copy the go binaries to docker images using the Dockerfile.rhoai.multiarch
+        # Build operators inside the gh runner vm directly and then copy the go binaries to docker images using the Dockerfile.multiarch
         - name: Build linux/amd64 operator binary
           env:
             CGO_ENABLED: 1
