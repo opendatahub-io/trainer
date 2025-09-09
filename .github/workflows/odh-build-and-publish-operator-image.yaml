@@ -1,27 +1,7 @@
-# This is a copy of the publish-core-images.yaml and has been customized to
-# use the quay login credentials and RHOAI Dockerfile.
-# The unused parts of the original have been commented out on purpose.
-name: ODH
+# This workflow builds and publishes the ODH operator image for pushes and pull requests to the dev branch.
+name: ODH-Build-And-Publish-Operator-Image
 
 on:
-  workflow_dispatch:
-    inputs:
-      branch:
-        required: true
-        description: "Branch or tag to build from"
-        default: "dev"
-      push_images:
-        required: true
-        description: "Whether to push images to registry"
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
-      image_tag:
-        required: false
-        description: "Additional custom tag for the image (optional)"
-        default: ""
   push:
     branches:
       - dev
