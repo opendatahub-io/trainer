@@ -74,7 +74,7 @@ jobs:
             tags: |
               type=raw,latest
               type=ref,event=pr
-              type=sha,prefix=v1-odh-
+              type=sha,prefix=v2-odh-
               type=ref,enable=true,priority=600,prefix=,suffix=,event=tag
               type=raw,value=${{ github.event.inputs.image_tag }},enable=${{ github.event.inputs.image_tag != '' }}
 
