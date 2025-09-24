@@ -1,0 +1,4 @@
+releases:
+  - name: Kubeflow Trainer
+    version: "2.0.0"
+    repoUrl: https://github.com/kubeflow/trainer
