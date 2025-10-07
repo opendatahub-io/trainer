@@ -1,14 +1,14 @@
 approvers:
-  - andreyvelich
-  - Electronic-Waste
-  - gaocegege
-  - Jeffwan
-  - johnugeorge
-  - tenzen-y
-  - terrytangyuan
-reviewers:
   - astefanutti
-  - jinchihe
-  - kuizhiqing
-emeritus_approvers:
-  - zw0610
+  - efazal
+  - robert-bell
+  - sutaakar
+
+reviewers:
+  - abhijeet-dhumal
+  - astefanutti
+  - ChughShilpa
+  - efazal
+  - kapil27
+  - robert-bell
+  - sutaakar
