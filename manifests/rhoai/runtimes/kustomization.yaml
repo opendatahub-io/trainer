@@ -5,3 +5,5 @@ resources:
   - torch_cuda_251.yaml
   - torch_rocm_241.yaml
   - torch_rocm_251.yaml
+  - torch_distributed_cuda_280.yaml
+  - training_hub_cuda_280.yaml
