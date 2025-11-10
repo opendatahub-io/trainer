@@ -28,7 +28,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	batchv1ac "k8s.io/client-go/applyconfigurations/batch/v1"
-	v1 "k8s.io/client-go/applyconfigurations/batch/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/klog/v2/ktesting"
 	"k8s.io/utils/ptr"
@@ -89,7 +88,7 @@ func TestJobSet(t *testing.T) {
 			info: &runtime.Info{
 				RuntimePolicy: runtime.RuntimePolicy{
 					MLPolicySource: utiltesting.MakeMLPolicySourceWrapper().
-						MPIPolicy(nil, ptr.To(trainer.MPIImplementationOpenMPI), nil, nil).
+						MPIPolicy(nil, trainer.MPIImplementationOpenMPI, nil, nil).
 						Obj(),
 				},
 				TemplateSpec: runtime.TemplateSpec{
@@ -141,7 +140,7 @@ func TestJobSet(t *testing.T) {
 			wantInfo: &runtime.Info{
 				RuntimePolicy: runtime.RuntimePolicy{
 					MLPolicySource: utiltesting.MakeMLPolicySourceWrapper().
-						MPIPolicy(nil, ptr.To(trainer.MPIImplementationOpenMPI), nil, nil).
+						MPIPolicy(nil, trainer.MPIImplementationOpenMPI, nil, nil).
 						Obj(),
 				},
 				TemplateSpec: runtime.TemplateSpec{
@@ -367,8 +366,8 @@ func TestValidate(t *testing.T) {
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To("random"),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -402,8 +401,8 @@ func TestValidate(t *testing.T) {
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.DatasetInitializer),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{},
@@ -433,8 +432,8 @@ func TestValidate(t *testing.T) {
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.DatasetInitializer),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -462,8 +461,8 @@ func TestValidate(t *testing.T) {
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To("random"),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -497,8 +496,8 @@ func TestValidate(t *testing.T) {
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.ModelInitializer),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{},
@@ -521,15 +520,15 @@ func TestValidate(t *testing.T) {
 					fmt.Sprintf("must have container with name - %s in the %s job", constants.ModelInitializer, constants.ModelInitializer)),
 			},
 		},
-		"podSpecOverrides contain invalid targetJob": {
+		"podTemplateOverrides contain invalid targetJob": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{},
@@ -543,30 +542,30 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: "invalid"}},
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: "invalid"}},
 					},
 				}).Obj(),
 			wantError: field.ErrorList{
-				field.Invalid(podSpecOverridePath,
-					[]trainer.PodSpecOverride{
+				field.Invalid(podTemplateOverridePath,
+					[]trainer.PodTemplateOverride{
 						{
-							TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: "invalid"}},
+							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: "invalid"}},
 						},
 					},
 					"must not have targetJob that doesn't exist in the runtime job template"),
 			},
 		},
-		"podSpecOverrides contain invalid initContainer": {
+		"podTemplateOverrides contain invalid initContainer": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												InitContainers: []corev1ac.ContainerApplyConfiguration{
@@ -584,21 +583,10 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						InitContainers: []trainer.ContainerOverride{
-							{
-								Name: "invalid",
-							},
-						},
-					},
-				}).Obj(),
-			wantError: field.ErrorList{
-				field.Invalid(podSpecOverridePath,
-					[]trainer.PodSpecOverride{
-						{
-							TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
 							InitContainers: []trainer.ContainerOverride{
 								{
 									Name: "invalid",
@@ -606,18 +594,33 @@ func TestValidate(t *testing.T) {
 							},
 						},
 					},
+				}).Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(podTemplateOverridePath,
+					[]trainer.PodTemplateOverride{
+						{
+							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+							Spec: &trainer.PodTemplateSpecOverride{
+								InitContainers: []trainer.ContainerOverride{
+									{
+										Name: "invalid",
+									},
+								},
+							},
+						},
+					},
 					fmt.Sprintf("must not have initContainer that doesn't exist in the runtime job %s", constants.Node)),
 			},
 		},
-		"podSpecOverrides contain invalid container": {
+		"podTemplateOverrides contain invalid container": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -635,21 +638,10 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						Containers: []trainer.ContainerOverride{
-							{
-								Name: "invalid",
-							},
-						},
-					},
-				}).Obj(),
-			wantError: field.ErrorList{
-				field.Invalid(podSpecOverridePath,
-					[]trainer.PodSpecOverride{
-						{
-							TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
 							Containers: []trainer.ContainerOverride{
 								{
 									Name: "invalid",
@@ -657,18 +649,33 @@ func TestValidate(t *testing.T) {
 							},
 						},
 					},
+				}).Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(podTemplateOverridePath,
+					[]trainer.PodTemplateOverride{
+						{
+							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+							Spec: &trainer.PodTemplateSpecOverride{
+								Containers: []trainer.ContainerOverride{
+									{
+										Name: "invalid",
+									},
+								},
+							},
+						},
+					},
 					fmt.Sprintf("must not have container that doesn't exist in the runtime job %s", constants.Node)),
 			},
 		},
-		"podSpecOverrides contain envs for reserved container": {
+		"podTemplateOverrides contain envs for reserved container": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
-								Template: &v1.JobTemplateSpecApplyConfiguration{
-									Spec: &v1.JobSpecApplyConfiguration{
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -686,27 +693,10 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						Containers: []trainer.ContainerOverride{
-							{
-								Name: constants.Node,
-								Env: []corev1.EnvVar{
-									{
-										Name:  "ENV_NAME",
-										Value: "OVERRIDE",
-									},
-								},
-							},
-						},
-					},
-				}).Obj(),
-			wantError: field.ErrorList{
-				field.Invalid(podSpecOverridePath,
-					[]trainer.PodSpecOverride{
-						{
-							TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
 							Containers: []trainer.ContainerOverride{
 								{
 									Name: constants.Node,
@@ -720,18 +710,48 @@ func TestValidate(t *testing.T) {
 							},
 						},
 					},
+				}).Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(podTemplateOverridePath,
+					[]trainer.PodTemplateOverride{
+						{
+							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+							Spec: &trainer.PodTemplateSpecOverride{
+								Containers: []trainer.ContainerOverride{
+									{
+										Name: constants.Node,
+										Env: []corev1.EnvVar{
+											{
+												Name:  "ENV_NAME",
+												Value: "OVERRIDE",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
 					fmt.Sprintf("must not have envs for the %s, %s, %s containers", constants.DatasetInitializer, constants.ModelInitializer, constants.Node)),
 			},
 		},
+<<<<<<< HEAD
 		"allow podSpecOverrides when creating a new trainJob": {
+=======
+		"allow podTemplateOverrides when creating a new trainJob": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -750,28 +770,49 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: nil,
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			wantError: nil,
 		},
+<<<<<<< HEAD
 		"allow updates to trainJob with no changes to podSpecOverrides": {
+=======
+		"allow updates to trainJob with no changes to podTemplateOverrides": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -789,40 +830,73 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			wantError: nil,
 		},
+<<<<<<< HEAD
 		"forbid changes to podSpecOverrides when trainJob is not suspended": {
+=======
+		"forbid changes to podTemplateOverrides when trainJob is not suspended": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -841,43 +915,79 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(false).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(false).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account-updated"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account-updated"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			wantError: field.ErrorList{
+<<<<<<< HEAD
 				field.Forbidden(podSpecOverridePath, "PodSpecOverrides can only be modified when the TrainJob is suspended"),
 			},
 		},
 		"allow changes to podSpecOverrides when trainJob is suspended and jobSet does not exists": {
+=======
+				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides can only be modified when the TrainJob is suspended"),
+			},
+		},
+		"allow changes to podTemplateOverrides when trainJob is suspended and jobSet does not exists": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -896,42 +1006,75 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account-updated"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account-updated"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			clientErr: apierrors.NewNotFound(jobsetv1alpha2.Resource("jobset"), ""),
 			wantError: nil,
 		},
+<<<<<<< HEAD
 		"allow changes to podSpecOverrides when trainJob is suspended and jobSet exists but is inactive": {
+=======
+		"allow changes to podTemplateOverrides when trainJob is suspended and jobSet exists but is inactive": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.DatasetInitializer),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -946,8 +1089,13 @@ func TestValidate(t *testing.T) {
 							},
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -966,27 +1114,51 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account-updated"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account-updated"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
@@ -1010,15 +1182,24 @@ func TestValidate(t *testing.T) {
 			},
 			wantError: nil,
 		},
+<<<<<<< HEAD
 		"forbid changes to podSpecOverrides when trainJob is suspended but jobSet has an active replicatedJob": {
+=======
+		"forbid changes to podTemplateOverrides when trainJob is suspended but jobSet has an active replicatedJob": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.DatasetInitializer),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -1033,8 +1214,13 @@ func TestValidate(t *testing.T) {
 							},
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -1053,27 +1239,51 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account-updated"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account-updated"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
@@ -1096,18 +1306,30 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantError: field.ErrorList{
+<<<<<<< HEAD
 				field.Forbidden(podSpecOverridePath, "PodSpecOverrides cannot be modified when the JobSet's ReplicatedJob node is still active"),
 			},
 		},
 		"forbid changes to podSpecOverrides when trainJob is suspended but has multiple active replicatedJobs": {
+=======
+				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides cannot be modified when the JobSet's ReplicatedJob node is still active"),
+			},
+		},
+		"forbid changes to podTemplateOverrides when trainJob is suspended but has multiple active replicatedJobs": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.DatasetInitializer),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -1122,8 +1344,13 @@ func TestValidate(t *testing.T) {
 							},
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -1142,27 +1369,51 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account-updated"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account-updated"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
@@ -1185,19 +1436,32 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantError: field.ErrorList{
+<<<<<<< HEAD
 				field.Forbidden(podSpecOverridePath, "PodSpecOverrides cannot be modified when the JobSet's ReplicatedJob dataset-initializer is still active"),
 				field.Forbidden(podSpecOverridePath, "PodSpecOverrides cannot be modified when the JobSet's ReplicatedJob node is still active"),
 			},
 		},
 		"forbid changes to podSpecOverrides when trainJob is suspended but jobSet cannot be checked due to a client error": {
+=======
+				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides cannot be modified when the JobSet's ReplicatedJob dataset-initializer is still active"),
+				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides cannot be modified when the JobSet's ReplicatedJob node is still active"),
+			},
+		},
+		"forbid changes to podTemplateOverrides when trainJob is suspended but jobSet cannot be checked due to a client error": {
+>>>>>>> v2.1.0
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
 						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
 							{
 								Name: ptr.To(constants.Node),
+<<<<<<< HEAD
 								Template: &v1.JobTemplateSpecApplyConfiguration{
 									Spec: &v1.JobSpecApplyConfiguration{
+=======
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+>>>>>>> v2.1.0
 										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
 											Spec: &corev1ac.PodSpecApplyConfiguration{
 												Containers: []corev1ac.ContainerApplyConfiguration{
@@ -1216,33 +1480,61 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
+<<<<<<< HEAD
 				PodSpecOverrides([]trainer.PodSpecOverride{
 					{
 						TargetJobs: []trainer.PodSpecOverrideTargetJob{
+=======
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
+>>>>>>> v2.1.0
 							{
 								Name: constants.Node,
 							},
 						},
+<<<<<<< HEAD
 						ServiceAccountName: ptr.To("service-account-updated"),
+=======
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("service-account-updated"),
+						},
+>>>>>>> v2.1.0
 					},
 				}).
 				Obj(),
 			clientErr: fmt.Errorf("client error"),
 			wantError: field.ErrorList{
+<<<<<<< HEAD
 				field.InternalError(podSpecOverridePath, fmt.Errorf("client error")),
+=======
+				field.InternalError(podTemplateOverridePath, fmt.Errorf("client error")),
+>>>>>>> v2.1.0
 			},
 		},
 	}

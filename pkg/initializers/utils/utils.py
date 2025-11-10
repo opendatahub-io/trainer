@@ -5,6 +5,8 @@ from typing import Dict
 
 STORAGE_URI_ENV = "STORAGE_URI"
 HF_SCHEME = "hf"
+CACHE_SCHEME = "cache"
+S3_SCHEME = "s3"
 
 # The default path to the users' workspace.
 # TODO (andreyvelich): Discuss how to keep this path is sync with Kubeflow SDK constants.
@@ -39,9 +41,19 @@ class DatasetProvider(ABC):
 
 # Get DataClass config from the environment variables.
 # Env names must be equal to the DataClass parameters.
-def get_config_from_env(config) -> Dict[str, str]:
+def get_config_from_env(config) -> Dict:
     config_from_env = {}
+
     for field in fields(config):
-        config_from_env[field.name] = os.getenv(field.name.upper())
+        env_value = os.getenv(field.name.upper())
+
+        if field.name == "ignore_patterns":
+            config_from_env[field.name] = (
+                [item.strip() for item in env_value.split(",") if item.strip()]
+                if env_value
+                else None
+            )
+        else:
+            config_from_env[field.name] = env_value if env_value else None
 
     return config_from_env

@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/ptr"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
+	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
@@ -52,7 +53,8 @@ func MakeJobSetWrapper(namespace, name string) *JobSetWrapper {
 			Spec: jobsetv1alpha2.JobSetSpec{
 				ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
 					{
-						Name: constants.DatasetInitializer,
+						Name:      constants.DatasetInitializer,
+						GroupName: "default",
 						Template: batchv1.JobTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: map[string]string{
@@ -85,7 +87,8 @@ func MakeJobSetWrapper(namespace, name string) *JobSetWrapper {
 						},
 					},
 					{
-						Name: constants.ModelInitializer,
+						Name:      constants.ModelInitializer,
+						GroupName: "default",
 						Template: batchv1.JobTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: map[string]string{
@@ -118,7 +121,8 @@ func MakeJobSetWrapper(namespace, name string) *JobSetWrapper {
 						},
 					},
 					{
-						Name: constants.Node,
+						Name:      constants.Node,
+						GroupName: "default",
 						Template: batchv1.JobTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: map[string]string{
@@ -205,7 +209,8 @@ func (j *JobSetWrapper) LauncherReplica() *JobSetWrapper {
 			j.Spec.ReplicatedJobs = append(j.Spec.ReplicatedJobs, jobsetv1alpha2.ReplicatedJob{})
 			copy(j.Spec.ReplicatedJobs[i+1:], j.Spec.ReplicatedJobs[i:])
 			j.Spec.ReplicatedJobs[i] = jobsetv1alpha2.ReplicatedJob{
-				Name: constants.Launcher,
+				Name:      constants.Launcher,
+				GroupName: "default",
 				Template: batchv1.JobTemplateSpec{
 					Spec: batchv1.JobSpec{
 						Template: corev1.PodTemplateSpec{
@@ -270,6 +275,26 @@ func (j *JobSetWrapper) Container(rJobName, containerName, image string, command
 	return j
 }
 
+func (j *JobSetWrapper) ReplaceContainer(rJobName, containerName, newContainerName, image string, command, args []string, res corev1.ResourceList) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			for k, container := range rJob.Template.Spec.Template.Spec.Containers {
+				if container.Name == containerName {
+					j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers[k] = corev1.Container{
+						Name:      newContainerName,
+						Image:     image,
+						Command:   command,
+						Args:      args,
+						Resources: corev1.ResourceRequirements{Requests: res},
+					}
+					return j
+				}
+			}
+		}
+	}
+	return j
+}
+
 func (j *JobSetWrapper) ContainerTrainerPorts(ports []corev1.ContainerPort) *JobSetWrapper {
 	for i, rJob := range j.Spec.ReplicatedJobs {
 		if rJob.Name == constants.Node {
@@ -293,6 +318,18 @@ func (j *JobSetWrapper) NodeSelector(rJobName string, selector map[string]string
 	return j
 }
 
+<<<<<<< HEAD
+=======
+func (j *JobSetWrapper) Affinity(rJobName string, affinity corev1.Affinity) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Affinity = &affinity
+		}
+	}
+	return j
+}
+
+>>>>>>> v2.1.0
 func (j *JobSetWrapper) SchedulingGates(rJobName string, schedulingGates ...corev1.PodSchedulingGate) *JobSetWrapper {
 	for i, rJob := range j.Spec.ReplicatedJobs {
 		if rJob.Name == rJobName {
@@ -305,6 +342,21 @@ func (j *JobSetWrapper) SchedulingGates(rJobName string, schedulingGates ...core
 	return j
 }
 
+<<<<<<< HEAD
+=======
+func (j *JobSetWrapper) ImagePullSecrets(rJobName string, imagePullSecrets ...corev1.LocalObjectReference) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.ImagePullSecrets = append(
+				j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.ImagePullSecrets,
+				imagePullSecrets...,
+			)
+		}
+	}
+	return j
+}
+
+>>>>>>> v2.1.0
 func (j *JobSetWrapper) Tolerations(rJobName string, tolerations ...corev1.Toleration) *JobSetWrapper {
 	for i, rJob := range j.Spec.ReplicatedJobs {
 		if rJob.Name == rJobName {
@@ -428,6 +480,51 @@ func (j *JobSetWrapper) PodLabel(key, value string) *JobSetWrapper {
 	return j
 }
 
+func (j *JobSetWrapper) PodAnnotation(key, value string) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Template.Spec.Template.Annotations == nil {
+			j.Spec.ReplicatedJobs[i].Template.Spec.Template.Annotations = make(map[string]string, 1)
+		}
+		j.Spec.ReplicatedJobs[i].Template.Spec.Template.Annotations[key] = value
+	}
+	return j
+}
+
+func (j *JobSetWrapper) PodLabelForJobs(key, value string, rJobNames ...string) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		for _, rJobName := range rJobNames {
+			if rJob.Name == rJobName {
+				if rJob.Template.Spec.Template.Labels == nil {
+					j.Spec.ReplicatedJobs[i].Template.Spec.Template.Labels = make(map[string]string, 1)
+				}
+				j.Spec.ReplicatedJobs[i].Template.Spec.Template.Labels[key] = value
+			}
+		}
+	}
+	return j
+}
+
+func (j *JobSetWrapper) PodAnnotationForJobs(key, value string, rJobNames ...string) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		for _, rJobName := range rJobNames {
+			if rJob.Name == rJobName {
+				if rJob.Template.Spec.Template.Annotations == nil {
+					j.Spec.ReplicatedJobs[i].Template.Spec.Template.Annotations = make(map[string]string, 1)
+				}
+				j.Spec.ReplicatedJobs[i].Template.Spec.Template.Annotations[key] = value
+			}
+		}
+	}
+	return j
+}
+
+func (j *JobSetWrapper) PodPriorityClassName(value string) *JobSetWrapper {
+	for i := range j.Spec.ReplicatedJobs {
+		j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.PriorityClassName = value
+	}
+	return j
+}
+
 func (j *JobSetWrapper) Label(key, value string) *JobSetWrapper {
 	if j.ObjectMeta.Labels == nil {
 		j.ObjectMeta.Labels = make(map[string]string, 1)
@@ -457,6 +554,11 @@ func (j *JobSetWrapper) DependsOn(rJobName string, dependsOn ...jobsetv1alpha2.D
 			j.Spec.ReplicatedJobs[i].DependsOn = append(j.Spec.ReplicatedJobs[i].DependsOn, dependsOn...)
 		}
 	}
+	return j
+}
+
+func (j *JobSetWrapper) ReplicatedJobsStatuses(statuses []jobsetv1alpha2.ReplicatedJobStatus) *JobSetWrapper {
+	j.Status.ReplicatedJobsStatus = statuses
 	return j
 }
 
@@ -534,8 +636,8 @@ func (t *TrainJobWrapper) Trainer(trainer *trainer.Trainer) *TrainJobWrapper {
 	return t
 }
 
-func (t *TrainJobWrapper) PodSpecOverrides(podSpecOverrides []trainer.PodSpecOverride) *TrainJobWrapper {
-	t.Spec.PodSpecOverrides = podSpecOverrides
+func (t *TrainJobWrapper) PodTemplateOverrides(podTemplateOverrides []trainer.PodTemplateOverride) *TrainJobWrapper {
+	t.Spec.PodTemplateOverrides = podTemplateOverrides
 	return t
 }
 
@@ -689,7 +791,8 @@ func MakeTrainingRuntimeWrapper(namespace, name string) *TrainingRuntimeWrapper 
 					Spec: jobsetv1alpha2.JobSetSpec{
 						ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
 							{
-								Name: constants.DatasetInitializer,
+								Name:      constants.DatasetInitializer,
+								GroupName: "default",
 								Template: batchv1.JobTemplateSpec{
 									ObjectMeta: metav1.ObjectMeta{
 										Labels: map[string]string{
@@ -722,7 +825,8 @@ func MakeTrainingRuntimeWrapper(namespace, name string) *TrainingRuntimeWrapper 
 								},
 							},
 							{
-								Name: constants.ModelInitializer,
+								Name:      constants.ModelInitializer,
+								GroupName: "default",
 								Template: batchv1.JobTemplateSpec{
 									ObjectMeta: metav1.ObjectMeta{
 										Labels: map[string]string{
@@ -755,7 +859,8 @@ func MakeTrainingRuntimeWrapper(namespace, name string) *TrainingRuntimeWrapper 
 								},
 							},
 							{
-								Name: constants.Node,
+								Name:      constants.Node,
+								GroupName: "default",
 								Template: batchv1.JobTemplateSpec{
 									ObjectMeta: metav1.ObjectMeta{
 										Labels: map[string]string{
@@ -855,7 +960,8 @@ func MakeClusterTrainingRuntimeWrapper(name string) *ClusterTrainingRuntimeWrapp
 					Spec: jobsetv1alpha2.JobSetSpec{
 						ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
 							{
-								Name: constants.DatasetInitializer,
+								Name:      constants.DatasetInitializer,
+								GroupName: "default",
 								Template: batchv1.JobTemplateSpec{
 									Spec: batchv1.JobSpec{
 										Template: corev1.PodTemplateSpec{
@@ -883,7 +989,8 @@ func MakeClusterTrainingRuntimeWrapper(name string) *ClusterTrainingRuntimeWrapp
 								},
 							},
 							{
-								Name: constants.ModelInitializer,
+								Name:      constants.ModelInitializer,
+								GroupName: "default",
 								Template: batchv1.JobTemplateSpec{
 									Spec: batchv1.JobSpec{
 										Template: corev1.PodTemplateSpec{
@@ -911,7 +1018,8 @@ func MakeClusterTrainingRuntimeWrapper(name string) *ClusterTrainingRuntimeWrapp
 								},
 							},
 							{
-								Name: constants.Node,
+								Name:      constants.Node,
+								GroupName: "default",
 								Template: batchv1.JobTemplateSpec{
 									Spec: batchv1.JobSpec{
 										Template: corev1.PodTemplateSpec{
@@ -997,7 +1105,8 @@ func (s *TrainingRuntimeSpecWrapper) LauncherReplica() *TrainingRuntimeSpecWrapp
 			s.Template.Spec.ReplicatedJobs = append(s.Template.Spec.ReplicatedJobs, jobsetv1alpha2.ReplicatedJob{})
 			copy(s.Template.Spec.ReplicatedJobs[i+1:], s.Template.Spec.ReplicatedJobs[i:])
 			s.Template.Spec.ReplicatedJobs[i] = jobsetv1alpha2.ReplicatedJob{
-				Name: constants.Launcher,
+				Name:      constants.Launcher,
+				GroupName: "default",
 				Template: batchv1.JobTemplateSpec{
 					Spec: batchv1.JobSpec{
 						Template: corev1.PodTemplateSpec{
@@ -1151,12 +1260,12 @@ func (m *MLPolicySourceWrapper) TorchPolicy(numProcPerNode *intstr.IntOrString, 
 	return m
 }
 
-func (m *MLPolicySourceWrapper) MPIPolicy(numProcPerNode *int32, MPImplementation *trainer.MPIImplementation, sshAuthMountPath *string, runLauncherAsNode *bool) *MLPolicySourceWrapper {
+func (m *MLPolicySourceWrapper) MPIPolicy(numProcPerNode *int32, MPImplementation trainer.MPIImplementation, sshAuthMountPath *string, runLauncherAsNode *bool) *MLPolicySourceWrapper {
 	if m.MPI == nil {
 		m.MPI = &trainer.MPIMLPolicySource{}
 	}
 	m.MPI.NumProcPerNode = numProcPerNode
-	m.MPI.MPIImplementation = MPImplementation
+	m.MPI.MPIImplementation = &MPImplementation
 	m.MPI.SSHAuthMountPath = sshAuthMountPath
 	m.MPI.RunLauncherAsNode = runLauncherAsNode
 	return m
@@ -1213,6 +1322,69 @@ func (p *SchedulerPluginsPodGroupWrapper) ControllerReference(gvk schema.GroupVe
 }
 
 func (p *SchedulerPluginsPodGroupWrapper) Obj() *schedulerpluginsv1alpha1.PodGroup {
+	return &p.PodGroup
+}
+
+type VolcanoPodGroupWrapper struct {
+	volcanov1beta1.PodGroup
+}
+
+func MakeVolcanoPodGroup(namespace, name string) *VolcanoPodGroupWrapper {
+	return &VolcanoPodGroupWrapper{
+		PodGroup: volcanov1beta1.PodGroup{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: volcanov1beta1.SchemeGroupVersion.String(),
+				Kind:       "PodGroup",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      name,
+			},
+		},
+	}
+}
+
+func (p *VolcanoPodGroupWrapper) MinMember(members int32) *VolcanoPodGroupWrapper {
+	p.PodGroup.Spec.MinMember = members
+	return p
+}
+
+func (p *VolcanoPodGroupWrapper) MinResources(resources *corev1.ResourceList) *VolcanoPodGroupWrapper {
+	p.PodGroup.Spec.MinResources = resources
+	return p
+}
+
+func (p *VolcanoPodGroupWrapper) Queue(queue string) *VolcanoPodGroupWrapper {
+	p.PodGroup.Spec.Queue = queue
+	return p
+}
+
+func (p *VolcanoPodGroupWrapper) PriorityClassName(pc string) *VolcanoPodGroupWrapper {
+	p.PodGroup.Spec.PriorityClassName = pc
+	return p
+}
+
+func (p *VolcanoPodGroupWrapper) NetworkTopology(mode volcanov1beta1.NetworkTopologyMode, highestTier int) *VolcanoPodGroupWrapper {
+	p.PodGroup.Spec.NetworkTopology = &volcanov1beta1.NetworkTopologySpec{
+		Mode:               mode,
+		HighestTierAllowed: &highestTier,
+	}
+	return p
+}
+
+func (p *VolcanoPodGroupWrapper) ControllerReference(gvk schema.GroupVersionKind, name, uid string) *VolcanoPodGroupWrapper {
+	owner := *metav1.NewControllerRef(&trainer.TrainJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: p.Namespace,
+			Name:      name,
+			UID:       types.UID(uid),
+		},
+	}, gvk)
+	p.PodGroup.OwnerReferences = append(p.PodGroup.OwnerReferences, owner)
+	return p
+}
+
+func (p *VolcanoPodGroupWrapper) Obj() *volcanov1beta1.PodGroup {
 	return &p.PodGroup
 }
 

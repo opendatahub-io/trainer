@@ -28,20 +28,32 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+<<<<<<< HEAD
+=======
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+>>>>>>> v2.1.0
 	runtimecore "github.com/kubeflow/trainer/v2/pkg/runtime/core"
 	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
 
 func TestValidateCreate(t *testing.T) {
 	cases := map[string]struct {
+<<<<<<< HEAD
 		obj          *trainer.TrainJob
 		wantError    field.ErrorList
 		wantWarnings admission.Warnings
+=======
+		obj                    *trainer.TrainJob
+		clusterTrainingRuntime *trainer.ClusterTrainingRuntime
+		wantError              field.ErrorList
+		wantWarnings           admission.Warnings
+>>>>>>> v2.1.0
 	}{
 		"valid trainjob name compliant with RFC 1035": {
 			obj: testingutil.MakeTrainJobWrapper("default", "valid-job-name").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "test-runtime").
 				Obj(),
+<<<<<<< HEAD
 			wantError:    nil,
 			wantWarnings: nil,
 		},
@@ -58,10 +70,25 @@ func TestValidateCreate(t *testing.T) {
 			},
 			wantWarnings: nil,
 		},
+=======
+			clusterTrainingRuntime: testingutil.MakeClusterTrainingRuntimeWrapper("test-runtime").
+				RuntimeSpec(trainer.TrainingRuntimeSpec{
+					Template: trainer.JobSetTemplateSpec{
+						Spec: testingutil.MakeJobSetWrapper("", "").Obj().Spec,
+					},
+				}).Obj(),
+			wantError:    nil,
+			wantWarnings: nil,
+		},
+>>>>>>> v2.1.0
 		"unsupported runtime": {
 			obj: testingutil.MakeTrainJobWrapper("default", "valid-job-name").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "unsupported-runtime").
 				Obj(),
+<<<<<<< HEAD
+=======
+			// clusterTrainingRuntime: nil (no such runtime exists)
+>>>>>>> v2.1.0
 			wantError: field.ErrorList{
 				&field.Error{
 					Type:  field.ErrorTypeInvalid,
@@ -75,6 +102,29 @@ func TestValidateCreate(t *testing.T) {
 			},
 			wantWarnings: nil,
 		},
+<<<<<<< HEAD
+=======
+		"deprecated runtime referenced": {
+			obj: testingutil.MakeTrainJobWrapper("default", "valid-job-name").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "test-runtime").
+				Obj(),
+			clusterTrainingRuntime: func() *trainer.ClusterTrainingRuntime {
+				rt := testingutil.MakeClusterTrainingRuntimeWrapper("test-runtime").
+					RuntimeSpec(trainer.TrainingRuntimeSpec{
+						Template: trainer.JobSetTemplateSpec{
+							Spec: testingutil.MakeJobSetWrapper("", "").Obj().Spec,
+						},
+					}).Obj()
+				if rt.Labels == nil {
+					rt.Labels = map[string]string{}
+				}
+				rt.Labels[constants.LabelSupport] = constants.SupportDeprecated
+				return rt
+			}(),
+			wantError:    nil,
+			wantWarnings: admission.Warnings{"Referenced ClusterTrainingRuntime \"test-runtime\" is deprecated and will be removed in a future release of Kubeflow Trainer. See runtime deprecation policy: " + constants.RuntimeDeprecationPolicyURL},
+		},
+>>>>>>> v2.1.0
 	}
 
 	for name, tc := range cases {
@@ -85,6 +135,7 @@ func TestValidateCreate(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			t.Cleanup(cancel)
 
+<<<<<<< HEAD
 			clusterTrainingRuntime := testingutil.MakeClusterTrainingRuntimeWrapper("test-runtime").
 				RuntimeSpec(trainer.TrainingRuntimeSpec{
 					Template: trainer.JobSetTemplateSpec{
@@ -93,6 +144,12 @@ func TestValidateCreate(t *testing.T) {
 				}).Obj()
 
 			clientBuilder := testingutil.NewClientBuilder().WithObjects(clusterTrainingRuntime)
+=======
+			clientBuilder := testingutil.NewClientBuilder()
+			if tc.clusterTrainingRuntime != nil {
+				clientBuilder = clientBuilder.WithObjects(tc.clusterTrainingRuntime)
+			}
+>>>>>>> v2.1.0
 			runtimes, err := runtimecore.New(context.Background(), clientBuilder.Build(), testingutil.AsIndex(clientBuilder))
 			if err != nil {
 				t.Fatal(err)

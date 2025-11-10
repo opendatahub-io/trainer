@@ -5,7 +5,11 @@ requires-python = ">=3.9"
 authors = [
   { name = "The Kubeflow Authors", email = "kubeflow-discuss@googlegroups.com" },
 ]
+<<<<<<< HEAD
 license = { text = "Apache-2.0" }
+=======
+license = "Apache-2.0"
+>>>>>>> v2.1.0
 description = "Kubeflow Trainer API models for Kubernetes resources to interact with Kubeflow APIs."
 readme = "README.md"
 keywords = ["kubeflow", "trainer", "model training", "llm", "ai", "api"]
@@ -34,9 +38,12 @@ Source = "https://github.com/kubeflow/trainer"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+<<<<<<< HEAD
 
 [tool.hatch.build.targets.wheel]
 packages = ["kubeflow_trainer_api"]
+=======
+>>>>>>> v2.1.0
 
 [tool.hatch.version]
 path = "kubeflow_trainer_api/__init__.py"

@@ -52,6 +52,7 @@ func (w *TrainJobWebhook) ValidateCreate(ctx context.Context, obj apiruntime.Obj
 	log := ctrl.LoggerFrom(ctx).WithName("trainJob-webhook")
 	log.V(5).Info("Validating create", "TrainJob", klog.KObj(trainJob))
 
+<<<<<<< HEAD
 	allErrs := field.ErrorList{}
 
 	// Check RFC 1035 name validation errors
@@ -59,6 +60,8 @@ func (w *TrainJobWebhook) ValidateCreate(ctx context.Context, obj apiruntime.Obj
 		allErrs = append(allErrs, field.Invalid(field.NewPath("metadata", "name"), trainJob.Name, err))
 	}
 
+=======
+>>>>>>> v2.1.0
 	runtimeRefGK := runtime.RuntimeRefToRuntimeRegistryKey(trainJob.Spec.RuntimeRef)
 	runtime, ok := w.runtimes[runtimeRefGK]
 	if !ok {

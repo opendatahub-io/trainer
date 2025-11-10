@@ -39,8 +39,8 @@ image:
   registry: ghcr.io
   # -- Image repository.
   repository: kubeflow/trainer/trainer-controller-manager
-  # -- Image tag.
-  tag: latest
+  # -- Image tag. Defaults to the chart appVersion.
+  tag: ""
   # -- Image pull policy.
   pullPolicy: IfNotPresent
   # -- Image pull secrets for private image registry.
@@ -92,16 +92,45 @@ manager:
     #   memory: 300Mi
 
   # -- Security context for manager containers.
-  securityContext: {}
-    # readOnlyRootFilesystem: true
-    # privileged: false
-    # allowPrivilegeEscalation: false
-    # runAsNonRoot: true
-    # capabilities:
-    #   drop:
-    #   - ALL
-    # seccompProfile:
-    #   type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+      - ALL
+    seccompProfile:
+      type: RuntimeDefault
+
+  # -- Controller manager configuration.
+  # This configuration is used to generate the ConfigMap for the controller manager.
+  config:
+    health:
+      healthProbeBindAddress: ":8081"
+      readinessEndpointName: "readyz"
+      livenessEndpointName: "healthz"
+    metrics:
+      bindAddress: ":8443"
+      secureServing: true
+    webhook:
+      port: 9443
+      host: ""
+    leaderElection:
+      leaderElect: true
+      resourceName: "trainer.kubeflow.org"
+      resourceNamespace: ""
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+    controller:
+      groupKindConcurrency:
+        trainJob: 5
+        trainingRuntime: 1
+        clusterTrainingRuntime: 1
+    certManagement:
+      enable: true
+      # webhookServiceName and webhookSecretName are auto-generated if not specified
+      webhookServiceName: ""
+      webhookSecretName: ""
 
 webhook:
   # -- Specifies how unrecognized errors are handled.

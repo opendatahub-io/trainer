@@ -21,14 +21,20 @@ import (
 	"errors"
 	"fmt"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+<<<<<<< HEAD
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
+=======
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/runtime"
+	trainingruntime "github.com/kubeflow/trainer/v2/pkg/util/trainingruntime"
+>>>>>>> v2.1.0
 )
 
 var (
@@ -52,7 +58,7 @@ func NewClusterTrainingRuntime(context.Context, client.Client, client.FieldIndex
 	}, nil
 }
 
-func (r *ClusterTrainingRuntime) NewObjects(ctx context.Context, trainJob *trainer.TrainJob) ([]any, error) {
+func (r *ClusterTrainingRuntime) NewObjects(ctx context.Context, trainJob *trainer.TrainJob) ([]apiruntime.ApplyConfiguration, error) {
 	var clTrainingRuntime trainer.ClusterTrainingRuntime
 	if err := r.client.Get(ctx, client.ObjectKey{Name: trainJob.Spec.RuntimeRef.Name}, &clTrainingRuntime); err != nil {
 		return nil, fmt.Errorf("%w: %w", errorNotFoundSpecifiedClusterTrainingRuntime, err)
@@ -63,6 +69,15 @@ func (r *ClusterTrainingRuntime) NewObjects(ctx context.Context, trainJob *train
 		return nil, err
 	}
 	return r.framework.RunComponentBuilderPlugins(ctx, info, trainJob)
+<<<<<<< HEAD
+}
+
+func (r *ClusterTrainingRuntime) RuntimeInfo(
+	trainJob *trainer.TrainJob, runtimeTemplateSpec any, mlPolicy *trainer.MLPolicy, podGroupPolicy *trainer.PodGroupPolicy,
+) (*runtime.Info, error) {
+	return r.TrainingRuntime.RuntimeInfo(trainJob, runtimeTemplateSpec, mlPolicy, podGroupPolicy)
+=======
+>>>>>>> v2.1.0
 }
 
 func (r *ClusterTrainingRuntime) RuntimeInfo(
@@ -71,8 +86,8 @@ func (r *ClusterTrainingRuntime) RuntimeInfo(
 	return r.TrainingRuntime.RuntimeInfo(trainJob, runtimeTemplateSpec, mlPolicy, podGroupPolicy)
 }
 
-func (r *ClusterTrainingRuntime) TerminalCondition(ctx context.Context, trainJob *trainer.TrainJob) (*metav1.Condition, error) {
-	return r.TrainingRuntime.TerminalCondition(ctx, trainJob)
+func (r *ClusterTrainingRuntime) TrainJobStatus(ctx context.Context, trainJob *trainer.TrainJob) (*trainer.TrainJobStatus, error) {
+	return r.TrainingRuntime.TrainJobStatus(ctx, trainJob)
 }
 
 func (r *ClusterTrainingRuntime) EventHandlerRegistrars() []runtime.ReconcilerBuilder {
@@ -89,6 +104,22 @@ func (r *ClusterTrainingRuntime) ValidateObjects(ctx context.Context, old, new *
 				fmt.Sprintf("%v: specified clusterTrainingRuntime must be created before the TrainJob is created", err)),
 		}
 	}
+	var warnings admission.Warnings
+	if trainingruntime.IsSupportDeprecated(clusterTrainingRuntime.Labels) {
+		warnings = append(warnings, fmt.Sprintf(
+			"Referenced ClusterTrainingRuntime \"%s\" is deprecated and will be removed in a future release of Kubeflow Trainer. See runtime deprecation policy: %s",
+			clusterTrainingRuntime.Name,
+			constants.RuntimeDeprecationPolicyURL,
+		))
+	}
 	info, _ := r.newRuntimeInfo(new, clusterTrainingRuntime.Spec.Template, clusterTrainingRuntime.Spec.MLPolicy, clusterTrainingRuntime.Spec.PodGroupPolicy)
+<<<<<<< HEAD
 	return r.framework.RunCustomValidationPlugins(ctx, info, old, new)
+=======
+	fwWarnings, errs := r.framework.RunCustomValidationPlugins(ctx, info, old, new)
+	if len(fwWarnings) != 0 {
+		warnings = append(warnings, fwWarnings...)
+	}
+	return warnings, errs
+>>>>>>> v2.1.0
 }

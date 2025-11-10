@@ -22,7 +22,7 @@ import (
 	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/client/applyconfiguration/trainer/v1alpha1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
-	testing "k8s.io/client-go/testing"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 )
 
 // ForKind returns an apply configuration type for the given GroupVersionKind, or nil if no
@@ -56,10 +56,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &trainerv1alpha1.PodGroupPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PodGroupPolicySource"):
 		return &trainerv1alpha1.PodGroupPolicySourceApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("PodSpecOverride"):
-		return &trainerv1alpha1.PodSpecOverrideApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("PodSpecOverrideTargetJob"):
-		return &trainerv1alpha1.PodSpecOverrideTargetJobApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("PodTemplateOverride"):
+		return &trainerv1alpha1.PodTemplateOverrideApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("PodTemplateOverrideTargetJob"):
+		return &trainerv1alpha1.PodTemplateOverrideTargetJobApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("PodTemplateSpecOverride"):
+		return &trainerv1alpha1.PodTemplateSpecOverrideApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RuntimeRef"):
 		return &trainerv1alpha1.RuntimeRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TorchElasticPolicy"):
@@ -78,11 +80,13 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &trainerv1alpha1.TrainJobSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TrainJobStatus"):
 		return &trainerv1alpha1.TrainJobStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("VolcanoPodGroupPolicySource"):
+		return &trainerv1alpha1.VolcanoPodGroupPolicySourceApplyConfiguration{}
 
 	}
 	return nil
 }
 
-func NewTypeConverter(scheme *runtime.Scheme) *testing.TypeConverter {
-	return &testing.TypeConverter{Scheme: scheme, TypeResolver: internal.Parser()}
+func NewTypeConverter(scheme *runtime.Scheme) managedfields.TypeConverter {
+	return managedfields.NewSchemeTypeConverter(scheme, internal.Parser())
 }

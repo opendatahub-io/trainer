@@ -23,6 +23,7 @@ spec:
                   containers:
                     - name: node
                       image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+<<<<<<< HEAD
                       command:
                         - /bin/bash
                         - -c
@@ -34,3 +35,5 @@ spec:
                           env | grep PET_
 
                           pip list
+=======
+>>>>>>> v2.1.0
