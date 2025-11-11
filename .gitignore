@@ -16,10 +16,9 @@ __debug_bin
 # The default output for various artifacts (e.g. Jupyter Notebooks after Papermill execution).
 artifacts
 
-# Python cache files / packaging
+# Python cache files
 __pycache__/
 *.egg-info/
-dist/
 
 # Coverage
 cover.out

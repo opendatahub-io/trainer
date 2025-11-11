@@ -13,7 +13,8 @@ jobs:
   build-and-publish:
     name: Build and Publish Images
     if: github.repository == 'kubeflow/trainer'
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on:
+      labels: ubuntu-latest-16-cores
 
     env:
       SHOULD_PUBLISH: ${{ github.event_name == 'push' }}

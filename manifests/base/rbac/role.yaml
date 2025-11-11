@@ -17,15 +17,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-  - update
-  - watch
-- apiGroups:
   - admissionregistration.k8s.io
   resources:
   - validatingwebhookconfigurations
@@ -61,12 +52,9 @@ rules:
   resources:
   - clustertrainingruntimes
   - trainingruntimes
-  - trainjobs
   verbs:
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - trainer.kubeflow.org
@@ -79,3 +67,13 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - trainer.kubeflow.org
+  resources:
+  - trainjobs
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch

@@ -17,7 +17,6 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
@@ -31,7 +30,6 @@ type PodSpecOverrideApplyConfiguration struct {
 	Volumes            []v1.VolumeApplyConfiguration                `json:"volumes,omitempty"`
 	InitContainers     []ContainerOverrideApplyConfiguration        `json:"initContainers,omitempty"`
 	Containers         []ContainerOverrideApplyConfiguration        `json:"containers,omitempty"`
-	SchedulingGates    []corev1.PodSchedulingGate                   `json:"schedulingGates,omitempty"`
 }
 
 // PodSpecOverrideApplyConfiguration constructs a declarative configuration of the PodSpecOverride type for use with
@@ -123,16 +121,6 @@ func (b *PodSpecOverrideApplyConfiguration) WithContainers(values ...*ContainerO
 			panic("nil value passed to WithContainers")
 		}
 		b.Containers = append(b.Containers, *values[i])
-	}
-	return b
-}
-
-// WithSchedulingGates adds the given value to the SchedulingGates field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the SchedulingGates field.
-func (b *PodSpecOverrideApplyConfiguration) WithSchedulingGates(values ...corev1.PodSchedulingGate) *PodSpecOverrideApplyConfiguration {
-	for i := range values {
-		b.SchedulingGates = append(b.SchedulingGates, values[i])
 	}
 	return b
 }
