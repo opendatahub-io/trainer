@@ -230,3 +230,48 @@ helm-lint: ## Run Helm chart lint test.
 .PHONY: helm-docs
 helm-docs: helm-docs-plugin ## Generates markdown documentation for helm charts from requirements and values files.
 	$(HELM_DOCS) --sort-values-order=file
+
+##@ RHOAI Deployment
+
+# Kubernetes CLI tool (kubectl or oc)
+KUBECTL ?= $(shell which oc 2>/dev/null || which kubectl)
+NAMESPACE ?= opendatahub
+RHOAI_MANIFESTS_DIR ?= $(PROJECT_DIR)/manifests/rhoai
+
+.PHONY: deploy-rhoai
+deploy-rhoai: ## Deploy operator using RHOAI manifests with kustomize
+	@echo "Deploying RHOAI Training Operator to namespace: $(NAMESPACE)"
+	@if [ -z "$(KUBECTL)" ]; then \
+		echo "Error: Neither 'oc' nor 'kubectl' found in PATH"; \
+		exit 1; \
+	fi
+	@$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
+	@echo "Applying CRDs first..."
+	@$(KUBECTL) apply --server-side=true -k $(RHOAI_MANIFESTS_DIR)/../base/crds
+	@echo "Waiting for CRDs to be established..."
+	@$(KUBECTL) wait --for condition=established --timeout=60s \
+		crd/clustertrainingruntimes.trainer.kubeflow.org \
+		crd/trainingruntimes.trainer.kubeflow.org \
+		crd/trainjobs.trainer.kubeflow.org 2>/dev/null || sleep 5
+	@echo "Applying operator and resources..."
+	@$(KUBECTL) apply --server-side=true -k $(RHOAI_MANIFESTS_DIR)
+	@echo "Waiting for deployment to be ready..."
+	@$(KUBECTL) wait --for=condition=available --timeout=300s \
+		deployment/kubeflow-trainer-controller-manager -n $(NAMESPACE) 2>/dev/null || true
+	@echo "RHOAI Training Operator deployed successfully!"
+
+.PHONY: undeploy-rhoai
+undeploy-rhoai: ## Undeploy operator using RHOAI manifests
+	@echo "Undeploying RHOAI Training Operator from namespace: $(NAMESPACE)"
+	@if [ -z "$(KUBECTL)" ]; then \
+		echo "Error: Neither 'oc' nor 'kubectl' found in PATH"; \
+		exit 1; \
+	fi
+	@echo "Deleting all TrainJob and TrainingRuntime CRs..."
+	@-$(KUBECTL) delete trainjobs.trainer.kubeflow.org --all --all-namespaces --timeout=60s 2>/dev/null || true
+	@-$(KUBECTL) delete trainingruntimes.trainer.kubeflow.org --all --all-namespaces --timeout=60s 2>/dev/null || true
+	@-$(KUBECTL) delete clustertrainingruntimes.trainer.kubeflow.org --all --timeout=60s 2>/dev/null || true
+	@echo "Deleting operator and resources..."
+	@-$(KUBECTL) delete -k $(RHOAI_MANIFESTS_DIR)/runtimes -n $(NAMESPACE) --ignore-not-found=true 2>/dev/null || true
+	@-$(KUBECTL) delete -k $(RHOAI_MANIFESTS_DIR) --ignore-not-found=true 2>&1 | grep -v "no matches for kind" | grep -v "ensure CRDs are installed" || true
+	@echo "RHOAI Training Operator undeployed successfully!"
