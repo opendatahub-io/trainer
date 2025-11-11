@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -44,6 +45,7 @@ import (
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
 	jobruntimes "github.com/kubeflow/trainer/v2/pkg/runtime"
+	trainjobutil "github.com/kubeflow/trainer/v2/pkg/util/trainjob"
 )
 
 type TrainJobWatcher interface {
@@ -115,7 +117,9 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !ok {
 		err = fmt.Errorf("unsupported runtime: %s", runtimeRefGK)
 		setFailedCondition(&trainJob, fmt.Sprintf("unsupported runtime: %s", runtimeRefGK), trainer.TrainJobRuntimeNotSupportedReason)
+		log.Error(err, "Runtime not found in registry", "runtimeRefGK", runtimeRefGK)
 	} else {
+		log.V(1).Info("Found runtime, reconciling objects", "runtimeRefGK", runtimeRefGK)
 		err = r.reconcileObjects(ctx, runtime, &trainJob)
 		if err != nil {
 			// TODO (astefanutti): the error should be surfaced in the TrainJob status to indicate
@@ -127,31 +131,88 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				message = fmt.Sprintf("%s ...", message)
 			}
 			r.recorder.Event(&trainJob, corev1.EventTypeWarning, "TrainJobResourcesCreationFailed", message)
+			log.Error(err, "Failed to reconcile objects")
+		} else {
+			log.V(1).Info("Successfully reconciled objects")
 		}
 	}
 
 	setSuspendedCondition(&trainJob)
 
 	if statusErr := setTrainJobStatus(ctx, runtime, &trainJob); statusErr != nil {
-		err = errors.Join(err, statusErr)
+		// Ignore NotFound errors - JobSet might not exist yet during initial creation
+		if !apierrors.IsNotFound(statusErr) {
+			err = errors.Join(err, statusErr)
+		}
+	}
+
+	// Poll training progress for running jobs with progression tracking enabled
+	// Interval is configurable via trainer.odh.org/metrics-poll-interval annotation (default: 30s)
+	// A job is considered running if it's not suspended, completed, or failed
+	shouldRequeue := false
+	isRunning := !meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobSuspended) &&
+		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete) &&
+		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
+
+	isCompleted := meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete)
+	isFailed := meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
+
+	if trainjobutil.IsProgressionTrackingEnabled(&trainJob) {
+		if isRunning {
+			// Poll metrics while job is running
+			if updated, pollErr := trainjobutil.PollAndUpdateProgress(ctx, r.client, &trainJob); pollErr != nil {
+				log.V(1).Info("Failed to poll training progress", "error", pollErr)
+				// Don't fail reconciliation on polling errors, but requeue to retry
+			} else if updated {
+				log.V(2).Info("Successfully updated training progress")
+			}
+			// Requeue to continue polling while job is running
+			shouldRequeue = true
+		} else if (isCompleted || isFailed) && !trainjobutil.IsFinalStatusCaptured(&trainJob) {
+			// Job just completed/failed - do one final metrics poll to capture completion status
+			// This ensures we capture 100% progress and final metrics
+			if updated, pollErr := trainjobutil.PollAndUpdateFinalProgress(ctx, r.client, &trainJob, isCompleted); pollErr != nil {
+				log.V(1).Info("Failed to capture final training progress", "error", pollErr, "completed", isCompleted)
+			} else if updated {
+				log.Info("Captured final training progress", "completed", isCompleted)
+			}
+		}
 	}
 
 	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
+		result := ctrl.Result{}
+		if shouldRequeue {
+			pollInterval := trainjobutil.GetMetricsPollInterval(&trainJob)
+			result.RequeueAfter = pollInterval
+			log.V(2).Info("Requeuing for metrics polling", "interval", pollInterval)
+		}
+		return result, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
+	}
+
+	if shouldRequeue {
+		pollInterval := trainjobutil.GetMetricsPollInterval(&trainJob)
+		log.V(2).Info("Requeuing for metrics polling", "interval", pollInterval)
+		return ctrl.Result{RequeueAfter: pollInterval}, err
 	}
 	return ctrl.Result{}, err
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {
+	log := ctrl.LoggerFrom(ctx)
 	objects, err := runtime.NewObjects(ctx, trainJob)
 	if err != nil {
+		log.Error(err, "Failed to generate objects from runtime")
 		return err
 	}
-	for _, object := range objects {
+	log.V(1).Info("Generated objects from runtime", "count", len(objects))
+	for i, object := range objects {
+		log.V(2).Info("Applying object", "index", i)
 		if err := r.client.Apply(ctx, object, client.FieldOwner("trainer"), client.ForceOwnership); err != nil {
+			log.Error(err, "Failed to apply object", "index", i)
 			return err
 		}
 	}
+	log.V(1).Info("Successfully applied all objects")
 	return nil
 }
 

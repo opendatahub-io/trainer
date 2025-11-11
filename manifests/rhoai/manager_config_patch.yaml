@@ -9,10 +9,17 @@ spec:
       - name: manager
         image: $(image)
         args:
-        - "--zap-log-level=2"
-        - "--webhook-secret-name=kubeflow-trainer-webhook-cert"
-        - "--webhook-service-name=kubeflow-trainer-controller-manager"
+        - --config=/controller_manager_config.yaml
+        - --zap-log-level=2
+        volumeMounts:
+        - name: kubeflow-trainer-config
+          mountPath: /controller_manager_config.yaml
+          subPath: controller_manager_config.yaml
+          readOnly: true
       volumes:
+      - name: kubeflow-trainer-config
+        configMap:
+          name: kubeflow-trainer-config
       - name: cert
         secret:
           defaultMode: 420

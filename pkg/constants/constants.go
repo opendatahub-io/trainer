@@ -193,6 +193,15 @@ const (
 
 	// TorchTuneCheckpointerDir is the config item name for the checkpointer directory.
 	TorchTuneCheckpointDir string = "checkpointer.checkpoint_dir"
+
+	// Progression tracking annotations (midstream)
+	AnnotationProgressionTracking  string = "trainer.opendatahub.io/progression-tracking"
+	AnnotationTrainerStatus        string = "trainer.opendatahub.io/trainerStatus"
+	AnnotationMetricsPort          string = "trainer.opendatahub.io/metrics-port"
+	AnnotationMetricsPollInterval  string = "trainer.opendatahub.io/metrics-poll-interval"
+	AnnotationFramework            string = "trainer.opendatahub.io/framework"
+	DefaultMetricsPort             string = "28080"
+	DefaultMetricsPollIntervalSecs int    = 30
 )
 
 const (
