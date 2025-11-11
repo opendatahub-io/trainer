@@ -23,4 +23,3 @@ spec:
                   containers:
                     - name: node
                       image: quay.io/modh/training:py311-cuda124-torch251
-
