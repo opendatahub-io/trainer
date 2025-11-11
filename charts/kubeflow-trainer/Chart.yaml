@@ -20,14 +20,14 @@ name: kubeflow-trainer
 
 description: A Helm chart for deploying Kubeflow Trainer on Kubernetes.
 
-version: 2.0.0
+version: 2.1.0
 
 type: application
 
 dependencies:
 - name: jobset
-  repository: oci://us-central1-docker.pkg.dev/k8s-staging-images/charts
-  version: v0.8.0
+  repository: oci://registry.k8s.io/jobset/charts
+  version: 0.10.1
   condition: jobset.install
 
 keywords:

@@ -25,24 +25,31 @@ rules:
   - ""
   resources:
   - configmaps
+  - secrets
   verbs:
+  - create
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
+  - update
+  - watch
 - apiGroups:
   - ""
   resources:
-  - secrets
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - limitranges
   verbs:
   - get
   - list
   - watch
-  - create
-  - update
-  - patch
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
@@ -50,57 +57,68 @@ rules:
   verbs:
   - get
   - list
+  - update
   - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
   - update
 - apiGroups:
   - jobset.x-k8s.io
   resources:
   - jobsets
   verbs:
+  - create
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
+  - update
+  - watch
 - apiGroups:
-  - scheduling.x-k8s.io
+  - node.k8s.io
   resources:
-  - podgroups
+  - runtimeclasses
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - scheduling.volcano.sh
+  - scheduling.x-k8s.io
+  resources:
+  - podgroups
+  verbs:
   - create
-  - update
+  - get
+  - list
   - patch
+  - update
+  - watch
 - apiGroups:
   - trainer.kubeflow.org
   resources:
   - clustertrainingruntimes
   - trainingruntimes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - trainer.kubeflow.org
-  resources:
   - trainjobs
   verbs:
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
-  - delete
+  - update
+  - watch
 - apiGroups:
   - trainer.kubeflow.org
   resources:
+  - clustertrainingruntimes/finalizers
+  - trainingruntimes/finalizers
   - trainjobs/finalizers
   - trainjobs/status
   verbs:
   - get
-  - update
   - patch
+  - update

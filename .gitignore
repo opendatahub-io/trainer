@@ -16,9 +16,10 @@ __debug_bin
 # The default output for various artifacts (e.g. Jupyter Notebooks after Papermill execution).
 artifacts
 
-# Python cache files
+# Python cache files / packaging
 __pycache__/
 *.egg-info/
+dist/
 
 # Coverage
 cover.out
@@ -26,3 +27,9 @@ cover.out
 # Helm
 charts/kubeflow-trainer/charts/
 charts/kubeflow-trainer/Chart.lock
+*.tgz
+
+# data_cache
+pkg/data_cache/target
+pkg/data_cache/test/target/
+hack/data_cache/*.log

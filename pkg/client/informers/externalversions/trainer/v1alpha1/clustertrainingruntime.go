@@ -20,10 +20,10 @@ import (
 	context "context"
 	time "time"
 
-	apistrainerv1alpha1 "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	versioned "github.com/kubeflow/trainer/pkg/client/clientset/versioned"
-	internalinterfaces "github.com/kubeflow/trainer/pkg/client/informers/externalversions/internalinterfaces"
-	trainerv1alpha1 "github.com/kubeflow/trainer/pkg/client/listers/trainer/v1alpha1"
+	apistrainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	versioned "github.com/kubeflow/trainer/v2/pkg/client/clientset/versioned"
+	internalinterfaces "github.com/kubeflow/trainer/v2/pkg/client/informers/externalversions/internalinterfaces"
+	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/client/listers/trainer/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -59,13 +59,25 @@ func NewFilteredClusterTrainingRuntimeInformer(client versioned.Interface, resyn
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.TrainerV1alpha1().ClusterTrainingRuntimes().List(context.TODO(), options)
+				return client.TrainerV1alpha1().ClusterTrainingRuntimes().List(context.Background(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.TrainerV1alpha1().ClusterTrainingRuntimes().Watch(context.TODO(), options)
+				return client.TrainerV1alpha1().ClusterTrainingRuntimes().Watch(context.Background(), options)
+			},
+			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.TrainerV1alpha1().ClusterTrainingRuntimes().List(ctx, options)
+			},
+			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.TrainerV1alpha1().ClusterTrainingRuntimes().Watch(ctx, options)
 			},
 		},
 		&apistrainerv1alpha1.ClusterTrainingRuntime{},

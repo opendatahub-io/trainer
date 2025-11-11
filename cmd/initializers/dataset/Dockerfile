@@ -1,6 +1,6 @@
-FROM python:3.11-alpine
+FROM python:3.11-slim-bookworm
 
-WORKDIR /workspace
+WORKDIR /app
 
 # Copy the required Python modules.
 COPY cmd/initializers/dataset/requirements.txt .

@@ -33,10 +33,10 @@ import (
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/constants"
-	jobsetplgconsts "github.com/kubeflow/trainer/pkg/runtime/framework/plugins/jobset/constants"
-	testingutil "github.com/kubeflow/trainer/pkg/util/testing"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	jobsetplgconsts "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset/constants"
+	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
 
 func TestTrainingRuntimeNewObjects(t *testing.T) {
@@ -179,7 +179,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with container overrides from the TrainJob's PodSpecOverrides.": {
+		"succeeded to build JobSet with TrainJob's PodTemplateOverrides.": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					WithMLPolicy(
@@ -235,46 +235,181 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 						Obj(),
 				).
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						InitContainers: []trainer.ContainerOverride{
-							{
-								Name: "override-init-container",
-								Env: []corev1.EnvVar{
-									{
-										Name:  "INIT_ENV",
-										Value: "override_init",
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.DatasetInitializer}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							InitContainers: []trainer.ContainerOverride{
+								{
+									Name: "override-init-container",
+									Env: []corev1.EnvVar{
+										{
+											Name:  "INIT_ENV",
+											Value: "override_init",
+										},
+										{
+											Name:  "NEW_VALUE",
+											Value: "from_overrides",
+										},
 									},
-									{
-										Name:  "NEW_VALUE",
-										Value: "from_overrides",
+								},
+							},
+							Containers: []trainer.ContainerOverride{
+								{
+									Name: constants.DatasetInitializer,
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "initializer_secret",
+											MountPath: "initializer_secret_mount_path",
+										},
+										{
+											Name:      "initializer_claim",
+											MountPath: "initializer_claim_mount_path",
+										},
+									},
+								},
+							},
+							Affinity: &corev1.Affinity{
+								NodeAffinity: &corev1.NodeAffinity{
+									RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+										NodeSelectorTerms: []corev1.NodeSelectorTerm{
+											{
+												MatchExpressions: []corev1.NodeSelectorRequirement{
+													{
+														Key:      "topology.kubernetes.io/zone",
+														Operator: corev1.NodeSelectorOpIn,
+														Values:   []string{"antarctica-east1", "antarctica-west1"},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+							NodeSelector: map[string]string{
+								"node.kubernetes.io/instance-type": "p5.48xlarge",
+							},
+							SchedulingGates: []corev1.PodSchedulingGate{
+								{
+									Name: "kueue.x-k8s.io/admission",
+								},
+							},
+							Tolerations: []corev1.Toleration{
+								{
+									Key:      "example.com/gpu",
+									Operator: corev1.TolerationOpExists,
+									Effect:   corev1.TaintEffectNoSchedule,
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: "initializer_secret",
+									VolumeSource: corev1.VolumeSource{
+										Secret: &corev1.SecretVolumeSource{
+											SecretName: "initializer_secret_name",
+										},
+									},
+								},
+								{
+									Name: "initializer_claim",
+									VolumeSource: corev1.VolumeSource{
+										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: "initializer_claim_name",
+										},
 									},
 								},
 							},
 						},
 					},
 					{
-						TargetJobs:         []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						ServiceAccountName: ptr.To("override-sa"),
-						InitContainers: []trainer.ContainerOverride{
-							{
-								Name: "override-init-container",
-								Env: []corev1.EnvVar{
-									{
-										Name:  "INIT_ENV",
-										Value: "override_init",
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("override-sa"),
+							InitContainers: []trainer.ContainerOverride{
+								{
+									Name: "override-init-container",
+									Env: []corev1.EnvVar{
+										{
+											Name:  "INIT_ENV",
+											Value: "override_init",
+										},
 									},
 								},
 							},
-						},
-						Containers: []trainer.ContainerOverride{
-							{
-								Name: "override-container",
-								Env: []corev1.EnvVar{
-									{
-										Name:  "CONTAINER_ENV",
-										Value: "override_container",
+							Containers: []trainer.ContainerOverride{
+								{
+									Name: constants.Node,
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "node_secret",
+											MountPath: "node_secret_mount_path",
+										},
+										{
+											Name:      "node_claim",
+											MountPath: "node_claim_mount_path",
+										},
+									},
+								},
+								{
+									Name: "override-container",
+									Env: []corev1.EnvVar{
+										{
+											Name:  "CONTAINER_ENV",
+											Value: "override_container",
+										},
+									},
+								},
+							},
+							Affinity: &corev1.Affinity{
+								NodeAffinity: &corev1.NodeAffinity{
+									RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+										NodeSelectorTerms: []corev1.NodeSelectorTerm{
+											{
+												MatchExpressions: []corev1.NodeSelectorRequirement{
+													{
+														Key:      "topology.kubernetes.io/zone",
+														Operator: corev1.NodeSelectorOpIn,
+														Values:   []string{"antarctica-east1", "antarctica-west1"},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+							ImagePullSecrets: []corev1.LocalObjectReference{
+								{Name: "registry-credential"},
+							},
+							NodeSelector: map[string]string{
+								"node.kubernetes.io/instance-type": "p5.48xlarge",
+							},
+							SchedulingGates: []corev1.PodSchedulingGate{
+								{
+									Name: "kueue.x-k8s.io/admission",
+								},
+							},
+							Tolerations: []corev1.Toleration{
+								{
+									Key:      "example.com/gpu",
+									Operator: corev1.TolerationOpExists,
+									Effect:   corev1.TaintEffectNoSchedule,
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: "node_secret",
+									VolumeSource: corev1.VolumeSource{
+										Secret: &corev1.SecretVolumeSource{
+											SecretName: "node_secret_name",
+										},
+									},
+								},
+								{
+									Name: "node_claim",
+									VolumeSource: corev1.VolumeSource{
+										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: "node_claim_name",
+										},
 									},
 								},
 							},
@@ -304,16 +439,14 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 								Name:  "NEW_VALUE",
 								Value: "from_overrides",
 							},
-						}...,
-					).
+						}...).
 					InitContainer(constants.Node, "override-init-container", "test:runtime",
 						[]corev1.EnvVar{
 							{
 								Name:  "INIT_ENV",
 								Value: "override_init",
 							},
-						}...,
-					).
+						}...).
 					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 					Env(constants.Node, constants.Node,
 						[]corev1.EnvVar{
@@ -332,117 +465,73 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							},
 						}...,
 					).
-					Obj(),
-			},
-		},
-		"succeeded to build JobSet with volume overrides from the TrainJob's PodSpecOverrides.": {
-			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
-				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
-					WithMLPolicy(
-						testingutil.MakeMLPolicyWrapper().
-							WithNumNodes(100).
-							Obj(),
+					Affinity(constants.DatasetInitializer,
+						corev1.Affinity{
+							NodeAffinity: &corev1.NodeAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+									NodeSelectorTerms: []corev1.NodeSelectorTerm{
+										{
+											MatchExpressions: []corev1.NodeSelectorRequirement{
+												{
+													Key:      "topology.kubernetes.io/zone",
+													Operator: corev1.NodeSelectorOpIn,
+													Values:   []string{"antarctica-east1", "antarctica-west1"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
 					).
-					InitContainer(constants.DatasetInitializer, "override-init-container", "test:runtime").
-					InitContainer(constants.Node, "override-init-container", "test:runtime").
-					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
-					Container(constants.Node, "override-container", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
-					Obj(),
-			).Obj(),
-			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
-				UID("uid").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
-				Trainer(
-					testingutil.MakeTrainJobTrainerWrapper().
-						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
-						Obj(),
-				).
-				PodSpecOverrides([]trainer.PodSpecOverride{
-					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						Containers: []trainer.ContainerOverride{
-							{
-								Name: constants.DatasetInitializer,
-								VolumeMounts: []corev1.VolumeMount{
-									{
-										Name:      "initializer_secret",
-										MountPath: "initializer_secret_mount_path",
-									},
-									{
-										Name:      "initializer_claim",
-										MountPath: "initializer_claim_mount_path",
+					Affinity(constants.Node,
+						corev1.Affinity{
+							NodeAffinity: &corev1.NodeAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+									NodeSelectorTerms: []corev1.NodeSelectorTerm{
+										{
+											MatchExpressions: []corev1.NodeSelectorRequirement{
+												{
+													Key:      "topology.kubernetes.io/zone",
+													Operator: corev1.NodeSelectorOpIn,
+													Values:   []string{"antarctica-east1", "antarctica-west1"},
+												},
+											},
+										},
 									},
 								},
 							},
 						},
-						Volumes: []corev1.Volume{
-							{
-								Name: "initializer_secret",
-								VolumeSource: corev1.VolumeSource{
-									Secret: &corev1.SecretVolumeSource{
-										SecretName: "initializer_secret_name",
-									},
-								},
-							},
-							{
-								Name: "initializer_claim",
-								VolumeSource: corev1.VolumeSource{
-									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-										ClaimName: "initializer_claim_name",
-									},
-								},
-							},
-						},
-					},
-					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						Containers: []trainer.ContainerOverride{
-							{
-								Name: constants.Node,
-								VolumeMounts: []corev1.VolumeMount{
-									{
-										Name:      "node_secret",
-										MountPath: "node_secret_mount_path",
-									},
-									{
-										Name:      "node_claim",
-										MountPath: "node_claim_mount_path",
-									},
-								},
-							},
-						},
-						Volumes: []corev1.Volume{
-							{
-								Name: "node_secret",
-								VolumeSource: corev1.VolumeSource{
-									Secret: &corev1.SecretVolumeSource{
-										SecretName: "node_secret_name",
-									},
-								},
-							},
-							{
-								Name: "node_claim",
-								VolumeSource: corev1.VolumeSource{
-									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-										ClaimName: "node_claim_name",
-									},
-								},
-							},
-						},
-					},
-				}).
-				Obj(),
-			wantObjs: []runtime.Object{
-				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
-					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
-					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
-					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
-					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
-					NumNodes(100).
-					InitContainer(constants.DatasetInitializer, "override-init-container", "test:runtime").
-					InitContainer(constants.Node, "override-init-container", "test:runtime").
-					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
-					Container(constants.Node, "override-container", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					).
+					ImagePullSecrets(constants.Node,
+						corev1.LocalObjectReference{Name: "registry-credential"},
+					).
+					NodeSelector(constants.DatasetInitializer,
+						map[string]string{
+							"node.kubernetes.io/instance-type": "p5.48xlarge",
+						}).
+					NodeSelector(constants.Node,
+						map[string]string{
+							"node.kubernetes.io/instance-type": "p5.48xlarge",
+						}).
+					SchedulingGates(constants.DatasetInitializer, corev1.PodSchedulingGate{
+						Name: "kueue.x-k8s.io/admission",
+					}).
+					SchedulingGates(constants.Node, corev1.PodSchedulingGate{
+						Name: "kueue.x-k8s.io/admission",
+					}).
+					Tolerations(constants.DatasetInitializer,
+						corev1.Toleration{
+							Key:      "example.com/gpu",
+							Operator: corev1.TolerationOpExists,
+							Effect:   corev1.TaintEffectNoSchedule,
+						}).
+					Tolerations(constants.Node,
+						corev1.Toleration{
+							Key:      "example.com/gpu",
+							Operator: corev1.TolerationOpExists,
+							Effect:   corev1.TaintEffectNoSchedule,
+						}).
 					Volumes(constants.DatasetInitializer,
 						corev1.Volume{
 							Name: "initializer_claim",
@@ -502,7 +591,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with toleration overrides from the TrainJob's PodSpecOverrides.": {
+		"succeeded to build JobSet with nil affinity overrides from the TrainJob's PodTemplateOverrides.": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					WithMLPolicy(
@@ -524,25 +613,17 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 						Obj(),
 				).
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						Tolerations: []corev1.Toleration{
-							{
-								Key:      "nvidia.com/gpu",
-								Operator: corev1.TolerationOpExists,
-								Effect:   corev1.TaintEffectNoSchedule,
-							},
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.DatasetInitializer}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							Affinity: nil,
 						},
 					},
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						Tolerations: []corev1.Toleration{
-							{
-								Key:      "nvidia.com/gpu",
-								Operator: corev1.TolerationOpExists,
-								Effect:   corev1.TaintEffectNoSchedule,
-							},
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							Affinity: nil,
 						},
 					},
 				}).
@@ -558,22 +639,10 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					InitContainer(constants.Node, "override-init-container", "test:runtime").
 					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 					Container(constants.Node, "override-container", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
-					Tolerations(constants.DatasetInitializer,
-						corev1.Toleration{
-							Key:      "nvidia.com/gpu",
-							Operator: corev1.TolerationOpExists,
-							Effect:   corev1.TaintEffectNoSchedule,
-						}).
-					Tolerations(constants.Node,
-						corev1.Toleration{
-							Key:      "nvidia.com/gpu",
-							Operator: corev1.TolerationOpExists,
-							Effect:   corev1.TaintEffectNoSchedule,
-						}).
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with node selector overrides from the TrainJob's PodSpecOverrides.": {
+		"succeeded to build JobSet with labels and annotations overrides from the TrainJob's PodTemplateOverrides.": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					WithMLPolicy(
@@ -595,17 +664,19 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 						Obj(),
 				).
-				PodSpecOverrides([]trainer.PodSpecOverride{
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						NodeSelector: map[string]string{
-							"node.kubernetes.io/instance-type": "p5.48xlarge",
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.DatasetInitializer}},
+						Metadata: &metav1.ObjectMeta{
+							Labels:      map[string]string{"k1": "v1"},
+							Annotations: map[string]string{"a1": "v1"},
 						},
 					},
 					{
-						TargetJobs: []trainer.PodSpecOverrideTargetJob{{Name: constants.Node}},
-						NodeSelector: map[string]string{
-							"node.kubernetes.io/instance-type": "p5.48xlarge",
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Metadata: &metav1.ObjectMeta{
+							Labels:      map[string]string{"k2": "v2"},
+							Annotations: map[string]string{"a2": "v2"},
 						},
 					},
 				}).
@@ -621,13 +692,92 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					InitContainer(constants.Node, "override-init-container", "test:runtime").
 					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 					Container(constants.Node, "override-container", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
-					NodeSelector(constants.DatasetInitializer,
-						map[string]string{
-							"node.kubernetes.io/instance-type": "p5.48xlarge",
-						}).
+					PodLabelForJobs("k1", "v1", constants.DatasetInitializer).
+					PodAnnotationForJobs("a1", "v1", constants.DatasetInitializer).
+					PodLabelForJobs("k2", "v2", constants.Node).
+					PodAnnotationForJobs("a2", "v2", constants.Node).
+					Obj(),
+			},
+		},
+		"succeeded to build JobSet with TrainJob's PodTemplateOverrides containing duplicate TargetJobs": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
+					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					Obj(),
+			).Obj(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							NodeSelector: map[string]string{
+								"node.kubernetes.io/instance-type": "p5.48xlarge",
+							},
+						},
+					},
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							ServiceAccountName: ptr.To("test-sa"),
+						},
+					},
+				}).
+				Obj(),
+			wantObjs: []runtime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
 					NodeSelector(constants.Node,
 						map[string]string{
 							"node.kubernetes.io/instance-type": "p5.48xlarge",
+						}).
+					ServiceAccountName(constants.Node, "test-sa").
+					Obj(),
+			},
+		},
+		"succeeded to build JobSet with TrainJob's PodTemplateOverrides targeting the same job with different values": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
+					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					Obj(),
+			).Obj(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
+				PodTemplateOverrides([]trainer.PodTemplateOverride{
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							NodeSelector: map[string]string{
+								"node.kubernetes.io/instance-type": "p5.48xlarge",
+							},
+						},
+					},
+					{
+						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
+						Spec: &trainer.PodTemplateSpecOverride{
+							NodeSelector: map[string]string{
+								"node.kubernetes.io/instance-type": "p5en.48xlarge",
+							},
+						},
+					},
+				}).
+				Obj(),
+			wantObjs: []runtime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					NodeSelector(constants.Node,
+						map[string]string{
+							"node.kubernetes.io/instance-type": "p5en.48xlarge",
 						}).
 					Obj(),
 			},
@@ -976,7 +1126,8 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							"tune",
 							"run",
 							constants.TorchTuneFullFinetuneDistributed,
-							"--config llama3_3/70B_full_multinode.yaml",
+							"--config",
+							"llama3_3/70B_full_multinode",
 							"output_dir=/workspace/model/llama3_3/70B",
 							"tokenizer.path=/workspace/model/original/tokenizer.model",
 							"checkpointer.checkpoint_dir=/workspace/model",
@@ -1020,9 +1171,10 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						[]string{
 							"tune",
 							"run",
-							fmt.Sprintf("%s %s", constants.TorchTuneArgRdzvEndpoint, "test-job-node-0-0.test-job:29500"),
+							fmt.Sprintf("%s=%s", constants.TorchTuneArgRdzvEndpoint, "test-job-node-0-0.test-job:29500"),
 							constants.TorchTuneFullFinetuneDistributed,
-							"--config llama3_3/70B_full_multinode.yaml",
+							"--config",
+							"llama3_3/70B_full_multinode",
 							"output_dir=/workspace/model/llama3_3/70B",
 							"tokenizer.path=/workspace/model/original/tokenizer.model",
 							"checkpointer.checkpoint_dir=/workspace/model",
@@ -1071,6 +1223,434 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
+		"succeeded to build Jobset with TorchTune values from the TrainJob (LoRA)": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "torchtune-llama3.2-1b").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "torchtune-llama3.2-1b").Spec).
+					WithMLPolicy(
+						testingutil.MakeMLPolicyWrapper().
+							WithNumNodes(1).
+							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
+								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								Obj(),
+							).
+							Obj(),
+					).
+					JobSetSpec(
+						testingutil.MakeJobSetWrapper("", "").
+							DependsOn(constants.Node,
+								[]jobsetv1alpha2.DependsOn{
+									{
+										Name:   constants.DatasetInitializer,
+										Status: jobsetv1alpha2.DependencyComplete,
+									},
+									{
+										Name:   constants.ModelInitializer,
+										Status: jobsetv1alpha2.DependencyComplete,
+									},
+								}...,
+							).
+							Obj().
+							Spec,
+					).
+					Container(
+						constants.Node,
+						constants.Node,
+						"test:runtime",
+						[]string{
+							"tune",
+							"run",
+							"--rdzv_endpoint=localhost:29500",
+							constants.TorchTuneFullFinetuneDistributed,
+							"--config",
+							"llama3_2/1B_full",
+							"dataset=torchtune.datasets.instruct_dataset",
+							"dataset.source=parquet",
+							"dataset.data_dir=/workspace/dataset/data",
+							"output_dir=/workspace/output",
+							"tokenizer.path=/workspace/model/original/tokenizer.model",
+							"checkpointer.checkpoint_dir=/workspace/model",
+						},
+						[]string{"runtime"},
+						resRequests,
+					).
+					Obj(),
+			).Obj(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "torchtune-llama3.2-1b").
+				Trainer(
+					testingutil.MakeTrainJobTrainerWrapper().
+						Container(
+							"test:trainjob",
+							[]string{"tune", "run"},
+							[]string{
+								"dataset.data_dir=/workspace/dataset/data",
+								"model.apply_lora_to_mlp=True",
+								"model.lora_attn_modules=[q_proj,k_proj,v_proj,output_proj]",
+								"dataset=torchtune.datasets.instruct_dataset",
+								"dataset.source=parquet",
+							},
+							corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+						).
+						NumNodes(1).
+						NumProcPerNode(intstr.FromString("auto")).
+						Obj(),
+				).
+				Obj(),
+			wantObjs: []runtime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node, constants.Launcher).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+					NumNodes(1).
+					Container(
+						constants.Node,
+						constants.Node,
+						"test:trainjob",
+						[]string{
+							"tune",
+							"run",
+							fmt.Sprintf("%s=%s", constants.TorchTuneArgRdzvEndpoint, "test-job-node-0-0.test-job:29500"),
+							constants.TorchTuneLoRAFinetuneDistributed,
+							"--config",
+							"llama3_2/1B_lora",
+							"output_dir=/workspace/output",
+							"tokenizer.path=/workspace/model/original/tokenizer.model",
+							"checkpointer.checkpoint_dir=/workspace/model",
+						},
+						[]string{
+							"dataset.data_dir=/workspace/dataset/data",
+							"model.apply_lora_to_mlp=True",
+							"model.lora_attn_modules=[q_proj,k_proj,v_proj,output_proj]",
+							"dataset=torchtune.datasets.instruct_dataset",
+							"dataset.source=parquet",
+						},
+						corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+					).
+					ContainerTrainerPorts([]corev1.ContainerPort{{ContainerPort: constants.ContainerTrainerPort}}).
+					Env(constants.Node, constants.Node,
+						[]corev1.EnvVar{
+							{
+								Name:  constants.TorchEnvNumNodes,
+								Value: "1",
+							},
+							{
+								Name:  constants.TorchEnvNumProcPerNode,
+								Value: "auto",
+							},
+							{
+								Name: constants.TorchEnvNodeRank,
+								ValueFrom: &corev1.EnvVarSource{
+									FieldRef: &corev1.ObjectFieldSelector{
+										FieldPath: constants.JobCompletionIndexFieldPath,
+									},
+								},
+							},
+						}...,
+					).
+					DependsOn(constants.Node,
+						[]jobsetv1alpha2.DependsOn{
+							{
+								Name:   constants.DatasetInitializer,
+								Status: jobsetv1alpha2.DependencyComplete,
+							},
+							{
+								Name:   constants.ModelInitializer,
+								Status: jobsetv1alpha2.DependencyComplete,
+							},
+						}...,
+					).
+					Obj(),
+			},
+		},
+		"succeeded to build Jobset with TorchTune values from the TrainJob (QLoRA)": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "torchtune-llama3.2-1b").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "torchtune-llama3.2-1b").Spec).
+					WithMLPolicy(
+						testingutil.MakeMLPolicyWrapper().
+							WithNumNodes(1).
+							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
+								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								Obj(),
+							).
+							Obj(),
+					).
+					JobSetSpec(
+						testingutil.MakeJobSetWrapper("", "").
+							DependsOn(constants.Node,
+								[]jobsetv1alpha2.DependsOn{
+									{
+										Name:   constants.DatasetInitializer,
+										Status: jobsetv1alpha2.DependencyComplete,
+									},
+									{
+										Name:   constants.ModelInitializer,
+										Status: jobsetv1alpha2.DependencyComplete,
+									},
+								}...,
+							).
+							Obj().
+							Spec,
+					).
+					Container(
+						constants.Node,
+						constants.Node,
+						"test:runtime",
+						[]string{
+							"tune",
+							"run",
+							"--rdzv_endpoint=localhost:29500",
+							constants.TorchTuneFullFinetuneDistributed,
+							"--config",
+							"llama3_2/1B_full",
+							"dataset=torchtune.datasets.instruct_dataset",
+							"dataset.source=parquet",
+							"dataset.data_dir=/workspace/dataset/data",
+							"output_dir=/workspace/output",
+							"tokenizer.path=/workspace/model/original/tokenizer.model",
+							"checkpointer.checkpoint_dir=/workspace/model",
+						},
+						[]string{"runtime"},
+						resRequests,
+					).
+					Obj(),
+			).Obj(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "torchtune-llama3.2-1b").
+				Trainer(
+					testingutil.MakeTrainJobTrainerWrapper().
+						Container(
+							"test:trainjob",
+							[]string{"tune", "run"},
+							[]string{
+								"dataset.data_dir=/workspace/dataset/data",
+								"model.apply_lora_to_mlp=True",
+								"model.lora_attn_modules=[q_proj,k_proj,v_proj,output_proj]",
+								"model.quantize_base=True",
+								"dataset=torchtune.datasets.instruct_dataset",
+								"dataset.source=parquet",
+							},
+							corev1.ResourceList{"example.com/gpu": resource.MustParse("1")},
+						).
+						NumNodes(1).
+						NumProcPerNode(intstr.FromString("auto")).
+						Obj(),
+				).
+				Obj(),
+			wantObjs: []runtime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node, constants.Launcher).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+					NumNodes(1).
+					Container(
+						constants.Node,
+						constants.Node,
+						"test:trainjob",
+						[]string{
+							"tune",
+							"run",
+							constants.TorchTuneLoRAFinetuneSingleDevice,
+							"--config",
+							"llama3_2/1B_qlora_single_device",
+							"output_dir=/workspace/output",
+							"tokenizer.path=/workspace/model/original/tokenizer.model",
+							"checkpointer.checkpoint_dir=/workspace/model",
+						},
+						[]string{
+							"dataset.data_dir=/workspace/dataset/data",
+							"model.apply_lora_to_mlp=True",
+							"model.lora_attn_modules=[q_proj,k_proj,v_proj,output_proj]",
+							"model.quantize_base=True",
+							"dataset=torchtune.datasets.instruct_dataset",
+							"dataset.source=parquet",
+						},
+						corev1.ResourceList{"example.com/gpu": resource.MustParse("1")},
+					).
+					ContainerTrainerPorts([]corev1.ContainerPort{{ContainerPort: constants.ContainerTrainerPort}}).
+					Env(constants.Node, constants.Node,
+						[]corev1.EnvVar{
+							{
+								Name:  constants.TorchEnvNumNodes,
+								Value: "1",
+							},
+							{
+								Name:  constants.TorchEnvNumProcPerNode,
+								Value: "auto",
+							},
+							{
+								Name: constants.TorchEnvNodeRank,
+								ValueFrom: &corev1.EnvVarSource{
+									FieldRef: &corev1.ObjectFieldSelector{
+										FieldPath: constants.JobCompletionIndexFieldPath,
+									},
+								},
+							},
+						}...,
+					).
+					DependsOn(constants.Node,
+						[]jobsetv1alpha2.DependsOn{
+							{
+								Name:   constants.DatasetInitializer,
+								Status: jobsetv1alpha2.DependencyComplete,
+							},
+							{
+								Name:   constants.ModelInitializer,
+								Status: jobsetv1alpha2.DependencyComplete,
+							},
+						}...,
+					).
+					Obj(),
+			},
+		},
+		"succeeded to build Jobset with TorchTune values from the TrainJob (DoRA)": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "torchtune-llama3.2-1b").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "torchtune-llama3.2-1b").Spec).
+					WithMLPolicy(
+						testingutil.MakeMLPolicyWrapper().
+							WithNumNodes(1).
+							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
+								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								Obj(),
+							).
+							Obj(),
+					).
+					JobSetSpec(
+						testingutil.MakeJobSetWrapper("", "").
+							DependsOn(constants.Node,
+								[]jobsetv1alpha2.DependsOn{
+									{
+										Name:   constants.DatasetInitializer,
+										Status: jobsetv1alpha2.DependencyComplete,
+									},
+									{
+										Name:   constants.ModelInitializer,
+										Status: jobsetv1alpha2.DependencyComplete,
+									},
+								}...,
+							).
+							Obj().
+							Spec,
+					).
+					Container(
+						constants.Node,
+						constants.Node,
+						"test:runtime",
+						[]string{
+							"tune",
+							"run",
+							"--rdzv_endpoint=localhost:29500",
+							constants.TorchTuneFullFinetuneDistributed,
+							"--config",
+							"llama3_2/1B_full",
+							"dataset=torchtune.datasets.instruct_dataset",
+							"dataset.source=parquet",
+							"dataset.data_dir=/workspace/dataset/data",
+							"output_dir=/workspace/output",
+							"tokenizer.path=/workspace/model/original/tokenizer.model",
+							"checkpointer.checkpoint_dir=/workspace/model",
+						},
+						[]string{"runtime"},
+						resRequests,
+					).
+					Obj(),
+			).Obj(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "torchtune-llama3.2-1b").
+				Trainer(
+					testingutil.MakeTrainJobTrainerWrapper().
+						Container(
+							"test:trainjob",
+							[]string{"tune", "run"},
+							[]string{
+								"dataset.data_dir=/workspace/dataset/data",
+								"model.apply_lora_to_mlp=True",
+								"model.lora_attn_modules=[q_proj,k_proj,v_proj,output_proj]",
+								"model.quantize_base=True",
+								"model.use_dora=True",
+								"dataset=torchtune.datasets.instruct_dataset",
+								"dataset.source=parquet",
+							},
+							corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+						).
+						NumNodes(1).
+						NumProcPerNode(intstr.FromString("auto")).
+						Obj(),
+				).
+				Obj(),
+			wantObjs: []runtime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node, constants.Launcher).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+					NumNodes(1).
+					Container(
+						constants.Node,
+						constants.Node,
+						"test:trainjob",
+						[]string{
+							"tune",
+							"run",
+							fmt.Sprintf("%s=%s", constants.TorchTuneArgRdzvEndpoint, "test-job-node-0-0.test-job:29500"),
+							constants.TorchTuneLoRAFinetuneDistributed,
+							"--config",
+							"llama3_2/1B_lora",
+							"output_dir=/workspace/output",
+							"tokenizer.path=/workspace/model/original/tokenizer.model",
+							"checkpointer.checkpoint_dir=/workspace/model",
+						},
+						[]string{
+							"dataset.data_dir=/workspace/dataset/data",
+							"model.apply_lora_to_mlp=True",
+							"model.lora_attn_modules=[q_proj,k_proj,v_proj,output_proj]",
+							"model.quantize_base=True",
+							"model.use_dora=True",
+							"dataset=torchtune.datasets.instruct_dataset",
+							"dataset.source=parquet",
+						},
+						corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+					).
+					ContainerTrainerPorts([]corev1.ContainerPort{{ContainerPort: constants.ContainerTrainerPort}}).
+					Env(constants.Node, constants.Node,
+						[]corev1.EnvVar{
+							{
+								Name:  constants.TorchEnvNumNodes,
+								Value: "1",
+							},
+							{
+								Name:  constants.TorchEnvNumProcPerNode,
+								Value: "auto",
+							},
+							{
+								Name: constants.TorchEnvNodeRank,
+								ValueFrom: &corev1.EnvVarSource{
+									FieldRef: &corev1.ObjectFieldSelector{
+										FieldPath: constants.JobCompletionIndexFieldPath,
+									},
+								},
+							},
+						}...,
+					).
+					DependsOn(constants.Node,
+						[]jobsetv1alpha2.DependsOn{
+							{
+								Name:   constants.DatasetInitializer,
+								Status: jobsetv1alpha2.DependencyComplete,
+							},
+							{
+								Name:   constants.ModelInitializer,
+								Status: jobsetv1alpha2.DependencyComplete,
+							},
+						}...,
+					).
+					Obj(),
+			},
+		},
 		"succeeded to build JobSet with OpenMPI values from the TrainJob": {
 			ObjCmpOpts: cmp.Options{
 				cmp.Comparer(testingutil.MPISecretDataComparer),
@@ -1082,7 +1662,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							testingutil.MakeMLPolicyWrapper().
 								WithNumNodes(1).
 								WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-									MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/root/.ssh"), ptr.To(false)).
+									MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/root/.ssh"), ptr.To(false)).
 									Obj(),
 								).
 								Obj(),

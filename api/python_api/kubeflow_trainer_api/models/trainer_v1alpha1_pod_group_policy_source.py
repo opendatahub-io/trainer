@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
 from kubeflow_trainer_api.models.trainer_v1alpha1_coscheduling_pod_group_policy_source import TrainerV1alpha1CoschedulingPodGroupPolicySource
+from kubeflow_trainer_api.models.trainer_v1alpha1_volcano_pod_group_policy_source import TrainerV1alpha1VolcanoPodGroupPolicySource
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -27,8 +28,9 @@ class TrainerV1alpha1PodGroupPolicySource(BaseModel):
     """
     PodGroupPolicySource represents supported plugins for gang-scheduling. Only one of its members may be specified.
     """ # noqa: E501
-    coscheduling: Optional[TrainerV1alpha1CoschedulingPodGroupPolicySource] = Field(default=None, description="Coscheduling plugin from the Kubernetes scheduler-plugins for gang-scheduling.")
-    __properties: ClassVar[List[str]] = ["coscheduling"]
+    coscheduling: Optional[TrainerV1alpha1CoschedulingPodGroupPolicySource] = Field(default=None, description="coscheduling plugin from the Kubernetes scheduler-plugins for gang-scheduling.")
+    volcano: Optional[TrainerV1alpha1VolcanoPodGroupPolicySource] = Field(default=None, description="volcano plugin for gang-scheduling.")
+    __properties: ClassVar[List[str]] = ["coscheduling", "volcano"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -72,6 +74,9 @@ class TrainerV1alpha1PodGroupPolicySource(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of coscheduling
         if self.coscheduling:
             _dict['coscheduling'] = self.coscheduling.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of volcano
+        if self.volcano:
+            _dict['volcano'] = self.volcano.to_dict()
         return _dict
 
     @classmethod
@@ -84,7 +89,8 @@ class TrainerV1alpha1PodGroupPolicySource(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "coscheduling": TrainerV1alpha1CoschedulingPodGroupPolicySource.from_dict(obj["coscheduling"]) if obj.get("coscheduling") is not None else None
+            "coscheduling": TrainerV1alpha1CoschedulingPodGroupPolicySource.from_dict(obj["coscheduling"]) if obj.get("coscheduling") is not None else None,
+            "volcano": TrainerV1alpha1VolcanoPodGroupPolicySource.from_dict(obj["volcano"]) if obj.get("volcano") is not None else None
         })
         return _obj
 

@@ -26,11 +26,11 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/constants"
-	testingutil "github.com/kubeflow/trainer/pkg/util/testing"
-	"github.com/kubeflow/trainer/test/integration/framework"
-	"github.com/kubeflow/trainer/test/util"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
+	"github.com/kubeflow/trainer/v2/test/integration/framework"
+	"github.com/kubeflow/trainer/v2/test/util"
 )
 
 var _ = ginkgo.Describe("TrainJob Webhook", ginkgo.Ordered, func() {
@@ -218,6 +218,54 @@ var _ = ginkgo.Describe("TrainJob Webhook", ginkgo.Ordered, func() {
 				},
 				testingutil.BeForbiddenError()),
 		)
+		ginkgo.DescribeTable("RFC1035-compliant TrainJob name validation", func(trainJob func() *trainer.TrainJob, errorMatcher gomega.OmegaMatcher) {
+			gomega.Expect(k8sClient.Create(ctx, trainJob())).Should(errorMatcher)
+		},
+			ginkgo.Entry("Should succeed to create TrainJob with valid RFC1035-compliant name",
+				func() *trainer.TrainJob {
+					return testingutil.MakeTrainJobWrapper(ns.Name, "valid-job-name").
+						RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), runtimeName).
+						Obj()
+				},
+				gomega.Succeed()),
+			ginkgo.Entry("Should succeed to create TrainJob with name exactly 63 characters",
+				func() *trainer.TrainJob {
+					return testingutil.MakeTrainJobWrapper(ns.Name,
+						"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"). // 63 chars
+						RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), runtimeName).
+						Obj()
+				},
+				gomega.Succeed()),
+			ginkgo.Entry("Should fail to create TrainJob with uppercase letters in name",
+				func() *trainer.TrainJob {
+					return testingutil.MakeTrainJobWrapper(ns.Name, "Invalid-job-name").
+						RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), runtimeName).
+						Obj()
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create TrainJob starting with a digit",
+				func() *trainer.TrainJob {
+					return testingutil.MakeTrainJobWrapper(ns.Name, "1jobname").
+						RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), runtimeName).
+						Obj()
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create TrainJob ending with a hyphen",
+				func() *trainer.TrainJob {
+					return testingutil.MakeTrainJobWrapper(ns.Name, "jobname-").
+						RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), runtimeName).
+						Obj()
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create TrainJob with name exceeding 63 characters",
+				func() *trainer.TrainJob {
+					return testingutil.MakeTrainJobWrapper(ns.Name,
+						"this-name-is-way-too-long-for-a-rfc1035-label-and-should-fail-validation").
+						RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), runtimeName).
+						Obj()
+				},
+				testingutil.BeInvalidError()),
+		)
 	})
 })
 
@@ -303,23 +351,27 @@ var _ = ginkgo.Describe("TrainJob marker validations and defaulting", ginkgo.Ord
 						Obj()
 				},
 				testingutil.BeInvalidError()),
-			ginkgo.Entry("Should fail in creating trainJob with podSpecOverrides have duplicated targetJob",
+			ginkgo.Entry("Should succeed to create trainJob with podTemplateOverrides containing duplicate targetJob",
 				func() *trainer.TrainJob {
-					return testingutil.MakeTrainJobWrapper(ns.Name, "invalid-pod-spec-overrides").
+					return testingutil.MakeTrainJobWrapper(ns.Name, "duplicated-podspecoverrides-target-jobs").
 						RuntimeRef(trainer.GroupVersion.WithKind(trainer.TrainingRuntimeKind), "testing").
-						PodSpecOverrides([]trainer.PodSpecOverride{
+						PodTemplateOverrides([]trainer.PodTemplateOverride{
 							{
-								TargetJobs:         []trainer.PodSpecOverrideTargetJob{{Name: "node"}},
-								ServiceAccountName: ptr.To("custom-sa"),
+								TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: "node"}},
+								Spec: &trainer.PodTemplateSpecOverride{
+									ServiceAccountName: ptr.To("custom-sa"),
+								},
 							},
 							{
-								TargetJobs:         []trainer.PodSpecOverrideTargetJob{{Name: "node"}},
-								ServiceAccountName: ptr.To("custom-sa-two"),
+								TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: "node"}},
+								Spec: &trainer.PodTemplateSpecOverride{
+									ServiceAccountName: ptr.To("custom-sa-two"),
+								},
 							},
 						}).
 						Obj()
 				},
-				testingutil.BeForbiddenError()),
+				gomega.Succeed()),
 		)
 		ginkgo.DescribeTable("Defaulting TrainJob on creation", func(trainJob func() *trainer.TrainJob, wantTrainJob func() *trainer.TrainJob) {
 			created := trainJob()

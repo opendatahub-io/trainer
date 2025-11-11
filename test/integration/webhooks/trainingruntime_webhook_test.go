@@ -25,11 +25,11 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/constants"
-	testingutil "github.com/kubeflow/trainer/pkg/util/testing"
-	"github.com/kubeflow/trainer/test/integration/framework"
-	"github.com/kubeflow/trainer/test/util"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
+	"github.com/kubeflow/trainer/v2/test/integration/framework"
+	"github.com/kubeflow/trainer/v2/test/util"
 )
 
 const trainingRuntimeName = "test-trainingruntime"
@@ -153,7 +153,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(nil, ptr.To[trainer.MPIImplementation]("invalid"), nil, nil).
+										MPIPolicy(nil, "invalid", nil, nil).
 										Obj(),
 									).
 									Obj(),
@@ -202,7 +202,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), nil, ptr.To("/usr/dir"), ptr.To(false)).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/usr/dir"), ptr.To(false)).
 										Obj(),
 									).
 									Obj(),
@@ -224,7 +224,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/usr/dir"), ptr.To(false)).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/usr/dir"), ptr.To(false)).
 										Obj(),
 									).
 									Obj(),
@@ -247,7 +247,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), nil, ptr.To(false)).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, nil, ptr.To(false)).
 										Obj(),
 									).
 									Obj(),
@@ -269,7 +269,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/root/.ssh"), ptr.To(false)).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/root/.ssh"), ptr.To(false)).
 										Obj(),
 									).
 									Obj(),
@@ -292,7 +292,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/usr/dir"), nil).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/usr/dir"), nil).
 										Obj(),
 									).
 									Obj(),
@@ -314,7 +314,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/usr/dir"), ptr.To(false)).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/usr/dir"), ptr.To(false)).
 										Obj(),
 									).
 									Obj(),
@@ -337,7 +337,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(nil, ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/usr/dir"), ptr.To(false)).
+										MPIPolicy(nil, trainer.MPIImplementationOpenMPI, ptr.To("/usr/dir"), ptr.To(false)).
 										Obj(),
 									).
 									Obj(),
@@ -359,7 +359,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 							WithMLPolicy(
 								testingutil.MakeMLPolicyWrapper().
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										MPIPolicy(ptr.To[int32](1), ptr.To(trainer.MPIImplementationOpenMPI), ptr.To("/usr/dir"), ptr.To(false)).
+										MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/usr/dir"), ptr.To(false)).
 										Obj(),
 									).
 									Obj(),

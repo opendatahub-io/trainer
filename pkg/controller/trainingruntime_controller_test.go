@@ -33,10 +33,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/constants"
-	idxer "github.com/kubeflow/trainer/pkg/runtime/indexer"
-	utiltesting "github.com/kubeflow/trainer/pkg/util/testing"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	idxer "github.com/kubeflow/trainer/v2/pkg/runtime/indexer"
+	utiltesting "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
 
 func TestReconcile_TrainingRuntimeReconciler(t *testing.T) {
@@ -129,6 +129,7 @@ func TestReconcile_TrainingRuntimeReconciler(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantTrainingRuntime, &gotRuntime,
 				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion"),
+				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
 			); len(diff) != 0 {
 				t.Errorf("Unexpected TrainingRuntime: (-want, +got): \n%s", diff)
 			}

@@ -21,6 +21,14 @@ set -o nounset
 set -o pipefail
 set -x
 
+# Source container runtime utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/scripts/container-runtime.sh"
+source "${SCRIPT_DIR}/scripts/load-image-to-kind.sh"
+
+# Setup container runtime
+setup_container_runtime
+
 # Configure variables.
 KIND=${KIND:-./bin/kind}
 K8S_VERSION=${K8S_VERSION:-1.32.0}
@@ -34,16 +42,18 @@ CONTROLLER_MANAGER_CI_IMAGE_NAME="ghcr.io/kubeflow/trainer/trainer-controller-ma
 CONTROLLER_MANAGER_CI_IMAGE_TAG="test"
 CONTROLLER_MANAGER_CI_IMAGE="${CONTROLLER_MANAGER_CI_IMAGE_NAME}:${CONTROLLER_MANAGER_CI_IMAGE_TAG}"
 echo "Build Kubeflow Trainer images"
-docker build . -f cmd/trainer-controller-manager/Dockerfile -t ${CONTROLLER_MANAGER_CI_IMAGE}
+${CONTAINER_RUNTIME} build . -f cmd/trainer-controller-manager/Dockerfile -t ${CONTROLLER_MANAGER_CI_IMAGE}
 
 echo "Create Kind cluster and load Kubeflow Trainer images"
 ${KIND} create cluster --image "${KIND_NODE_VERSION}"
-${KIND} load docker-image ${CONTROLLER_MANAGER_CI_IMAGE}
+
+# Load Trainer controller manager image in KinD
+load_image_to_kind ${CONTROLLER_MANAGER_CI_IMAGE}
 
 echo "Deploy Kubeflow Trainer control plane"
 E2E_MANIFESTS_DIR="artifacts/e2e/manifests"
 mkdir -p "${E2E_MANIFESTS_DIR}"
-cat <<EOF > "${E2E_MANIFESTS_DIR}/kustomization.yaml"
+cat <<EOF >"${E2E_MANIFESTS_DIR}/kustomization.yaml"
   apiVersion: kustomize.config.k8s.io/v1beta1
   kind: Kustomization
   resources:
@@ -82,9 +92,16 @@ kubectl apply --server-side -k manifests/overlays/runtimes || (
     exit 1
 )
 
-# TODO (andreyvelich): Discuss how we want to pre-load runtime images to the Kind cluster.
-TORCH_RUNTIME_IMAGE=pytorch/pytorch:2.5.0-cuda12.4-cudnn9-runtime
-docker pull ${TORCH_RUNTIME_IMAGE}
-${KIND} load docker-image ${TORCH_RUNTIME_IMAGE}
+# TODO (andreyvelich): We should build runtime images before adding them.
+TORCH_RUNTIME_IMAGE=pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+DEEPSPEED_RUNTIME_IMAGE=ghcr.io/kubeflow/trainer/deepspeed-runtime:latest
+
+# Load Torch runtime image in KinD
+${CONTAINER_RUNTIME} pull ${TORCH_RUNTIME_IMAGE}
+load_image_to_kind ${TORCH_RUNTIME_IMAGE}
+
+# Load DeepSpeed runtime image in KinD
+${CONTAINER_RUNTIME} pull ${DEEPSPEED_RUNTIME_IMAGE}
+load_image_to_kind ${DEEPSPEED_RUNTIME_IMAGE}
 
 print_cluster_info

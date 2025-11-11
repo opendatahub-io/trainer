@@ -5,17 +5,19 @@ import (
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	jobsetconsts "sigs.k8s.io/jobset/pkg/constants"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	testingutil "github.com/kubeflow/trainer/pkg/util/testing"
-	"github.com/kubeflow/trainer/test/util"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
+	"github.com/kubeflow/trainer/v2/test/util"
 )
 
 const (
-	torchRuntime = "torch-distributed"
-	mpiRuntime   = "mpi-distributed"
+	torchRuntime     = "torch-distributed"
+	deepSpeedRuntime = "deepspeed-distributed"
 )
 
 var _ = ginkgo.Describe("TrainJob e2e", func() {
@@ -45,7 +47,7 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 
 	// These tests create TrainJob that reference supported runtime without any additional changes.
 	ginkgo.When("Creating TrainJob to perform the PyTorch workload", func() {
-		// Verify `torch-distributed` ClusterTrainingRuntime.
+		// Verify the `torch-distributed` ClusterTrainingRuntime.
 		ginkgo.It("should create TrainJob with PyTorch runtime reference", func() {
 			// Create a TrainJob.
 			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-torch").
@@ -56,8 +58,26 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 			})
 
-			// Wait for TrainJob to be in Succeeded status.
-			ginkgo.By("Wait for TrainJob to be in Succeeded status", func() {
+			// Wait for jobs to become active
+			ginkgo.By("Wait for TrainJob jobs to become active", func() {
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(1)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}, util.SortJobsStatus))
+				}, util.TimeoutE2E, util.Interval).Should(gomega.Succeed())
+			})
+
+			// Wait for TrainJob to be in Succeeded status with all jobs succeeded.
+			ginkgo.By("Wait for TrainJob to be in Succeeded status with all jobs succeeded", func() {
 				gomega.Eventually(func(g gomega.Gomega) {
 					gotTrainJob := &trainer.TrainJob{}
 					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
@@ -69,19 +89,57 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 							Message: jobsetconsts.AllJobsCompletedMessage,
 						},
 					}, util.IgnoreConditions))
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}, util.SortJobsStatus))
 				}, util.TimeoutE2E, util.Interval).Should(gomega.Succeed())
 			})
 		})
 	})
 
 	ginkgo.When("Creating TrainJob to perform OpenMPI workload", func() {
-		ginkgo.It("should create TrainJob with OpenMPI runtime reference", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-openmpi").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), mpiRuntime).
+		// Verify the `deepspeed-distributed` ClusterTrainingRuntime.
+		ginkgo.It("should create TrainJob with DeepSpeed runtime reference", func() {
+			// Create a TrainJob.
+			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-deepspeed").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), deepSpeedRuntime).
 				Obj()
 
-			ginkgo.By("Create a TrainJob with mpi-distributed runtime reference", func() {
+			ginkgo.By("Create a TrainJob with deepspeed-distributed runtime reference", func() {
 				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+			})
+
+			// Wait for jobs to become active
+			ginkgo.By("Wait for TrainJob jobs to become active", func() {
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.Launcher,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(1)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(1)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}, util.SortJobsStatus))
+				}, util.TimeoutE2E, util.Interval).Should(gomega.Succeed())
 			})
 
 			// Wait for TrainJob to be in Succeeded status.
@@ -97,6 +155,24 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 							Message: jobsetconsts.AllJobsCompletedMessage,
 						},
 					}, util.IgnoreConditions))
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.Launcher,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}, util.SortJobsStatus))
 				}, util.TimeoutE2E, util.Interval).Should(gomega.Succeed())
 			})
 		})

@@ -25,6 +25,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -34,13 +35,13 @@ import (
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	jobsetv1alpha2ac "sigs.k8s.io/jobset/client-go/applyconfiguration/jobset/v1alpha2"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/apply"
-	"github.com/kubeflow/trainer/pkg/constants"
-	"github.com/kubeflow/trainer/pkg/runtime"
-	fwkcore "github.com/kubeflow/trainer/pkg/runtime/framework/core"
-	fwkplugins "github.com/kubeflow/trainer/pkg/runtime/framework/plugins"
-	idxer "github.com/kubeflow/trainer/pkg/runtime/indexer"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/apply"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/runtime"
+	fwkcore "github.com/kubeflow/trainer/v2/pkg/runtime/framework/core"
+	fwkplugins "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins"
+	idxer "github.com/kubeflow/trainer/v2/pkg/runtime/indexer"
 )
 
 var (
@@ -79,19 +80,27 @@ func NewTrainingRuntime(ctx context.Context, c client.Client, indexer client.Fie
 	return trainingRuntimeFactory, nil
 }
 
-func (r *TrainingRuntime) NewObjects(ctx context.Context, trainJob *trainer.TrainJob) ([]any, error) {
+func (r *TrainingRuntime) NewObjects(ctx context.Context, trainJob *trainer.TrainJob) ([]apiruntime.ApplyConfiguration, error) {
 	var trainingRuntime trainer.TrainingRuntime
 	err := r.client.Get(ctx, client.ObjectKey{Namespace: trainJob.Namespace, Name: trainJob.Spec.RuntimeRef.Name}, &trainingRuntime)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errorNotFoundSpecifiedTrainingRuntime, err)
 	}
-	return r.buildObjects(ctx, trainJob, trainingRuntime.Spec.Template, trainingRuntime.Spec.MLPolicy, trainingRuntime.Spec.PodGroupPolicy)
+	info, err := r.RuntimeInfo(trainJob, trainingRuntime.Spec.Template, trainingRuntime.Spec.MLPolicy, trainingRuntime.Spec.PodGroupPolicy)
+	if err != nil {
+		return nil, err
+	}
+	return r.framework.RunComponentBuilderPlugins(ctx, info, trainJob)
 }
 
-func (r *TrainingRuntime) buildObjects(
-	ctx context.Context, trainJob *trainer.TrainJob, jobSetTemplateSpec trainer.JobSetTemplateSpec, mlPolicy *trainer.MLPolicy, podGroupPolicy *trainer.PodGroupPolicy,
-) ([]any, error) {
+func (r *TrainingRuntime) RuntimeInfo(
+	trainJob *trainer.TrainJob, runtimeTemplateSpec any, mlPolicy *trainer.MLPolicy, podGroupPolicy *trainer.PodGroupPolicy,
+) (*runtime.Info, error) {
 
+	jobSetTemplateSpec, ok := runtimeTemplateSpec.(trainer.JobSetTemplateSpec)
+	if !ok {
+		return nil, fmt.Errorf("unsupported runtimeTemplateSpec")
+	}
 	info, err := r.newRuntimeInfo(trainJob, jobSetTemplateSpec, mlPolicy, podGroupPolicy)
 	if err != nil {
 		return nil, err
@@ -108,7 +117,7 @@ func (r *TrainingRuntime) buildObjects(
 		return nil, err
 	}
 
-	return r.framework.RunComponentBuilderPlugins(ctx, info, trainJob)
+	return info, nil
 }
 
 func (r *TrainingRuntime) newRuntimeInfo(
@@ -130,7 +139,7 @@ func (r *TrainingRuntime) newRuntimeInfo(
 		// The JobSetTemplateSpec annotations are overridden by the TrainJob Annotations (.spec.annotations).
 		propagationAnnotations[k] = v
 	}
-	err := r.mergePodSpecOverrides(trainJob, &jobSetTemplateSpec)
+	err := r.mergePodTemplateOverrides(trainJob, &jobSetTemplateSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +160,6 @@ func (r *TrainingRuntime) newRuntimeInfo(
 		runtime.WithMLPolicySource(mlPolicy),
 		runtime.WithPodGroupPolicy(podGroupPolicy),
 		runtime.WithTemplateSpecObjApply(jobSetSpecApply),
-		runtime.WithPodSetSyncer(syncPodSets),
 	}
 
 	for i, rJob := range jobSetSpecApply.ReplicatedJobs {
@@ -179,67 +187,58 @@ func (r *TrainingRuntime) newRuntimeInfo(
 	return runtime.NewInfo(opts...), nil
 }
 
-func (r *TrainingRuntime) mergePodSpecOverrides(trainJob *trainer.TrainJob, jobSetTemplateSpec *trainer.JobSetTemplateSpec) error {
-	for _, podSpecOverride := range trainJob.Spec.PodSpecOverrides {
+func (r *TrainingRuntime) mergePodTemplateOverrides(trainJob *trainer.TrainJob, jobSetTemplateSpec *trainer.JobSetTemplateSpec) error {
+	for _, podTemplateOverride := range trainJob.Spec.PodTemplateOverrides {
 		for i, job := range jobSetTemplateSpec.Spec.ReplicatedJobs {
-			if !slices.ContainsFunc(podSpecOverride.TargetJobs, func(targetJob trainer.PodSpecOverrideTargetJob) bool {
+			if !slices.ContainsFunc(podTemplateOverride.TargetJobs, func(targetJob trainer.PodTemplateOverrideTargetJob) bool {
 				return targetJob.Name == job.Name
 			}) {
 				continue
 			}
-			patch, err := json.Marshal(podSpecOverride)
+
+			podTemplatePatch := map[string]any{}
+			if podTemplateOverride.Metadata != nil {
+				metadata := map[string]any{}
+				if podTemplateOverride.Metadata.Labels != nil {
+					metadata["labels"] = podTemplateOverride.Metadata.Labels
+				}
+				if podTemplateOverride.Metadata.Annotations != nil {
+					metadata["annotations"] = podTemplateOverride.Metadata.Annotations
+				}
+				if len(metadata) > 0 {
+					podTemplatePatch["metadata"] = metadata
+				}
+			}
+
+			if podTemplateOverride.Spec != nil {
+				podTemplatePatch["spec"] = podTemplateOverride.Spec
+			}
+
+			// Apply a strategic merge patch against the full PodTemplateSpec
+			source, err := json.Marshal(job.Template.Spec.Template)
 			if err != nil {
 				return err
 			}
-			source, err := json.Marshal(job.Template.Spec.Template.Spec)
+			patch, err := json.Marshal(podTemplatePatch)
 			if err != nil {
 				return err
 			}
-			merged, err := strategicpatch.StrategicMergePatch(source, patch, corev1.PodSpec{})
+			merged, err := strategicpatch.StrategicMergePatch(source, patch, corev1.PodTemplateSpec{})
 			if err != nil {
 				return err
 			}
-			spec := corev1.PodSpec{}
-			err = json.Unmarshal(merged, &spec)
-			if err != nil {
+			mergedTemplate := corev1.PodTemplateSpec{}
+			if err := json.Unmarshal(merged, &mergedTemplate); err != nil {
 				return err
 			}
-			jobSetTemplateSpec.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec = spec
+			jobSetTemplateSpec.Spec.ReplicatedJobs[i].Template.Spec.Template = mergedTemplate
 		}
 	}
 	return nil
 }
 
-func syncPodSets(info *runtime.Info) {
-	jsSpec, ok := runtime.TemplateSpecApply[jobsetv1alpha2ac.JobSetSpecApplyConfiguration](info)
-	if !ok {
-		return
-	}
-	for psIdx, ps := range info.TemplateSpec.PodSets {
-		if ps.Count != nil {
-			jsSpec.ReplicatedJobs[psIdx].Template.Spec.Parallelism = ps.Count
-			jsSpec.ReplicatedJobs[psIdx].Template.Spec.Completions = ps.Count
-		}
-		apply.UpsertVolumes(&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Volumes, ps.Volumes...)
-		for containerIdx, container := range ps.Containers {
-			apply.UpsertEnvVar(
-				&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].Env,
-				container.Env...,
-			)
-			apply.UpsertPort(
-				&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].Ports,
-				container.Ports...,
-			)
-			apply.UpsertVolumeMounts(
-				&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].VolumeMounts,
-				container.VolumeMounts...,
-			)
-		}
-	}
-}
-
-func (r *TrainingRuntime) TerminalCondition(ctx context.Context, trainJob *trainer.TrainJob) (*metav1.Condition, error) {
-	return r.framework.RunTerminalConditionPlugins(ctx, trainJob)
+func (r *TrainingRuntime) TrainJobStatus(ctx context.Context, trainJob *trainer.TrainJob) (*trainer.TrainJobStatus, error) {
+	return r.framework.RunTrainJobStatusPlugin(ctx, trainJob)
 }
 
 func (r *TrainingRuntime) EventHandlerRegistrars() []runtime.ReconcilerBuilder {
@@ -262,5 +261,5 @@ func (r *TrainingRuntime) ValidateObjects(ctx context.Context, old, new *trainer
 		}
 	}
 	info, _ := r.newRuntimeInfo(new, trainingRuntime.Spec.Template, trainingRuntime.Spec.MLPolicy, trainingRuntime.Spec.PodGroupPolicy) // ignoring the error here as the runtime configured should be valid
-	return r.framework.RunCustomValidationPlugins(info, old, new)
+	return r.framework.RunCustomValidationPlugins(ctx, info, old, new)
 }

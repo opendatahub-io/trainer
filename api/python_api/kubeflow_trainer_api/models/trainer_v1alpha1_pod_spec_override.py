@@ -19,6 +19,9 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from kubeflow_trainer_api.models.io_k8s_api_core_v1_affinity import IoK8sApiCoreV1Affinity
+from kubeflow_trainer_api.models.io_k8s_api_core_v1_local_object_reference import IoK8sApiCoreV1LocalObjectReference
+from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_scheduling_gate import IoK8sApiCoreV1PodSchedulingGate
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_toleration import IoK8sApiCoreV1Toleration
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_volume import IoK8sApiCoreV1Volume
 from kubeflow_trainer_api.models.trainer_v1alpha1_container_override import TrainerV1alpha1ContainerOverride
@@ -30,14 +33,33 @@ class TrainerV1alpha1PodSpecOverride(BaseModel):
     """
     PodSpecOverride represents the custom overrides that will be applied for the TrainJob's resources.
     """ # noqa: E501
-    containers: Optional[List[TrainerV1alpha1ContainerOverride]] = Field(default=None, description="Overrides for the containers in the desired job templates.")
-    init_containers: Optional[List[TrainerV1alpha1ContainerOverride]] = Field(default=None, description="Overrides for the init container in the desired job templates.", alias="initContainers")
+<<<<<<< HEAD
+    affinity: Optional[IoK8sApiCoreV1Affinity] = Field(default=None, description="Override for the Pod's affinity.")
+    annotations: Optional[Dict[str, StrictStr]] = Field(default=None, description="Override for the Pod's annotations. These values will be merged with the TrainingRuntime's Pod annotations.")
+    containers: Optional[List[TrainerV1alpha1ContainerOverride]] = Field(default=None, description="Overrides for the containers in the target job templates.")
+    image_pull_secrets: Optional[List[IoK8sApiCoreV1LocalObjectReference]] = Field(default=None, description="ImagePullSecrets overrides the image pull secrets for the Pods in the target job templates.", alias="imagePullSecrets")
+    init_containers: Optional[List[TrainerV1alpha1ContainerOverride]] = Field(default=None, description="Overrides for the init container in the target job templates.", alias="initContainers")
+    labels: Optional[Dict[str, StrictStr]] = Field(default=None, description="Override for the Pod's labels. These values will be merged with the TrainingRuntime's Pod labels.")
     node_selector: Optional[Dict[str, StrictStr]] = Field(default=None, description="Override for the node selector to place Pod on the specific node.", alias="nodeSelector")
+    scheduling_gates: Optional[List[IoK8sApiCoreV1PodSchedulingGate]] = Field(default=None, description="SchedulingGates overrides the scheduling gates of the Pods in the target job templates. More info: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-scheduling-readiness/", alias="schedulingGates")
     service_account_name: Optional[StrictStr] = Field(default=None, description="Override for the service account.", alias="serviceAccountName")
     target_jobs: List[TrainerV1alpha1PodSpecOverrideTargetJob] = Field(description="TrainJobs is the training job replicas in the training runtime template to apply the overrides.", alias="targetJobs")
     tolerations: Optional[List[IoK8sApiCoreV1Toleration]] = Field(default=None, description="Override for the Pod's tolerations.")
     volumes: Optional[List[IoK8sApiCoreV1Volume]] = Field(default=None, description="Overrides for the Pod volume configurations.")
-    __properties: ClassVar[List[str]] = ["containers", "initContainers", "nodeSelector", "serviceAccountName", "targetJobs", "tolerations", "volumes"]
+    __properties: ClassVar[List[str]] = ["affinity", "annotations", "containers", "imagePullSecrets", "initContainers", "labels", "nodeSelector", "schedulingGates", "serviceAccountName", "targetJobs", "tolerations", "volumes"]
+=======
+    affinity: Optional[IoK8sApiCoreV1Affinity] = Field(default=None, description="affinity overrides for the Pod's affinity.")
+    containers: Optional[List[TrainerV1alpha1ContainerOverride]] = Field(default=None, description="containers overrides for the containers in the target job templates.")
+    image_pull_secrets: Optional[List[IoK8sApiCoreV1LocalObjectReference]] = Field(default=None, description="imagePullSecrets overrides the image pull secrets for the Pods in the target job templates.", alias="imagePullSecrets")
+    init_containers: Optional[List[TrainerV1alpha1ContainerOverride]] = Field(default=None, description="initContainers overrides the init container in the target job templates.", alias="initContainers")
+    node_selector: Optional[Dict[str, StrictStr]] = Field(default=None, description="nodeSelector overrides the node selector to place Pod on the specific node.", alias="nodeSelector")
+    scheduling_gates: Optional[List[IoK8sApiCoreV1PodSchedulingGate]] = Field(default=None, description="schedulingGates overrides the scheduling gates of the Pods in the target job templates. More info: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-scheduling-readiness/", alias="schedulingGates")
+    service_account_name: Optional[StrictStr] = Field(default=None, description="serviceAccountName overrides the service account.", alias="serviceAccountName")
+    target_jobs: List[TrainerV1alpha1PodSpecOverrideTargetJob] = Field(description="targetJobs is the list of replicated jobs in the training runtime template to apply the overrides.", alias="targetJobs")
+    tolerations: Optional[List[IoK8sApiCoreV1Toleration]] = Field(default=None, description="tolerations overrides the Pod's tolerations.")
+    volumes: Optional[List[IoK8sApiCoreV1Volume]] = Field(default=None, description="volumes overrides the Pod's volumes.")
+    __properties: ClassVar[List[str]] = ["affinity", "containers", "imagePullSecrets", "initContainers", "nodeSelector", "schedulingGates", "serviceAccountName", "targetJobs", "tolerations", "volumes"]
+>>>>>>> 18eabf4d (Generate)
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +100,9 @@ class TrainerV1alpha1PodSpecOverride(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of affinity
+        if self.affinity:
+            _dict['affinity'] = self.affinity.to_dict()
         # override the default output from pydantic by calling `to_dict()` of each item in containers (list)
         _items = []
         if self.containers:
@@ -85,6 +110,13 @@ class TrainerV1alpha1PodSpecOverride(BaseModel):
                 if _item_containers:
                     _items.append(_item_containers.to_dict())
             _dict['containers'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in image_pull_secrets (list)
+        _items = []
+        if self.image_pull_secrets:
+            for _item_image_pull_secrets in self.image_pull_secrets:
+                if _item_image_pull_secrets:
+                    _items.append(_item_image_pull_secrets.to_dict())
+            _dict['imagePullSecrets'] = _items
         # override the default output from pydantic by calling `to_dict()` of each item in init_containers (list)
         _items = []
         if self.init_containers:
@@ -92,6 +124,13 @@ class TrainerV1alpha1PodSpecOverride(BaseModel):
                 if _item_init_containers:
                     _items.append(_item_init_containers.to_dict())
             _dict['initContainers'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in scheduling_gates (list)
+        _items = []
+        if self.scheduling_gates:
+            for _item_scheduling_gates in self.scheduling_gates:
+                if _item_scheduling_gates:
+                    _items.append(_item_scheduling_gates.to_dict())
+            _dict['schedulingGates'] = _items
         # override the default output from pydantic by calling `to_dict()` of each item in target_jobs (list)
         _items = []
         if self.target_jobs:
@@ -125,9 +164,14 @@ class TrainerV1alpha1PodSpecOverride(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "affinity": IoK8sApiCoreV1Affinity.from_dict(obj["affinity"]) if obj.get("affinity") is not None else None,
+            "annotations": obj.get("annotations"),
             "containers": [TrainerV1alpha1ContainerOverride.from_dict(_item) for _item in obj["containers"]] if obj.get("containers") is not None else None,
+            "imagePullSecrets": [IoK8sApiCoreV1LocalObjectReference.from_dict(_item) for _item in obj["imagePullSecrets"]] if obj.get("imagePullSecrets") is not None else None,
             "initContainers": [TrainerV1alpha1ContainerOverride.from_dict(_item) for _item in obj["initContainers"]] if obj.get("initContainers") is not None else None,
+            "labels": obj.get("labels"),
             "nodeSelector": obj.get("nodeSelector"),
+            "schedulingGates": [IoK8sApiCoreV1PodSchedulingGate.from_dict(_item) for _item in obj["schedulingGates"]] if obj.get("schedulingGates") is not None else None,
             "serviceAccountName": obj.get("serviceAccountName"),
             "targetJobs": [TrainerV1alpha1PodSpecOverrideTargetJob.from_dict(_item) for _item in obj["targetJobs"]] if obj.get("targetJobs") is not None else None,
             "tolerations": [IoK8sApiCoreV1Toleration.from_dict(_item) for _item in obj["tolerations"]] if obj.get("tolerations") is not None else None,

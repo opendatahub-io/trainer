@@ -34,11 +34,11 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/constants"
-	"github.com/kubeflow/trainer/pkg/runtime"
-	"github.com/kubeflow/trainer/pkg/runtime/framework"
-	utiltesting "github.com/kubeflow/trainer/pkg/util/testing"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/runtime"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework"
+	utiltesting "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
 
 func TestTorch(t *testing.T) {
@@ -117,7 +117,7 @@ func TestTorch(t *testing.T) {
 								},
 								{
 									Name:  ptr.To(constants.TorchEnvNumProcPerNode),
-									Value: ptr.To("auto"),
+									Value: ptr.To("1"),
 								},
 								{
 									Name: ptr.To(constants.TorchEnvNodeRank),
@@ -596,7 +596,7 @@ func TestTorch(t *testing.T) {
 					utiltesting.MakeTrainJobTrainerWrapper().
 						NumProcPerNode(intstr.FromString("auto")).
 						Container("test:image", nil, nil, corev1.ResourceList{
-							"nvidia.com/gpu": resource.MustParse("2"),
+							"example.com/gpu": resource.MustParse("2"),
 						}).
 						Obj(),
 				).
@@ -897,7 +897,7 @@ func TestTorch(t *testing.T) {
 						NumProcPerNode(intstr.FromString("cpu")).
 						Container("test:image", nil, nil, corev1.ResourceList{
 							corev1.ResourceCPU: resource.MustParse("6"),
-							"nvidia.com/gpu":   resource.MustParse("2"),
+							"example.com/gpu":  resource.MustParse("2"),
 						}).
 						Obj(),
 				).
@@ -1050,7 +1050,7 @@ func TestTorch(t *testing.T) {
 						Container("pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime", nil, nil, corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("8"),
 							corev1.ResourceMemory: resource.MustParse("16Gi"),
-							"nvidia.com/gpu":      resource.MustParse("4"), // 4 GPUs per node
+							"example.com/gpu":     resource.MustParse("4"), // 4 GPUs per node
 						}).
 						Obj(),
 				).
@@ -1144,7 +1144,7 @@ func TestTorch(t *testing.T) {
 							corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("8"),
 								corev1.ResourceMemory: resource.MustParse("16Gi"),
-								"nvidia.com/gpu":      resource.MustParse("4"), // 4 GPUs per node
+								"example.com/gpu":     resource.MustParse("4"), // 4 GPUs per node
 							},
 						).
 						Obj(),
@@ -1215,7 +1215,7 @@ func TestTorch(t *testing.T) {
 				Trainer(
 					utiltesting.MakeTrainJobTrainerWrapper().
 						NumNodes(1).
-						NumProcPerNode(intstr.FromInt(1)).
+						NumProcPerNode(intstr.FromInt32(1)).
 						Container(
 							"ghcr.io/kubeflow/trainer/torchtune-trainer",
 							[]string{"tune", "run"},
@@ -1228,7 +1228,7 @@ func TestTorch(t *testing.T) {
 							corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("8"),
 								corev1.ResourceMemory: resource.MustParse("16Gi"),
-								"nvidia.com/gpu":      resource.MustParse("1"), // 1 GPU per node
+								"example.com/gpu":     resource.MustParse("1"), // 1 GPU per node
 							},
 						).
 						Obj(),
@@ -1299,7 +1299,7 @@ func TestTorch(t *testing.T) {
 				Trainer(
 					utiltesting.MakeTrainJobTrainerWrapper().
 						NumNodes(2).
-						NumProcPerNode(intstr.FromInt(8)).
+						NumProcPerNode(intstr.FromInt32(8)).
 						Container(
 							"ghcr.io/kubeflow/trainer/torchtune-trainer",
 							[]string{"tune", "run"},
@@ -1312,7 +1312,7 @@ func TestTorch(t *testing.T) {
 							corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("8"),
 								corev1.ResourceMemory: resource.MustParse("16Gi"),
-								"nvidia.com/gpu":      resource.MustParse("8"), // 8 GPUs per node
+								"example.com/gpu":     resource.MustParse("8"), // 8 GPUs per node
 							},
 						).
 						Obj(),
@@ -1331,7 +1331,7 @@ func TestTorch(t *testing.T) {
 						).
 						Obj(),
 				),
-				runtime.WithPodSet(constants.Node, ptr.To(constants.AncestorTrainer), 1, corev1.PodSpec{}, corev1ac.PodSpec().
+				runtime.WithPodSet(constants.Node, ptr.To(constants.AncestorTrainer), 2, corev1.PodSpec{}, corev1ac.PodSpec().
 					WithContainers(corev1ac.Container().WithName(constants.Node)),
 				),
 			),
@@ -1636,14 +1636,101 @@ func TestValidate(t *testing.T) {
 				).
 				RuntimeRef(
 					trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind),
-					"torchtune-llama3.2-7b",
+					"torchtune-llama3.2-3b",
 				).
 				Obj(),
 			wantError: field.ErrorList{
 				field.Invalid(
 					field.NewPath("spec").Child("trainer").Child("numNodes"),
 					int32(2),
-					fmt.Sprintf("must be 1 for %v model", "llama3_2/7B"),
+					fmt.Sprintf("must be 1 for %v model", "llama3_2/3B"),
+				),
+			},
+		},
+		"qlora is not supported for qwen in torchtune": {
+			info: runtime.NewInfo(
+				runtime.WithMLPolicySource(utiltesting.MakeMLPolicyWrapper().
+					WithMLPolicySource(*utiltesting.MakeMLPolicySourceWrapper().
+						TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+						Obj(),
+					).
+					Obj(),
+				),
+			),
+			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Trainer(utiltesting.MakeTrainJobTrainerWrapper().
+					NumProcPerNode(intstr.FromString("auto")).
+					NumNodes(int32(1)).
+					Container(
+						"ghcr.io/kubeflow/trainer/torchtune-trainer",
+						[]string{"tune", "run"},
+						[]string{
+							"model.lora_attn_modules=[q_proj, v_proj, output_proj]",
+							"model.quantize_base=True",
+						},
+						corev1.ResourceList{},
+					).
+					Obj(),
+				).
+				RuntimeRef(
+					trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind),
+					"torchtune-qwen2.5-1.5b",
+				).
+				Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(
+					field.NewPath("spec").Child("runtimeRef").Child("name"),
+					"torchtune-qwen2.5-1.5b",
+					fmt.Sprintf("QLoRA is not supported for %v model", "qwen2_5/1.5B"),
+				),
+			},
+		},
+		"muti-devices qlora is not supported for llama3.2-1b in torchtune": {
+			info: runtime.NewInfo(
+				runtime.WithMLPolicySource(utiltesting.MakeMLPolicyWrapper().
+					WithMLPolicySource(*utiltesting.MakeMLPolicySourceWrapper().
+						TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+						Obj(),
+					).
+					Obj(),
+				),
+			),
+			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Trainer(utiltesting.MakeTrainJobTrainerWrapper().
+					NumProcPerNode(intstr.FromString("auto")).
+					NumNodes(int32(1)).
+					Container(
+						"ghcr.io/kubeflow/trainer/torchtune-trainer",
+						[]string{"tune", "run"},
+						[]string{
+							"model.lora_attn_modules=[q_proj, v_proj, output_proj]",
+							"model.quantize_base=True",
+						},
+						corev1.ResourceList{
+							"example.com/gpu": resource.MustParse("2"),
+						},
+					).
+					Obj(),
+				).
+				RuntimeRef(
+					trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind),
+					"torchtune-llama3.2-1b",
+				).
+				Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(
+					field.NewPath("spec").Child("trainer").Child("numProcPerNode"),
+					intstr.FromString("auto"),
+					fmt.Sprintf("must be auto or 1 for %v model when using QLoRA", "llama3_2/1B"),
+				),
+				field.Invalid(
+					field.NewPath("spec").Child("trainer").Child("resourcesPerNode"),
+					&corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							"example.com/gpu": resource.MustParse("2"),
+						},
+					},
+					fmt.Sprintf("must have gpu resource with value 1 for %v model when using QLoRA", "llama3_2/1B"),
 				),
 			},
 		},
@@ -1658,7 +1745,7 @@ func TestValidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to initialize Torch plugin: %v", err)
 			}
-			warnings, errs := p.(framework.CustomValidationPlugin).Validate(tc.info, tc.oldObj, tc.newObj)
+			warnings, errs := p.(framework.CustomValidationPlugin).Validate(ctx, tc.info, tc.oldObj, tc.newObj)
 			if diff := cmp.Diff(tc.wantError, errs); len(diff) != 0 {
 				t.Errorf("Unexpected error from Validate (-want, +got): %s", diff)
 			}

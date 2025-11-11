@@ -18,7 +18,9 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -38,20 +40,23 @@ import (
 	jobsetv1alpha2ac "sigs.k8s.io/jobset/client-go/applyconfiguration/jobset/v1alpha2"
 	jobsetconsts "sigs.k8s.io/jobset/pkg/constants"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
+	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/apply"
-	"github.com/kubeflow/trainer/pkg/constants"
-	"github.com/kubeflow/trainer/pkg/runtime"
-	"github.com/kubeflow/trainer/pkg/runtime/framework"
-	fwkplugins "github.com/kubeflow/trainer/pkg/runtime/framework/plugins"
-	"github.com/kubeflow/trainer/pkg/runtime/framework/plugins/coscheduling"
-	"github.com/kubeflow/trainer/pkg/runtime/framework/plugins/jobset"
-	jobsetplgconsts "github.com/kubeflow/trainer/pkg/runtime/framework/plugins/jobset/constants"
-	"github.com/kubeflow/trainer/pkg/runtime/framework/plugins/mpi"
-	"github.com/kubeflow/trainer/pkg/runtime/framework/plugins/plainml"
-	"github.com/kubeflow/trainer/pkg/runtime/framework/plugins/torch"
-	testingutil "github.com/kubeflow/trainer/pkg/util/testing"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/apply"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/runtime"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework"
+	fwkplugins "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/coscheduling"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset"
+	jobsetplgconsts "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset/constants"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/mpi"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/plainml"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/torch"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/volcano"
+	index "github.com/kubeflow/trainer/v2/pkg/runtime/indexer"
+	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
 
 // TODO: We should introduce mock plugins and use plugins in this framework testing.
@@ -72,6 +77,7 @@ func TestNew(t *testing.T) {
 				registry: fwkplugins.NewRegistry(),
 				plugins: map[string]framework.Plugin{
 					coscheduling.Name: &coscheduling.CoScheduling{},
+					volcano.Name:      &volcano.Volcano{},
 					mpi.Name:          &mpi.MPI{},
 					plainml.Name:      &plainml.PlainML{},
 					torch.Name:        &torch.Torch{},
@@ -84,14 +90,17 @@ func TestNew(t *testing.T) {
 				},
 				enforcePodGroupPolicyPlugins: []framework.EnforcePodGroupPolicyPlugin{
 					&coscheduling.CoScheduling{},
+					&volcano.Volcano{},
 				},
 				customValidationPlugins: []framework.CustomValidationPlugin{
 					&mpi.MPI{},
 					&torch.Torch{},
 					&jobset.JobSet{},
+					&volcano.Volcano{},
 				},
 				watchExtensionPlugins: []framework.WatchExtensionPlugin{
 					&coscheduling.CoScheduling{},
+					&volcano.Volcano{},
 					&jobset.JobSet{},
 					&mpi.MPI{},
 				},
@@ -100,12 +109,11 @@ func TestNew(t *testing.T) {
 				},
 				componentBuilderPlugins: []framework.ComponentBuilderPlugin{
 					&coscheduling.CoScheduling{},
+					&volcano.Volcano{},
 					&jobset.JobSet{},
 					&mpi.MPI{},
 				},
-				terminalConditionPlugins: []framework.TerminalConditionPlugin{
-					&jobset.JobSet{},
-				},
+				trainJobStatusPlugin: &jobset.JobSet{},
 			},
 		},
 		"indexer key for trainingRuntime and runtimeClass is an empty": {
@@ -113,21 +121,22 @@ func TestNew(t *testing.T) {
 				coscheduling.Name: coscheduling.New,
 			},
 			emptyCoSchedulingIndexerTrainingRuntimeContainerRuntimeClassKey: true,
-			wantError: coscheduling.ErrorCanNotSetupTrainingRuntimeRuntimeClassIndexer,
+			wantError: index.ErrorCanNotSetupTrainingRuntimeRuntimeClassIndexer,
 		},
 		"indexer key for clusterTrainingRuntime and runtimeClass is an empty": {
 			registry: fwkplugins.Registry{
 				coscheduling.Name: coscheduling.New,
 			},
 			emptyCoSchedulingIndexerClusterTrainingRuntimeContainerRuntimeClassKey: true,
-			wantError: coscheduling.ErrorCanNotSetupClusterTrainingRuntimeRuntimeClassIndexer,
+			wantError: index.ErrorCanNotSetupClusterTrainingRuntimeRuntimeClassIndexer,
 		},
 	}
 	cmpOpts := []cmp.Option{
 		cmp.AllowUnexported(Framework{}),
-		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, mpi.MPI{}, plainml.PlainML{}, torch.Torch{}, jobset.JobSet{}),
+		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, volcano.Volcano{}, mpi.MPI{}, plainml.PlainML{}, torch.Torch{}, jobset.JobSet{}),
 		cmpopts.IgnoreFields(coscheduling.CoScheduling{}, "client"),
-		cmpopts.IgnoreFields(jobset.JobSet{}, "client"),
+		cmpopts.IgnoreFields(volcano.Volcano{}, "client"),
+		cmpopts.IgnoreFields(jobset.JobSet{}, "client", "restMapper", "scheme", "logger"),
 		cmpopts.IgnoreTypes(apiruntime.Scheme{}, meta.DefaultRESTMapper{}, fwkplugins.Registry{}),
 		cmpopts.SortMaps(func(a, b string) bool { return a < b }),
 		cmpopts.SortSlices(func(a, b framework.Plugin) bool { return a.Name() < b.Name() }),
@@ -138,17 +147,17 @@ func TestNew(t *testing.T) {
 			t.Cleanup(cancel)
 
 			if tc.emptyCoSchedulingIndexerTrainingRuntimeContainerRuntimeClassKey {
-				originTrainingRuntimeRuntimeKey := coscheduling.TrainingRuntimeContainerRuntimeClassKey
-				coscheduling.TrainingRuntimeContainerRuntimeClassKey = ""
+				originTrainingRuntimeRuntimeKey := index.TrainingRuntimeContainerRuntimeClassKey
+				index.TrainingRuntimeContainerRuntimeClassKey = ""
 				t.Cleanup(func() {
-					coscheduling.TrainingRuntimeContainerRuntimeClassKey = originTrainingRuntimeRuntimeKey
+					index.TrainingRuntimeContainerRuntimeClassKey = originTrainingRuntimeRuntimeKey
 				})
 			}
 			if tc.emptyCoSchedulingIndexerClusterTrainingRuntimeContainerRuntimeClassKey {
-				originClusterTrainingRuntimeKey := coscheduling.ClusterTrainingRuntimeContainerRuntimeClassKey
-				coscheduling.ClusterTrainingRuntimeContainerRuntimeClassKey = ""
+				originClusterTrainingRuntimeKey := index.ClusterTrainingRuntimeContainerRuntimeClassKey
+				index.ClusterTrainingRuntimeContainerRuntimeClassKey = ""
 				t.Cleanup(func() {
-					coscheduling.ClusterTrainingRuntimeContainerRuntimeClassKey = originClusterTrainingRuntimeKey
+					index.ClusterTrainingRuntimeContainerRuntimeClassKey = originClusterTrainingRuntimeKey
 				})
 			}
 			clientBuilder := testingutil.NewClientBuilder()
@@ -367,6 +376,34 @@ func TestRunEnforcePodGroupPolicyPlugins(t *testing.T) {
 				},
 			},
 		},
+		"volcano plugin is applied to runtime.Info": {
+			registry: fwkplugins.NewRegistry(),
+			runtimeInfo: &runtime.Info{
+				RuntimePolicy: runtime.RuntimePolicy{
+					PodGroupPolicy: &trainer.PodGroupPolicy{
+						PodGroupPolicySource: trainer.PodGroupPolicySource{
+							Volcano: &trainer.VolcanoPodGroupPolicySource{},
+						},
+					},
+				},
+				Scheduler: &runtime.Scheduler{},
+			},
+			trainJob: &trainer.TrainJob{ObjectMeta: metav1.ObjectMeta{Name: "test-volcano-job", Namespace: metav1.NamespaceDefault}},
+			wantRuntimeInfo: &runtime.Info{
+				RuntimePolicy: runtime.RuntimePolicy{
+					PodGroupPolicy: &trainer.PodGroupPolicy{
+						PodGroupPolicySource: trainer.PodGroupPolicySource{
+							Volcano: &trainer.VolcanoPodGroupPolicySource{},
+						},
+					},
+				},
+				Scheduler: &runtime.Scheduler{
+					PodAnnotations: map[string]string{
+						volcanov1beta1.KubeGroupNameAnnotationKey: "test-volcano-job",
+					},
+				},
+			},
+		},
 		"an empty registry": {
 			trainJob:        &trainer.TrainJob{ObjectMeta: metav1.ObjectMeta{Name: "test-job", Namespace: metav1.NamespaceDefault}},
 			runtimeInfo:     &runtime.Info{},
@@ -433,7 +470,7 @@ func TestRunCustomValidationPlugins(t *testing.T) {
 			runtimeInfo := runtime.NewInfo(
 				runtime.WithTemplateSpecObjApply(jobSetSpecApply),
 			)
-			warnings, errs := fwk.RunCustomValidationPlugins(runtimeInfo, tc.oldObj, tc.newObj)
+			warnings, errs := fwk.RunCustomValidationPlugins(ctx, runtimeInfo, tc.oldObj, tc.newObj)
 			if diff := cmp.Diff(tc.wantWarnings, warnings, cmpopts.SortSlices(func(a, b string) bool { return a < b })); len(diff) != 0 {
 				t.Errorf("Unexpected warninigs (-want,+got):\n%s", diff)
 			}
@@ -454,7 +491,800 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 		wantObjs        []apiruntime.Object
 		wantError       error
 	}{
-		"succeeded to build PodGroup and JobSet with NumNodes from TrainJob": {
+		"succeeded to build JobSet with container resources applied both to Launcher and Node replicatedJob": {
+			registry: fwkplugins.NewRegistry(),
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").
+				Obj(),
+			runtimeInfo: &runtime.Info{
+				RuntimePolicy: runtime.RuntimePolicy{
+					MLPolicySource: testingutil.MakeMLPolicySourceWrapper().
+						MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/root/.ssh"), ptr.To(true)).
+						Obj(),
+				},
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:     constants.DatasetInitializer,
+							Ancestor: ptr.To(constants.DatasetInitializer),
+							Count:    ptr.To[int32](1),
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.DatasetMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.ModelInitializer,
+							Ancestor: ptr.To(constants.ModelInitializer),
+							Count:    ptr.To[int32](1),
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.ModelMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.Launcher,
+							Ancestor: ptr.To(constants.AncestorTrainer),
+							Count:    ptr.To[int32](1),
+							Endpoints: func(yield func(string) bool) {
+								yield("test-job-launcher-0-0.test-job")
+							},
+							Containers: []runtime.Container{{
+								Name: constants.Node,
+								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.ModelMountPath),
+								},
+							}},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](2),
+							Endpoints: func(yield func(string) bool) {
+								yield("test-job-node-0-0.test-job")
+								yield("test-job-node-0-1.test-job")
+							},
+							Containers: []runtime.Container{{
+								Name: constants.Node,
+								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.ModelMountPath),
+								},
+							}},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.DatasetInitializer).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.DatasetInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.DatasetInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.ModelInitializer).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.ModelInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.ModelInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Launcher).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.AncestorTrainer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.Node).
+														WithImage("test:runtime").
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithGroupName("default").
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: "invalid",
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.Node).
+														WithCommand("command:openssh").
+														WithArgs("args:openssh").
+														WithImage("test:openssh").
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+				Scheduler: &runtime.Scheduler{},
+			},
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
+				Trainer(
+					testingutil.MakeTrainJobTrainerWrapper().
+						NumNodes(100).
+						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("1"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						}).
+						Obj(),
+				).
+				Obj(),
+			wantRuntimeInfo: &runtime.Info{
+				RuntimePolicy: runtime.RuntimePolicy{
+					MLPolicySource: testingutil.MakeMLPolicySourceWrapper().
+						MPIPolicy(ptr.To[int32](1), trainer.MPIImplementationOpenMPI, ptr.To("/root/.ssh"), ptr.To(true)).
+						Obj(),
+				},
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithReplicas(1).
+								WithName(constants.DatasetInitializer).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.DatasetInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithLabels(map[string]string{}).
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.DatasetInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithReplicas(1).
+								WithName(constants.ModelInitializer).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.ModelInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithLabels(map[string]string{}).
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.ModelInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Launcher).
+								WithReplicas(1).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.AncestorTrainer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithLabels(map[string]string{}).
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.Node).
+														WithResources(corev1ac.ResourceRequirements().
+															WithRequests(corev1.ResourceList{
+																corev1.ResourceCPU:    resource.MustParse("1"),
+																corev1.ResourceMemory: resource.MustParse("4Gi"),
+															})).
+														WithImage("test:trainjob").
+														WithCommand("trainjob").
+														WithArgs("trainjob").
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+															corev1ac.VolumeMount().
+																WithName(constants.MPISSHAuthVolumeName).
+																WithMountPath("/root/.ssh"),
+															corev1ac.VolumeMount().
+																WithName(constants.MPIHostfileVolumeName).
+																WithMountPath("/etc/mpi"),
+														).
+														WithEnv(corev1ac.EnvVar().
+															WithName(constants.OpenMPIEnvHostFileLocation).
+															WithValue(fmt.Sprintf("%s/%s", constants.MPIHostfileDir, constants.MPIHostfileName)),
+														).
+														WithEnv(corev1ac.EnvVar().
+															WithName(constants.OpenMPIEnvKeepFQDNHostNames).
+															WithValue("true")).
+														WithEnv(corev1ac.EnvVar().
+															WithName(constants.OpenMPIEnvDefaultSlots).
+															WithValue("1"),
+														).
+														WithEnv(corev1ac.EnvVar().
+															WithName(constants.OpenMPIEnvKeyRSHArgs).
+															WithValue(constants.OpenMPIEnvDefaultValueRSHArgs),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+													corev1ac.Volume().
+														WithName(constants.MPISSHAuthVolumeName).
+														WithSecret(corev1ac.SecretVolumeSource().
+															WithSecretName(fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix)).
+															WithItems(
+																corev1ac.KeyToPath().
+																	WithKey(corev1.SSHAuthPrivateKey).
+																	WithPath(constants.MPISSHPrivateKeyFile),
+																corev1ac.KeyToPath().
+																	WithKey(constants.MPISSHPublicKey).
+																	WithPath(constants.MPISSHPublicKeyFile),
+																corev1ac.KeyToPath().
+																	WithKey(constants.MPISSHPublicKey).
+																	WithPath(constants.MPISSHAuthorizedKeys),
+															),
+														),
+													corev1ac.Volume().
+														WithName(constants.MPIHostfileVolumeName).
+														WithConfigMap(corev1ac.ConfigMapVolumeSource().
+															WithName(fmt.Sprintf("test-job%s", constants.MPIHostfileConfigMapSuffix)).
+															WithItems(
+																corev1ac.KeyToPath().
+																	WithKey(constants.MPIHostfileName).
+																	WithPath(constants.MPIHostfileName).
+																	WithMode(0444),
+															),
+														),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithGroupName("default").
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: "invalid",
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(99).
+										WithCompletions(99).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithLabels(map[string]string{}).
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.Node).
+														WithArgs("args:openssh").
+														WithCommand("command:openssh").
+														WithResources(corev1ac.ResourceRequirements().
+															WithRequests(corev1.ResourceList{
+																corev1.ResourceCPU:    resource.MustParse("1"),
+																corev1.ResourceMemory: resource.MustParse("4Gi"),
+															})).
+														WithImage("test:openssh").
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+															corev1ac.VolumeMount().
+																WithName(constants.MPISSHAuthVolumeName).
+																WithMountPath("/root/.ssh"),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+													corev1ac.Volume().
+														WithName(constants.MPISSHAuthVolumeName).
+														WithSecret(corev1ac.SecretVolumeSource().
+															WithSecretName(fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix)).
+															WithItems(
+																corev1ac.KeyToPath().
+																	WithKey(corev1.SSHAuthPrivateKey).
+																	WithPath(constants.MPISSHPrivateKeyFile),
+																corev1ac.KeyToPath().
+																	WithKey(constants.MPISSHPublicKey).
+																	WithPath(constants.MPISSHPublicKeyFile),
+																corev1ac.KeyToPath().
+																	WithKey(constants.MPISSHPublicKey).
+																	WithPath(constants.MPISSHAuthorizedKeys),
+															),
+														),
+												),
+											),
+										),
+									),
+								),
+						),
+					PodSets: []runtime.PodSet{
+						{
+							Name:     constants.DatasetInitializer,
+							Ancestor: ptr.To(constants.DatasetInitializer),
+							Count:    ptr.To[int32](1),
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.DatasetMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.ModelInitializer,
+							Ancestor: ptr.To(constants.ModelInitializer),
+							Count:    ptr.To[int32](1),
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.ModelMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.Launcher,
+							Ancestor: ptr.To(constants.AncestorTrainer),
+							Count:    ptr.To[int32](1),
+							Endpoints: func(yield func(string) bool) {
+								yield("test-job-launcher-0-0.test-job")
+							},
+							Containers: []runtime.Container{{
+								Name: constants.Node,
+								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.ModelMountPath),
+									*corev1ac.VolumeMount().
+										WithName(constants.MPISSHAuthVolumeName).
+										WithMountPath("/root/.ssh"),
+									*corev1ac.VolumeMount().
+										WithName(constants.MPIHostfileVolumeName).
+										WithMountPath("/etc/mpi"),
+								},
+								Env: []corev1ac.EnvVarApplyConfiguration{
+									*corev1ac.EnvVar().
+										WithName(constants.OpenMPIEnvHostFileLocation).
+										WithValue(fmt.Sprintf("%s/%s", constants.MPIHostfileDir, constants.MPIHostfileName)),
+									*corev1ac.EnvVar().
+										WithName(constants.OpenMPIEnvKeepFQDNHostNames).
+										WithValue("true"),
+									*corev1ac.EnvVar().
+										WithName(constants.OpenMPIEnvDefaultSlots).
+										WithValue("1"),
+									*corev1ac.EnvVar().
+										WithName(constants.OpenMPIEnvKeyRSHArgs).
+										WithValue(constants.OpenMPIEnvDefaultValueRSHArgs),
+								},
+							}},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+								*corev1ac.Volume().
+									WithName(constants.MPISSHAuthVolumeName).
+									WithSecret(corev1ac.SecretVolumeSource().
+										WithSecretName(fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix)).
+										WithItems(
+											corev1ac.KeyToPath().
+												WithKey(corev1.SSHAuthPrivateKey).
+												WithPath(constants.MPISSHPrivateKeyFile),
+											corev1ac.KeyToPath().
+												WithKey(constants.MPISSHPublicKey).
+												WithPath(constants.MPISSHPublicKeyFile),
+											corev1ac.KeyToPath().
+												WithKey(constants.MPISSHPublicKey).
+												WithPath(constants.MPISSHAuthorizedKeys),
+										),
+									),
+								*corev1ac.Volume().
+									WithName(constants.MPIHostfileVolumeName).
+									WithConfigMap(corev1ac.ConfigMapVolumeSource().
+										WithName(fmt.Sprintf("test-job%s", constants.MPIHostfileConfigMapSuffix)).
+										WithItems(
+											corev1ac.KeyToPath().
+												WithKey(constants.MPIHostfileName).
+												WithPath(constants.MPIHostfileName).
+												WithMode(0444),
+										),
+									),
+							},
+						},
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](99),
+							Endpoints: func(yield func(string) bool) {
+								yield("test-job-node-0-0.test-job")
+								yield("test-job-node-0-1.test-job")
+							},
+							Containers: []runtime.Container{{
+								Name: constants.Node,
+								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.ModelMountPath),
+									*corev1ac.VolumeMount().
+										WithName(constants.MPISSHAuthVolumeName).
+										WithMountPath("/root/.ssh"),
+								},
+							}},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+								*corev1ac.Volume().
+									WithName(constants.MPISSHAuthVolumeName).
+									WithSecret(corev1ac.SecretVolumeSource().
+										WithSecretName(fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix)).
+										WithItems(
+											corev1ac.KeyToPath().
+												WithKey(corev1.SSHAuthPrivateKey).
+												WithPath(constants.MPISSHPrivateKeyFile),
+											corev1ac.KeyToPath().
+												WithKey(constants.MPISSHPublicKey).
+												WithPath(constants.MPISSHPublicKeyFile),
+											corev1ac.KeyToPath().
+												WithKey(constants.MPISSHPublicKey).
+												WithPath(constants.MPISSHAuthorizedKeys),
+										),
+									),
+							},
+						},
+					},
+				},
+				Scheduler: &runtime.Scheduler{},
+			},
+			wantObjs: []apiruntime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					// This is needed to override default label in MakeJobSetWrapper() for Node rJob.
+					// TODO (andreyvelich): Refactor test wrappers to simplify this.
+					ReplicatedJobLabel(constants.LabelTrainJobAncestor, "invalid", constants.Node).
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					NumNodes(99).
+					LauncherReplica().
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Launcher, constants.Node).
+					VolumeMounts(constants.Launcher, constants.Node,
+						corev1.VolumeMount{
+							Name:      jobsetplgconsts.VolumeNameInitializer,
+							MountPath: constants.DatasetMountPath,
+						},
+						corev1.VolumeMount{
+							Name:      jobsetplgconsts.VolumeNameInitializer,
+							MountPath: constants.ModelMountPath,
+						},
+						corev1.VolumeMount{
+							Name:      constants.MPISSHAuthVolumeName,
+							MountPath: "/root/.ssh",
+						},
+						corev1.VolumeMount{
+							Name:      constants.MPIHostfileVolumeName,
+							MountPath: "/etc/mpi",
+						},
+					).
+					VolumeMounts(constants.Node, constants.Node,
+						corev1.VolumeMount{
+							Name:      constants.MPISSHAuthVolumeName,
+							MountPath: "/root/.ssh",
+						},
+					).
+					Volumes(constants.Launcher, []corev1.Volume{
+						{
+							Name: jobsetplgconsts.VolumeNameInitializer,
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: jobsetplgconsts.VolumeNameInitializer,
+								},
+							},
+						},
+						{
+							Name: constants.MPISSHAuthVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix),
+									Items: []corev1.KeyToPath{
+										{
+											Key:  corev1.SSHAuthPrivateKey,
+											Path: constants.MPISSHPrivateKeyFile,
+										},
+										{
+											Key:  constants.MPISSHPublicKey,
+											Path: constants.MPISSHPublicKeyFile,
+										},
+										{
+											Key:  constants.MPISSHPublicKey,
+											Path: constants.MPISSHAuthorizedKeys,
+										},
+									},
+								},
+							},
+						},
+						{
+							Name: constants.MPIHostfileVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: fmt.Sprintf("test-job%s", constants.MPIHostfileConfigMapSuffix),
+									},
+									Items: []corev1.KeyToPath{
+										{
+											Key:  constants.MPIHostfileName,
+											Path: constants.MPIHostfileName,
+											Mode: func(i int32) *int32 { return &i }(0444),
+										},
+									},
+								},
+							},
+						}}...,
+					).
+					Volumes(constants.Node, []corev1.Volume{
+						{
+							Name: constants.MPISSHAuthVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix),
+									Items: []corev1.KeyToPath{
+										{
+											Key:  corev1.SSHAuthPrivateKey,
+											Path: constants.MPISSHPrivateKeyFile,
+										},
+										{
+											Key:  constants.MPISSHPublicKey,
+											Path: constants.MPISSHPublicKeyFile,
+										},
+										{
+											Key:  constants.MPISSHPublicKey,
+											Path: constants.MPISSHAuthorizedKeys,
+										},
+									},
+								},
+							},
+						}}...,
+					).
+					Env(constants.Launcher, constants.Node, []corev1.EnvVar{
+						{
+							Name:  constants.OpenMPIEnvHostFileLocation,
+							Value: fmt.Sprintf("%s/%s", constants.MPIHostfileDir, constants.MPIHostfileName),
+						},
+						{
+							Name:  constants.OpenMPIEnvKeepFQDNHostNames,
+							Value: "true",
+						},
+						{
+							Name:  constants.OpenMPIEnvDefaultSlots,
+							Value: "1",
+						},
+						{
+							Name:  constants.OpenMPIEnvKeyRSHArgs,
+							Value: constants.OpenMPIEnvDefaultValueRSHArgs,
+						}}...,
+					).
+					Parallelism(1, constants.Launcher, constants.ModelInitializer, constants.DatasetInitializer).
+					Completions(1, constants.Launcher, constants.ModelInitializer, constants.DatasetInitializer).
+					ReplicatedJobLabel(constants.LabelTrainJobAncestor, "trainer", constants.Launcher).
+					Container(constants.Launcher, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("4Gi"),
+					}).
+					Container(constants.Node, constants.Node, "test:openssh", []string{"command:openssh"}, []string{"args:openssh"}, corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("4Gi"),
+					}).
+					Obj(),
+				testingutil.MakeSecretWrapper(fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix), metav1.NamespaceDefault).
+					WithImmutable(true).
+					WithType(corev1.SecretTypeSSHAuth).
+					WithData(map[string][]byte{
+						constants.MPISSHPublicKey: []byte("EXIST"),
+						corev1.SSHAuthPrivateKey:  []byte("EXIST"),
+					}).
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Obj(),
+				testingutil.MakeConfigMapWrapper(fmt.Sprintf("test-job%s", constants.MPIHostfileConfigMapSuffix), metav1.NamespaceDefault).
+					WithData(map[string]string{
+						constants.MPIHostfileName: `test-job-launcher-0-0.test-job slots=1
+test-job-node-0-0.test-job slots=1
+test-job-node-0-1.test-job slots=1
+`,
+					}).
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Obj(),
+			},
+		},
+		"succeeded to build PodGroup and JobSet with NumNodes from TrainJob with coscheduling plugin": {
 			registry: fwkplugins.NewRegistry(),
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").
 				Obj(),
@@ -544,6 +1374,7 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 						WithReplicatedJobs(
 							jobsetv1alpha2ac.ReplicatedJob().
 								WithName(constants.DatasetInitializer).
+								WithGroupName("default").
 								WithTemplate(batchv1ac.JobTemplateSpec().
 									WithLabels(map[string]string{
 										constants.LabelTrainJobAncestor: constants.DatasetInitializer,
@@ -572,6 +1403,7 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 								),
 							jobsetv1alpha2ac.ReplicatedJob().
 								WithName(constants.ModelInitializer).
+								WithGroupName("default").
 								WithTemplate(batchv1ac.JobTemplateSpec().
 									WithLabels(map[string]string{
 										constants.LabelTrainJobAncestor: constants.ModelInitializer,
@@ -600,6 +1432,7 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 								),
 							jobsetv1alpha2ac.ReplicatedJob().
 								WithName(constants.Node).
+								WithGroupName("default").
 								WithTemplate(batchv1ac.JobTemplateSpec().
 									WithLabels(map[string]string{
 										constants.LabelTrainJobAncestor: constants.AncestorTrainer,
@@ -662,11 +1495,14 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 							jobsetv1alpha2ac.ReplicatedJob().
 								WithReplicas(1).
 								WithName(constants.DatasetInitializer).
+								WithGroupName("default").
 								WithTemplate(batchv1ac.JobTemplateSpec().
 									WithLabels(map[string]string{
 										constants.LabelTrainJobAncestor: constants.DatasetInitializer,
 									}).
 									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
 										WithTemplate(corev1ac.PodTemplateSpec().
 											WithLabels(map[string]string{
 												schedulerpluginsv1alpha1.PodGroupLabel: "test-job",
@@ -694,11 +1530,14 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 							jobsetv1alpha2ac.ReplicatedJob().
 								WithReplicas(1).
 								WithName(constants.ModelInitializer).
+								WithGroupName("default").
 								WithTemplate(batchv1ac.JobTemplateSpec().
 									WithLabels(map[string]string{
 										constants.LabelTrainJobAncestor: constants.ModelInitializer,
 									}).
 									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
 										WithTemplate(corev1ac.PodTemplateSpec().
 											WithLabels(map[string]string{
 												schedulerpluginsv1alpha1.PodGroupLabel: "test-job",
@@ -725,6 +1564,7 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 								),
 							jobsetv1alpha2ac.ReplicatedJob().
 								WithName(constants.Node).
+								WithGroupName("default").
 								WithReplicas(1).
 								WithTemplate(batchv1ac.JobTemplateSpec().
 									WithLabels(map[string]string{
@@ -843,8 +1683,7 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 				},
 				Scheduler: &runtime.Scheduler{
 					PodLabels: map[string]string{schedulerpluginsv1alpha1.PodGroupLabel: "test-job"},
-				},
-			},
+				}},
 			wantObjs: []apiruntime.Object{
 				testingutil.MakeSchedulerPluginsPodGroup(metav1.NamespaceDefault, "test-job").
 					SchedulingTimeout(300).
@@ -859,6 +1698,456 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 					ControllerReference(trainer.SchemeGroupVersion.WithKind("TrainJob"), "test-job", "uid").
 					PodLabel(schedulerpluginsv1alpha1.PodGroupLabel, "test-job").
 					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+					NumNodes(100).
+					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("4Gi"),
+					}).
+					Obj(),
+			},
+		},
+		"succeeded to build PodGroup and JobSet with NumNodes from TrainJob with volcano plugin": {
+			registry: fwkplugins.NewRegistry(),
+			runtimeInfo: &runtime.Info{
+				RuntimePolicy: runtime.RuntimePolicy{
+					PodGroupPolicy: &trainer.PodGroupPolicy{
+						PodGroupPolicySource: trainer.PodGroupPolicySource{
+							Volcano: &trainer.VolcanoPodGroupPolicySource{
+								NetworkTopology: &volcanov1beta1.NetworkTopologySpec{
+									Mode:               "soft",
+									HighestTierAllowed: ptr.To[int](2),
+								},
+							},
+						},
+					},
+				},
+				Annotations: map[string]string{
+					volcanov1beta1.QueueNameAnnotationKey: "q1",
+				},
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:     constants.DatasetInitializer,
+							Ancestor: ptr.To(constants.DatasetInitializer),
+							Count:    ptr.To[int32](1),
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.DatasetMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.ModelInitializer,
+							Ancestor: ptr.To(constants.ModelInitializer),
+							Count:    ptr.To[int32](1),
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.ModelMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.Node,
+							Ancestor: ptr.To(constants.AncestorTrainer),
+							Count:    ptr.To[int32](1),
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+							Containers: []runtime.Container{{
+								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.DatasetMountPath),
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.ModelMountPath),
+								},
+							}},
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.DatasetInitializer).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.DatasetInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithPriorityClassName("system-node-critical").
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.DatasetInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.ModelInitializer).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.ModelInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithPriorityClassName("system-node-critical").
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.ModelInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithGroupName("default").
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.AncestorTrainer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithPriorityClassName("system-node-critical").
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.Node).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+				Scheduler: &runtime.Scheduler{PodAnnotations: make(map[string]string)},
+			},
+
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-volcano-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
+				Trainer(
+					testingutil.MakeTrainJobTrainerWrapper().
+						NumNodes(100).
+						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("1"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						}).
+						Obj(),
+				).
+				Obj(),
+			wantRuntimeInfo: &runtime.Info{
+				RuntimePolicy: runtime.RuntimePolicy{
+					PodGroupPolicy: &trainer.PodGroupPolicy{
+						PodGroupPolicySource: trainer.PodGroupPolicySource{
+							Volcano: &trainer.VolcanoPodGroupPolicySource{
+								NetworkTopology: &volcanov1beta1.NetworkTopologySpec{
+									Mode:               "soft",
+									HighestTierAllowed: ptr.To[int](2),
+								},
+							},
+						},
+					},
+				},
+				Annotations: map[string]string{
+					volcanov1beta1.QueueNameAnnotationKey: "q1",
+				},
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:     constants.DatasetInitializer,
+							Ancestor: ptr.To(constants.DatasetInitializer),
+							Count:    ptr.To[int32](1),
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.DatasetMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.ModelInitializer,
+							Ancestor: ptr.To(constants.ModelInitializer),
+							Count:    ptr.To[int32](1),
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+							Containers: []runtime.Container{
+								{
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										*corev1ac.VolumeMount().
+											WithName(jobsetplgconsts.VolumeNameInitializer).
+											WithMountPath(constants.ModelMountPath),
+									},
+								},
+							},
+							Volumes: []corev1ac.VolumeApplyConfiguration{
+								*corev1ac.Volume().
+									WithName(jobsetplgconsts.VolumeNameInitializer).
+									WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+										WithClaimName(jobsetplgconsts.VolumeNameInitializer),
+									),
+							},
+						},
+						{
+							Name:     constants.Node,
+							Ancestor: ptr.To(constants.AncestorTrainer),
+							Count:    ptr.To[int32](100),
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+							Containers: []runtime.Container{{
+								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.DatasetMountPath),
+									*corev1ac.VolumeMount().
+										WithName(jobsetplgconsts.VolumeNameInitializer).
+										WithMountPath(constants.ModelMountPath),
+								},
+							}},
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.DatasetInitializer).
+								WithGroupName("default").
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.DatasetInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithAnnotations(map[string]string{
+												volcanov1beta1.KubeGroupNameAnnotationKey: "test-volcano-job",
+											}).
+											WithSpec(corev1ac.PodSpec().
+												WithPriorityClassName("system-node-critical").
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.DatasetInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.ModelInitializer).
+								WithGroupName("default").
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.ModelInitializer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithAnnotations(map[string]string{
+												volcanov1beta1.KubeGroupNameAnnotationKey: "test-volcano-job",
+											}).
+											WithSpec(corev1ac.PodSpec().
+												WithPriorityClassName("system-node-critical").
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.ModelInitializer).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithGroupName("default").
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{
+										constants.LabelTrainJobAncestor: constants.AncestorTrainer,
+									}).
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(100).
+										WithCompletions(100).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithAnnotations(map[string]string{
+												volcanov1beta1.KubeGroupNameAnnotationKey: "test-volcano-job",
+											}).
+											WithSpec(corev1ac.PodSpec().
+												WithPriorityClassName("system-node-critical").
+												WithContainers(
+													corev1ac.Container().
+														WithName(constants.Node).
+														WithName(constants.Node).
+														WithImage("test:trainjob").
+														WithCommand("trainjob").
+														WithArgs("trainjob").
+														WithResources(corev1ac.ResourceRequirements().
+															WithRequests(corev1.ResourceList{
+																corev1.ResourceCPU:    resource.MustParse("1"),
+																corev1.ResourceMemory: resource.MustParse("4Gi"),
+															})).
+														WithVolumeMounts(
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.DatasetMountPath),
+															corev1ac.VolumeMount().
+																WithName(jobsetplgconsts.VolumeNameInitializer).
+																WithMountPath(constants.ModelMountPath),
+														),
+												).
+												WithVolumes(
+													corev1ac.Volume().
+														WithName(jobsetplgconsts.VolumeNameInitializer).
+														WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().
+															WithClaimName(jobsetplgconsts.VolumeNameInitializer)),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+				Scheduler: &runtime.Scheduler{PodAnnotations: map[string]string{
+					volcanov1beta1.KubeGroupNameAnnotationKey: "test-volcano-job",
+				},
+				},
+			},
+			wantObjs: []apiruntime.Object{
+				testingutil.MakeVolcanoPodGroup(metav1.NamespaceDefault, "test-volcano-job").
+					MinMember(102). // 102 replicas = 100 Trainer nodes + 2 Initializer.
+					MinResources(&corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("102"), // 1 CPU and 4Gi per replica.
+						corev1.ResourceMemory: resource.MustParse("408Gi"),
+					}).
+					Queue("q1").
+					PriorityClassName("system-node-critical").
+					NetworkTopology("soft", 2).
+					ControllerReference(trainer.SchemeGroupVersion.WithKind("TrainJob"), "test-volcano-job", "uid").
+					Obj(),
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-volcano-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind("TrainJob"), "test-volcano-job", "uid").
+					Annotation(volcanov1beta1.QueueNameAnnotationKey, "q1").
+					PodAnnotation(volcanov1beta1.KubeGroupNameAnnotationKey, "test-volcano-job").
+					PodPriorityClassName("system-node-critical").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
 					NumNodes(100).
 					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse("1"),
@@ -873,7 +2162,7 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 		cmpopts.SortSlices(func(a, b apiruntime.Object) bool {
 			return a.GetObjectKind().GroupVersionKind().String() < b.GetObjectKind().GroupVersionKind().String()
 		}),
-		cmpopts.EquateEmpty(),
+		cmp.Comparer(testingutil.MPISecretDataComparer),
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -894,13 +2183,39 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 			if err = fwk.RunEnforceMLPolicyPlugins(tc.runtimeInfo, tc.trainJob); err != nil {
 				t.Fatal(err)
 			}
+			// Sync PodSets to JobSet template spec (mimics trainingruntime.syncPodSets)
+			if tc.runtimeInfo != nil {
+				if jsSpec, ok := runtime.TemplateSpecApply[jobsetv1alpha2ac.JobSetSpecApplyConfiguration](tc.runtimeInfo); ok {
+					for psIdx, ps := range tc.runtimeInfo.TemplateSpec.PodSets {
+						if ps.Count != nil {
+							jsSpec.ReplicatedJobs[psIdx].Template.Spec.Parallelism = ps.Count
+							jsSpec.ReplicatedJobs[psIdx].Template.Spec.Completions = ps.Count
+						}
+						apply.UpsertVolumes(&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Volumes, ps.Volumes...)
+						for containerIdx, container := range ps.Containers {
+							apply.UpsertEnvVars(
+								&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].Env,
+								container.Env...,
+							)
+							apply.UpsertPort(
+								&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].Ports,
+								container.Ports...,
+							)
+							apply.UpsertVolumeMounts(
+								&jsSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].VolumeMounts,
+								container.VolumeMounts...,
+							)
+						}
+					}
+				}
+			}
 			objs, err := fwk.RunComponentBuilderPlugins(ctx, tc.runtimeInfo, tc.trainJob)
 
 			if diff := cmp.Diff(tc.wantError, err, cmpopts.EquateErrors()); len(diff) != 0 {
 				t.Errorf("Unexpected errors (-want,+got):\n%s", diff)
 			}
 
-			if diff := cmp.Diff(tc.wantRuntimeInfo, tc.runtimeInfo); len(diff) != 0 {
+			if diff := cmp.Diff(tc.wantRuntimeInfo, tc.runtimeInfo, testingutil.PodSetEndpointsCmpOpts); len(diff) != 0 {
 				t.Errorf("Unexpected runtime.Info (-want,+got)\n%s", diff)
 			}
 
@@ -925,6 +2240,7 @@ func TestWatchExtensionPlugins(t *testing.T) {
 			registry: fwkplugins.NewRegistry(),
 			wantPlugins: []framework.WatchExtensionPlugin{
 				&coscheduling.CoScheduling{},
+				&volcano.Volcano{},
 				&jobset.JobSet{},
 				&mpi.MPI{},
 			},
@@ -935,7 +2251,7 @@ func TestWatchExtensionPlugins(t *testing.T) {
 	}
 	cmpOpts := []cmp.Option{
 		cmpopts.SortSlices(func(a, b framework.Plugin) bool { return a.Name() < b.Name() }),
-		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, jobset.JobSet{}, mpi.MPI{}),
+		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, volcano.Volcano{}, jobset.JobSet{}, mpi.MPI{}),
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -955,28 +2271,40 @@ func TestWatchExtensionPlugins(t *testing.T) {
 	}
 }
 
-type fakeTerminalConditionPlugin struct{}
+type fakeTrainJobStatusPlugin struct{}
 
-var _ framework.TerminalConditionPlugin = (*fakeTerminalConditionPlugin)(nil)
+var _ framework.TrainJobStatusPlugin = (*fakeTrainJobStatusPlugin)(nil)
 
-func newFakeTerminalConditionPlugin(context.Context, client.Client, client.FieldIndexer) (framework.Plugin, error) {
-	return &fakeTerminalConditionPlugin{}, nil
+func newFakeJobsStatusPlugin(context.Context, client.Client, client.FieldIndexer) (framework.Plugin, error) {
+	return &fakeTrainJobStatusPlugin{}, nil
 }
 
-const fakeTerminalConditionPluginName = "fake"
+const fakeJobsStatusPluginName = "fake-train-job-status"
 
-func (f fakeTerminalConditionPlugin) Name() string { return fakeTerminalConditionPluginName }
-func (f fakeTerminalConditionPlugin) TerminalCondition(context.Context, *trainer.TrainJob) (*metav1.Condition, error) {
-	return nil, nil
+func (f fakeTrainJobStatusPlugin) Name() string { return fakeJobsStatusPluginName }
+func (f fakeTrainJobStatusPlugin) Status(context.Context, *trainer.TrainJob) (*trainer.TrainJobStatus, error) {
+	return &trainer.TrainJobStatus{
+		JobsStatus: []trainer.JobStatus{
+			{
+				Name:      "fake-job",
+				Ready:     ptr.To(int32(1)),
+				Succeeded: ptr.To(int32(0)),
+				Failed:    ptr.To(int32(0)),
+				Active:    ptr.To(int32(1)),
+				Suspended: ptr.To(int32(0)),
+			},
+		},
+	}, nil
 }
 
-func TestTerminalConditionPlugins(t *testing.T) {
+func TestTrainJobStatusPlugins(t *testing.T) {
+	lastTransitionTime := metav1.Time{Time: time.Now()}.Rfc3339Copy()
 	cases := map[string]struct {
-		registry      fwkplugins.Registry
-		trainJob      *trainer.TrainJob
-		jobSet        *jobsetv1alpha2.JobSet
-		wantCondition *metav1.Condition
-		wantError     error
+		registry   fwkplugins.Registry
+		trainJob   *trainer.TrainJob
+		jobSet     *jobsetv1alpha2.JobSet
+		wantStatus *trainer.TrainJobStatus
+		wantError  error
 	}{
 		"jobSet has not been finalized, yet": {
 			registry: fwkplugins.NewRegistry(),
@@ -990,6 +2318,7 @@ func TestTerminalConditionPlugins(t *testing.T) {
 					Status:  metav1.ConditionFalse,
 				}).
 				Obj(),
+			wantStatus: &trainer.TrainJobStatus{},
 		},
 		"succeeded to obtain completed terminal condition": {
 			registry: fwkplugins.NewRegistry(),
@@ -997,17 +2326,23 @@ func TestTerminalConditionPlugins(t *testing.T) {
 				Obj(),
 			jobSet: testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "testing").
 				Conditions(metav1.Condition{
-					Type:    string(jobsetv1alpha2.JobSetCompleted),
-					Reason:  jobsetconsts.AllJobsCompletedReason,
-					Message: jobsetconsts.AllJobsCompletedMessage,
-					Status:  metav1.ConditionTrue,
+					Type:               string(jobsetv1alpha2.JobSetCompleted),
+					LastTransitionTime: lastTransitionTime,
+					Message:            jobsetconsts.AllJobsCompletedMessage,
+					Reason:             jobsetconsts.AllJobsCompletedReason,
+					Status:             metav1.ConditionTrue,
 				}).
 				Obj(),
-			wantCondition: &metav1.Condition{
-				Type:    trainer.TrainJobComplete,
-				Reason:  jobsetconsts.AllJobsCompletedReason,
-				Message: jobsetconsts.AllJobsCompletedMessage,
-				Status:  metav1.ConditionTrue,
+			wantStatus: &trainer.TrainJobStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:               trainer.TrainJobComplete,
+						LastTransitionTime: lastTransitionTime,
+						Message:            jobsetconsts.AllJobsCompletedMessage,
+						Reason:             jobsetconsts.AllJobsCompletedReason,
+						Status:             metav1.ConditionTrue,
+					},
+				},
 			},
 		},
 		"succeeded to obtain failed terminal condition": {
@@ -1016,25 +2351,136 @@ func TestTerminalConditionPlugins(t *testing.T) {
 				Obj(),
 			jobSet: testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "testing").
 				Conditions(metav1.Condition{
-					Type:    string(jobsetv1alpha2.JobSetFailed),
-					Reason:  jobsetconsts.FailedJobsReason,
-					Message: jobsetconsts.FailedJobsMessage,
-					Status:  metav1.ConditionTrue,
+					Type:               string(jobsetv1alpha2.JobSetFailed),
+					LastTransitionTime: lastTransitionTime,
+					Message:            jobsetconsts.FailedJobsMessage,
+					Reason:             jobsetconsts.FailedJobsReason,
+					Status:             metav1.ConditionTrue,
 				}).
 				Obj(),
-			wantCondition: &metav1.Condition{
-				Type:    trainer.TrainJobFailed,
-				Reason:  jobsetconsts.FailedJobsReason,
-				Message: jobsetconsts.FailedJobsMessage,
-				Status:  metav1.ConditionTrue,
+			wantStatus: &trainer.TrainJobStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:               trainer.TrainJobFailed,
+						LastTransitionTime: lastTransitionTime,
+						Message:            jobsetconsts.FailedJobsMessage,
+						Reason:             jobsetconsts.FailedJobsReason,
+						Status:             metav1.ConditionTrue,
+					},
+				},
 			},
 		},
-		"failed to obtain any terminal condition due to multiple terminalCondition plugin": {
+		"failed to obtain TrainJob status due to multiple trainJobStatus plugin": {
 			registry: fwkplugins.Registry{
-				jobset.Name:                     jobset.New,
-				fakeTerminalConditionPluginName: newFakeTerminalConditionPlugin,
+				jobset.Name:              jobset.New,
+				fakeJobsStatusPluginName: newFakeJobsStatusPlugin,
 			},
-			wantError: errorTooManyTerminalConditionPlugin,
+			wantError: errorTooManyTrainJobStatusPlugin,
+		},
+		"JobSet with empty replicated jobs status": {
+			registry: fwkplugins.NewRegistry(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "testing").
+				Obj(),
+			jobSet: testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "testing").
+				Obj(),
+			wantStatus: &trainer.TrainJobStatus{},
+		},
+		"succeeded to obtain JobsStatus from JobSet with multiple replicated jobs": {
+			registry: fwkplugins.NewRegistry(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "testing").
+				Obj(),
+			jobSet: testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "testing").
+				ReplicatedJobsStatuses([]jobsetv1alpha2.ReplicatedJobStatus{
+					{
+						Name:      constants.DatasetInitializer,
+						Ready:     1,
+						Succeeded: 1,
+						Failed:    0,
+						Active:    0,
+						Suspended: 0,
+					},
+					{
+						Name:      constants.ModelInitializer,
+						Ready:     1,
+						Succeeded: 1,
+						Failed:    0,
+						Active:    0,
+						Suspended: 0,
+					},
+					{
+						Name:      constants.Node,
+						Ready:     2,
+						Succeeded: 0,
+						Failed:    0,
+						Active:    2,
+						Suspended: 0,
+					},
+				}).
+				Obj(),
+			wantStatus: &trainer.TrainJobStatus{
+				JobsStatus: []trainer.JobStatus{
+					{
+						Name:      constants.DatasetInitializer,
+						Ready:     ptr.To(int32(1)),
+						Succeeded: ptr.To(int32(1)),
+						Failed:    ptr.To(int32(0)),
+						Active:    ptr.To(int32(0)),
+						Suspended: ptr.To(int32(0)),
+					},
+					{
+						Name:      constants.ModelInitializer,
+						Ready:     ptr.To(int32(1)),
+						Succeeded: ptr.To(int32(1)),
+						Failed:    ptr.To(int32(0)),
+						Active:    ptr.To(int32(0)),
+						Suspended: ptr.To(int32(0)),
+					},
+					{
+						Name:      constants.Node,
+						Ready:     ptr.To(int32(2)),
+						Succeeded: ptr.To(int32(0)),
+						Failed:    ptr.To(int32(0)),
+						Active:    ptr.To(int32(2)),
+						Suspended: ptr.To(int32(0)),
+					},
+				},
+			},
+		},
+		"succeeded to obtain JobsStatus from JobSet with failed job": {
+			registry: fwkplugins.NewRegistry(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "testing").
+				Obj(),
+			jobSet: testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "testing").
+				ReplicatedJobsStatuses([]jobsetv1alpha2.ReplicatedJobStatus{
+					{
+						Name:      constants.Node,
+						Ready:     0,
+						Succeeded: 0,
+						Failed:    1,
+						Active:    0,
+						Suspended: 0,
+					},
+				}).
+				Obj(),
+			wantStatus: &trainer.TrainJobStatus{
+				JobsStatus: []trainer.JobStatus{
+					{
+						Name:      constants.Node,
+						Ready:     ptr.To(int32(0)),
+						Succeeded: ptr.To(int32(0)),
+						Failed:    ptr.To(int32(1)),
+						Active:    ptr.To(int32(0)),
+						Suspended: ptr.To(int32(0)),
+					},
+				},
+			},
+		},
+		"failed to obtain JobsStatus due to multiple JobsStatusPlugins": {
+			registry: fwkplugins.Registry{
+				jobset.Name:              jobset.New,
+				fakeJobsStatusPluginName: newFakeJobsStatusPlugin,
+			},
+			wantError: errorTooManyTrainJobStatusPlugin,
 		},
 	}
 	for name, tc := range cases {
@@ -1049,16 +2495,19 @@ func TestTerminalConditionPlugins(t *testing.T) {
 
 			fwk, err := New(ctx, c, tc.registry, testingutil.AsIndex(clientBuilder))
 			if err != nil {
-				t.Fatal(err)
+				if diff := cmp.Diff(tc.wantError, err, cmpopts.EquateErrors()); len(diff) != 0 {
+					t.Errorf("Unexpected error (-want,+got):\n%s", diff)
+				}
+				return
 			}
 
-			gotCond, gotErr := fwk.RunTerminalConditionPlugins(ctx, tc.trainJob)
+			gotStatus, gotErr := fwk.RunTrainJobStatusPlugin(ctx, tc.trainJob)
 			if diff := cmp.Diff(tc.wantError, gotErr, cmpopts.EquateErrors()); len(diff) != 0 {
 				t.Errorf("Unexpected error (-want,+got):\n%s", diff)
 			}
 
-			if diff := cmp.Diff(tc.wantCondition, gotCond); len(diff) != 0 {
-				t.Errorf("Unexpected terminal condition (-want,+got):\n%s", diff)
+			if diff := cmp.Diff(tc.wantStatus, gotStatus); len(diff) != 0 {
+				t.Errorf("Unexpected TrainJob status (-want,+got):\n%s", diff)
 			}
 		})
 	}

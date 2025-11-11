@@ -23,11 +23,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	trainer "github.com/kubeflow/trainer/pkg/apis/trainer/v1alpha1"
-	"github.com/kubeflow/trainer/pkg/constants"
-	utiltesting "github.com/kubeflow/trainer/pkg/util/testing"
-	"github.com/kubeflow/trainer/test/integration/framework"
-	"github.com/kubeflow/trainer/test/util"
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/constants"
+	utiltesting "github.com/kubeflow/trainer/v2/pkg/util/testing"
+	"github.com/kubeflow/trainer/v2/test/integration/framework"
+	"github.com/kubeflow/trainer/v2/test/util"
 )
 
 var _ = ginkgo.Describe("ClusterTrainingRuntime controller", ginkgo.Ordered, func() {
@@ -107,6 +107,9 @@ var _ = ginkgo.Describe("ClusterTrainingRuntime controller", ginkgo.Ordered, fun
 		ginkgo.It("ClusterTrainingRuntime can be deleted once referenced TrainJob is deleted", func() {
 			ginkgo.By("Creating a ClusterTrainingRuntime and TrainJob")
 			gomega.Expect(k8sClient.Create(ctx, clTrainingRuntime)).Should(gomega.Succeed())
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(clTrainingRuntime), clTrainingRuntime)).Should(gomega.Succeed())
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 
 			ginkgo.By("Checking if the ClusterTrainingRuntime obtains finalizers")
