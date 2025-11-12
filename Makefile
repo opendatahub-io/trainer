@@ -254,7 +254,7 @@ deploy-rhoai: ## Deploy operator using RHOAI manifests with kustomize
 		crd/trainingruntimes.trainer.kubeflow.org \
 		crd/trainjobs.trainer.kubeflow.org 2>/dev/null || sleep 5
 	@echo "Applying operator and resources..."
-	@$(KUBECTL) apply --server-side=true -k $(RHOAI_MANIFESTS_DIR)
+	@$(KUBECTL) apply -k $(RHOAI_MANIFESTS_DIR) --server-side=true --force-conflicts
 	@echo "Waiting for deployment to be ready..."
 	@$(KUBECTL) wait --for=condition=available --timeout=300s \
 		deployment/kubeflow-trainer-controller-manager -n $(NAMESPACE) 2>/dev/null || true
