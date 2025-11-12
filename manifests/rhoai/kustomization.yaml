@@ -3,6 +3,9 @@
 # Adds namespace to all resources.
 namespace: opendatahub
 
+sortOptions:
+  order: legacy
+
 configMapGenerator:
 - name: rhoai-config
   envs:
