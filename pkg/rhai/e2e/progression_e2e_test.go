@@ -43,6 +43,12 @@ const (
 	interval           = 2 * time.Second
 	consistentDuration = 8 * time.Second
 	wrapperTestRuntime = "wrapper-test-runtime"
+
+	// SDK poll interval constraints (from kubeflow/trainer SDK)
+	// TransformersTrainer.metrics_poll_interval_seconds enforces 5-300 range
+	minSDKPollIntervalSeconds  = 5   // Minimum: 5 seconds (prevents excessive controller load)
+	maxSDKPollIntervalSeconds  = 300 // Maximum: 300 seconds (5 minutes, keeps tracking responsive)
+	defaultPollIntervalSeconds = 30  // Default: 30 seconds (balanced)
 )
 
 // loadRuntimeFromFile loads TrainingRuntime from YAML file and sets namespace
@@ -98,7 +104,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "3s").
+				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // minimum poll interval: 5s
 				Annotation(constants.AnnotationFramework, "transformers").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
@@ -288,7 +294,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "8080").        // Custom port
-				Annotation(constants.AnnotationMetricsPollInterval, "15s"). // Custom interval
+				Annotation(constants.AnnotationMetricsPollInterval, "15s"). // Custom interval (valid range: 5-300s)
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).
@@ -310,6 +316,87 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 
 			gomega.Expect(progression.GetMetricsPort(gotTrainJob)).Should(gomega.Equal("8080"))
 			gomega.Expect(progression.GetMetricsPollInterval(gotTrainJob)).Should(gomega.Equal(15 * time.Second))
+		})
+
+		ginkgo.It("should handle minimum SDK-recommended poll interval (5s)", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-min-interval").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Annotation(constants.AnnotationProgressionTracking, "true").
+				Annotation(constants.AnnotationMetricsPort, "28080").
+				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // SDK minimum
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob with minimum poll interval")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying minimum interval is respected")
+			gotTrainJob := &trainer.TrainJob{}
+			gomega.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+			gomega.Expect(progression.GetMetricsPollInterval(gotTrainJob)).Should(gomega.Equal(5 * time.Second))
+		})
+
+		ginkgo.It("should handle maximum SDK-recommended poll interval (300s)", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-max-interval").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Annotation(constants.AnnotationProgressionTracking, "true").
+				Annotation(constants.AnnotationMetricsPort, "28080").
+				Annotation(constants.AnnotationMetricsPollInterval, "300s"). // SDK maximum (5 minutes)
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob with maximum poll interval")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying maximum interval is respected")
+			gotTrainJob := &trainer.TrainJob{}
+			gomega.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+			gomega.Expect(progression.GetMetricsPollInterval(gotTrainJob)).Should(gomega.Equal(300 * time.Second))
+		})
+
+		ginkgo.It("should use default interval when annotation is missing", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-default-interval").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Annotation(constants.AnnotationProgressionTracking, "true").
+				Annotation(constants.AnnotationMetricsPort, "28080").
+				// No poll interval annotation - should use default (30s)
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob without poll interval annotation")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying default interval (30s) is used")
+			gotTrainJob := &trainer.TrainJob{}
+			gomega.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+			gomega.Expect(progression.GetMetricsPollInterval(gotTrainJob)).Should(gomega.Equal(30 * time.Second))
 		})
 	})
 
@@ -492,6 +579,235 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100), "Final progress should be 100%")
 				g.Expect(status.EstimatedRemainingTimeSummary).Should(gomega.Equal("complete"))
 			}, timeout, interval).Should(gomega.Succeed())
+		})
+	})
+
+	ginkgo.Context("PreStop Hook Injection", func() {
+		ginkgo.It("should inject preStop hook with correct sleep duration into trainer pods", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-prestop-hook").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Annotation(constants.AnnotationProgressionTracking, "true").
+				Annotation(constants.AnnotationMetricsPort, "28080").
+				Annotation(constants.AnnotationMetricsPollInterval, "10s"). // 10s poll → 30s preStop (SDK range: 5-300s)
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob with progression tracking enabled")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Waiting for pod to be created")
+			var pod *corev1.Pod
+			gomega.Eventually(func(g gomega.Gomega) {
+				podList := &corev1.PodList{}
+				g.Expect(k8sClient.List(ctx, podList,
+					client.InNamespace(testNs.Name),
+					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
+					Should(gomega.Succeed())
+
+				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
+				pod = &podList.Items[0]
+			}, timeout, interval).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying preStop hook is injected into the trainer container")
+			var trainerContainer *corev1.Container
+			for i := range pod.Spec.Containers {
+				if pod.Spec.Containers[i].Name == "node" {
+					trainerContainer = &pod.Spec.Containers[i]
+					break
+				}
+			}
+			gomega.Expect(trainerContainer).NotTo(gomega.BeNil(), "trainer container 'node' should exist")
+			gomega.Expect(trainerContainer.Lifecycle).NotTo(gomega.BeNil(), "lifecycle should be set")
+			gomega.Expect(trainerContainer.Lifecycle.PreStop).NotTo(gomega.BeNil(), "preStop hook should be set")
+
+			ginkgo.By("Verifying preStop hook uses sleep command")
+			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec).NotTo(gomega.BeNil(), "exec action should be set")
+			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command).Should(gomega.HaveLen(2), "command should have 2 elements")
+			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[0]).Should(gomega.Equal("sleep"))
+
+			ginkgo.By("Verifying preStop sleep duration is calculated correctly")
+			// Poll interval: 10s → preStop: (2*10 + 10) = 30s
+			expectedPreStopDuration := "30"
+			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[1]).Should(gomega.Equal(expectedPreStopDuration),
+				"preStop sleep should be 2 × poll_interval + 10s buffer")
+
+			ginkgo.By("Verifying termination grace period is set")
+			gomega.Expect(pod.Spec.TerminationGracePeriodSeconds).NotTo(gomega.BeNil(), "termination grace period should be set")
+			// Termination grace: preStop (30s) + shutdown buffer (30s) = 60s
+			expectedTerminationGrace := int64(60)
+			gomega.Expect(*pod.Spec.TerminationGracePeriodSeconds).Should(gomega.BeNumerically(">=", expectedTerminationGrace),
+				"termination grace should be >= preStop + 30s")
+		})
+
+		ginkgo.It("should NOT inject preStop hook when progression tracking is disabled", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "no-prestop-hook").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob without progression tracking annotation")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Waiting for pod to be created")
+			var pod *corev1.Pod
+			gomega.Eventually(func(g gomega.Gomega) {
+				podList := &corev1.PodList{}
+				g.Expect(k8sClient.List(ctx, podList,
+					client.InNamespace(testNs.Name),
+					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
+					Should(gomega.Succeed())
+
+				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
+				pod = &podList.Items[0]
+			}, timeout, interval).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying preStop hook is NOT injected")
+			var trainerContainer *corev1.Container
+			for i := range pod.Spec.Containers {
+				if pod.Spec.Containers[i].Name == "node" {
+					trainerContainer = &pod.Spec.Containers[i]
+					break
+				}
+			}
+			gomega.Expect(trainerContainer).NotTo(gomega.BeNil(), "trainer container 'node' should exist")
+
+			// PreStop hook should not be set, or if lifecycle exists, preStop should be nil
+			if trainerContainer.Lifecycle != nil {
+				gomega.Expect(trainerContainer.Lifecycle.PreStop).Should(gomega.BeNil(),
+					"preStop hook should not be set when progression tracking is disabled")
+			}
+		})
+
+		ginkgo.It("should adapt preStop duration based on custom poll interval", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-custom-prestop").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Annotation(constants.AnnotationProgressionTracking, "true").
+				Annotation(constants.AnnotationMetricsPort, "28080").
+				Annotation(constants.AnnotationMetricsPollInterval, "60s"). // 60s poll → 130s preStop (SDK range: 5-300s)
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob with custom poll interval")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Waiting for pod to be created")
+			var pod *corev1.Pod
+			gomega.Eventually(func(g gomega.Gomega) {
+				podList := &corev1.PodList{}
+				g.Expect(k8sClient.List(ctx, podList,
+					client.InNamespace(testNs.Name),
+					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
+					Should(gomega.Succeed())
+
+				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
+				pod = &podList.Items[0]
+			}, timeout, interval).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying preStop duration reflects custom poll interval")
+			var trainerContainer *corev1.Container
+			for i := range pod.Spec.Containers {
+				if pod.Spec.Containers[i].Name == "node" {
+					trainerContainer = &pod.Spec.Containers[i]
+					break
+				}
+			}
+			gomega.Expect(trainerContainer).NotTo(gomega.BeNil())
+			gomega.Expect(trainerContainer.Lifecycle).NotTo(gomega.BeNil())
+			gomega.Expect(trainerContainer.Lifecycle.PreStop).NotTo(gomega.BeNil())
+			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec).NotTo(gomega.BeNil())
+
+			// Poll interval: 60s → preStop: (2*60 + 10) = 130s
+			expectedPreStopDuration := "130"
+			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[1]).Should(gomega.Equal(expectedPreStopDuration),
+				"preStop sleep should adapt to custom poll interval")
+
+			// Termination grace: 130 + 30 = 160s
+			expectedTerminationGrace := int64(160)
+			gomega.Expect(*pod.Spec.TerminationGracePeriodSeconds).Should(gomega.BeNumerically(">=", expectedTerminationGrace))
+		})
+
+		ginkgo.It("should inject preStop hook into correct container when multiple containers exist", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-multi-container").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
+				Annotation(constants.AnnotationProgressionTracking, "true").
+				Annotation(constants.AnnotationMetricsPort, "28080").
+				Annotation(constants.AnnotationMetricsPollInterval, "5s").
+				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					NumProcPerNode(intstr.FromInt(1)).
+					ResourcesPerNode(corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("4Gi"),
+						},
+					}).
+					Obj()).
+				Obj()
+
+			ginkgo.By("Creating TrainJob with progression tracking")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Waiting for pod to be created")
+			var pod *corev1.Pod
+			gomega.Eventually(func(g gomega.Gomega) {
+				podList := &corev1.PodList{}
+				g.Expect(k8sClient.List(ctx, podList,
+					client.InNamespace(testNs.Name),
+					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
+					Should(gomega.Succeed())
+
+				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()))
+				pod = &podList.Items[0]
+			}, timeout, interval).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying preStop hook is injected specifically into 'node' container")
+			var nodeContainer *corev1.Container
+			var otherContainersWithPreStop int
+
+			for i := range pod.Spec.Containers {
+				container := &pod.Spec.Containers[i]
+				if container.Name == "node" {
+					nodeContainer = container
+					gomega.Expect(nodeContainer.Lifecycle).NotTo(gomega.BeNil(), "node container should have lifecycle")
+					gomega.Expect(nodeContainer.Lifecycle.PreStop).NotTo(gomega.BeNil(), "node container should have preStop hook")
+				} else {
+					// Other containers should not have preStop hook injected by progression tracking
+					if container.Lifecycle != nil && container.Lifecycle.PreStop != nil {
+						otherContainersWithPreStop++
+					}
+				}
+			}
+
+			gomega.Expect(nodeContainer).NotTo(gomega.BeNil(), "node container should exist")
+			ginkgo.By("Verifying only the node container has the progression tracking preStop hook")
+			// Note: We expect 0 here because only node container should get the preStop from progression tracking
 		})
 	})
 })

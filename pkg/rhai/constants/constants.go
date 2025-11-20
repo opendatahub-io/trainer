@@ -50,4 +50,18 @@ const (
 
 	// DefaultMetricsPollIntervalSecs is the default interval (in seconds) for polling training metrics.
 	DefaultMetricsPollIntervalSecs int = 30
+
+	// MinMetricsPollIntervalSecs is the minimum allowed poll interval to prevent excessive controller load.
+	MinMetricsPollIntervalSecs int = 5
+
+	// MaxMetricsPollIntervalSecs is the maximum allowed poll interval to keep tracking responsive.
+	MaxMetricsPollIntervalSecs int = 300
+
+	// PreStopBufferSecs is added to (2 × poll interval) for preStop hook duration.
+	// This ensures at least 2 poll opportunities after training completion.
+	PreStopBufferSecs int = 10
+
+	// TerminationGraceBufferSecs is added to preStop duration for pod termination grace period.
+	// This allows time for graceful process shutdown after preStop hook completes.
+	TerminationGraceBufferSecs int = 30
 )

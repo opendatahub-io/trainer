@@ -28,6 +28,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
@@ -501,4 +502,97 @@ func getExistingStatus(trainJob *trainer.TrainJob) *AnnotationStatus {
 	}
 
 	return &status
+}
+
+// InjectPreStopHookToApplyConfig adds a preStop lifecycle hook to the primary pod container
+// using Apply Configuration. This is used by the jobset plugin to inject the hook during pod creation.
+func InjectPreStopHookToApplyConfig(podSpecAC *corev1ac.PodSpecApplyConfiguration, trainJob *trainer.TrainJob) error {
+	if !IsProgressionTrackingEnabled(trainJob) || podSpecAC == nil {
+		return nil
+	}
+
+	if len(podSpecAC.Containers) == 0 {
+		return fmt.Errorf("no containers in pod spec")
+	}
+
+	// Calculate preStop duration based on poll interval
+	pollInterval := GetMetricsPollInterval(trainJob)
+	preStopDuration := pollInterval*2 + time.Duration(constants.PreStopBufferSecs)*time.Second
+	preStopSleep := int(preStopDuration.Seconds())
+
+	// Termination grace must be greater than preStop duration
+	terminationGrace := int64((preStopDuration + time.Duration(constants.TerminationGraceBufferSecs)*time.Second).Seconds())
+
+	// Find the primary trainer container by name (typically "node")
+	containerIdx := -1
+	for i, container := range podSpecAC.Containers {
+		if container.Name != nil && *container.Name == "node" {
+			containerIdx = i
+			break
+		}
+	}
+
+	// Fallback to first container if "node" not found
+	if containerIdx == -1 {
+		containerIdx = 0
+	}
+
+	// Inject preStop hook into the target container
+	lifecycle := corev1ac.Lifecycle().
+		WithPreStop(corev1ac.LifecycleHandler().
+			WithExec(corev1ac.ExecAction().
+				WithCommand("sleep", strconv.Itoa(preStopSleep))))
+
+	podSpecAC.Containers[containerIdx].WithLifecycle(lifecycle)
+
+	// Set termination grace period (use max of existing and calculated)
+	if podSpecAC.TerminationGracePeriodSeconds == nil ||
+		*podSpecAC.TerminationGracePeriodSeconds < terminationGrace {
+		podSpecAC.WithTerminationGracePeriodSeconds(terminationGrace)
+	}
+
+	return nil
+}
+
+// InjectPreStopHook adds a preStop lifecycle hook to the primary pod container.
+// The hook keeps the metrics server alive after training completes, ensuring
+// the controller can capture final metrics before pod termination.
+//
+// PreStop duration is calculated as: (2 × poll_interval) + buffer
+// This guarantees at least 2 poll opportunities after training completion.
+func InjectPreStopHook(podSpec *corev1.PodSpec, trainJob *trainer.TrainJob) error {
+	if !IsProgressionTrackingEnabled(trainJob) {
+		return nil
+	}
+
+	if len(podSpec.Containers) == 0 {
+		return fmt.Errorf("no containers in pod spec")
+	}
+
+	// Inject into primary container (index 0)
+	container := &podSpec.Containers[0]
+
+	// Initialize lifecycle if nil
+	if container.Lifecycle == nil {
+		container.Lifecycle = &corev1.Lifecycle{}
+	}
+
+	// Calculate preStop duration based on poll interval
+	pollInterval := GetMetricsPollInterval(trainJob)
+	preStopDuration := pollInterval*2 + time.Duration(constants.PreStopBufferSecs)*time.Second
+	preStopSleep := int(preStopDuration.Seconds())
+
+	// Add preStop hook
+	container.Lifecycle.PreStop = &corev1.LifecycleHandler{
+		Exec: &corev1.ExecAction{
+			Command: []string{"sleep", strconv.Itoa(preStopSleep)},
+		},
+	}
+
+	// Set termination grace period (must be > preStop duration)
+	terminationGrace := preStopDuration + time.Duration(constants.TerminationGraceBufferSecs)*time.Second
+	terminationGraceSecs := int64(terminationGrace.Seconds())
+	podSpec.TerminationGracePeriodSeconds = &terminationGraceSecs
+
+	return nil
 }

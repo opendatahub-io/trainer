@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -88,12 +89,14 @@ func (r *ProgressionReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	if (isCompleted || isFailed) && !progression.IsFinalStatusCaptured(&trainJob) {
-		// Job just completed/failed - do one final metrics poll to capture completion status
+		// Job just completed/failed - capture final metrics
+		// PreStop hook keeps pod alive, so this should succeed
 		if _, pollErr := progression.PollAndUpdateFinalProgress(ctx, r.client, &trainJob, isCompleted); pollErr != nil {
-			log.V(logLevelInfo).Info("Failed to capture final training progress", "error", pollErr, "completed", isCompleted)
-		} else {
-			log.Info("Captured final training progress", "completed", isCompleted)
+			log.V(logLevelInfo).Info("Failed to capture final training progress, will retry", "error", pollErr, "completed", isCompleted)
+			// Requeue quickly - pod should still be alive in preStop window
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
+		log.Info("Captured final training progress", "completed", isCompleted)
 	}
 
 	return result, err
