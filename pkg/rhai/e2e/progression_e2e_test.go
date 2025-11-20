@@ -541,14 +541,27 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 
 			ginkgo.By("Verifying controller continues to reconcile despite connection errors")
 			// Controller should log errors but continue running
-			// TrainJob should not have trainerStatus annotation since metrics are unreachable
+			// TrainJob should not have trainerStatus annotation since metrics are unreachable during running phase
 			gomega.Consistently(func(g gomega.Gomega) {
 				gotTrainJob := &trainer.TrainJob{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
-				// Annotation should not be created if metrics are never reachable
-				_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
-				g.Expect(exists).Should(gomega.BeFalse(), "trainerStatus should not be created when metrics are unreachable")
+				// Only check while job is still running (not completed/failed)
+				isRunning := true
+				for _, cond := range gotTrainJob.Status.Conditions {
+					if (cond.Type == trainer.TrainJobComplete || cond.Type == trainer.TrainJobFailed) &&
+						cond.Status == metav1.ConditionTrue {
+						isRunning = false
+						break
+					}
+				}
+
+				// Annotation should not be created while running if metrics are unreachable
+				// (It will be synthesized after completion, which is checked later)
+				if isRunning {
+					_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+					g.Expect(exists).Should(gomega.BeFalse(), "trainerStatus should not be created during running when metrics are unreachable")
+				}
 			}, 10*time.Second, interval).Should(gomega.Succeed())
 
 			ginkgo.By("Waiting for TrainJob to complete despite metrics errors")

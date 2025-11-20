@@ -12,6 +12,9 @@ spec:
       replicatedJobs:
         - name: node
           template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
             spec:
               backoffLimit: 0
               template:
@@ -40,7 +43,7 @@ spec:
                                   "trainMetrics": {"loss": 1.0},
                                   "evalMetrics": {}
                               }
-                              
+
                               def do_GET(self):
                                   if self.path == '/metrics':
                                       self.send_response(200)
@@ -49,7 +52,7 @@ spec:
                                       self.wfile.write(json.dumps(self.progress_data).encode())
                                   else:
                                       self.send_error(404)
-                              
+
                               def log_message(self, *args): pass
 
                           def start_metrics_server(port=28080):
@@ -59,7 +62,7 @@ spec:
 
                           # Start metrics server
                           start_metrics_server(28080)
-                          
+
                           # Wait briefly for server to be ready
                           time.sleep(1)
 
@@ -67,12 +70,12 @@ spec:
                           print("Starting training that will fail...")
                           total_steps = 30
                           fail_at_step = 15  # Fail at 50%
-                          
+
                           for step in range(fail_at_step):
                               time.sleep(0.2)  # 0.2s per step
                               progress = int((step / total_steps) * 100)
                               remaining = int((total_steps - step) * 0.2)
-                              
+
                               MetricsHandler.progress_data = {
                                   "progressPercentage": progress,
                                   "estimatedRemainingSeconds": remaining,
@@ -99,4 +102,3 @@ spec:
                         timeoutSeconds: 1
                         failureThreshold: 2
                   restartPolicy: Never
-
