@@ -290,8 +290,7 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 				log := ctrl.LoggerFrom(ctx)
 				log.Error(err, "Failed to inject preStop hook for progression tracking",
 					"trainJob", trainJob.Name,
-					"namespace", trainJob.Namespace,
-					"replicatedJob", *jobSetSpec.ReplicatedJobs[psIdx].Name)
+					"namespace", trainJob.Namespace)
 				// Don't fail pod creation, progression tracking is optional
 			}
 		}

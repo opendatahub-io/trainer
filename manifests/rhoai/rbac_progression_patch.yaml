@@ -1,5 +1,5 @@
 # RHAI-specific: Permissions for progression tracking
-# Allows the controller to list/get pods to read IPs for HTTP metrics polling
+# Allows the controller to list/get/watch pods to read IPs for HTTP metrics polling
 - op: add
   path: /rules/-
   value:
@@ -10,3 +10,4 @@
     verbs:
     - get
     - list
+    - watch
