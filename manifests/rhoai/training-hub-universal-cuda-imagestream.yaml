@@ -1,0 +1,36 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: training-hub-universal-cuda
+  labels:
+    opendatahub.io/notebook-image: "true"
+  annotations:
+    opendatahub.io/notebook-image-url: "https://github.com/opendatahub-io/trainer"
+    opendatahub.io/notebook-image-name: "Training Hub Universal (CUDA, Python 3.12)"
+    opendatahub.io/notebook-image-desc: "Universal Training Hub workbench image for CUDA-based fine-tuning and distributed training."
+    opendatahub.io/notebook-image-order: "1"
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: latest
+      annotations:
+        opendatahub.io/notebook-software: |
+          [
+            {"name": "CUDA", "version": "12.6"},
+            {"name": "Python", "version": "v3.12"},
+            {"name": "Training Hub", "version": "v0.3.0"}
+          ]
+        opendatahub.io/notebook-python-dependencies: |
+          [
+            {"name": "JupyterLab", "version": "4.4"}
+          ]
+        openshift.io/imported-from: quay.io/mstoklus/training-image
+      from:
+        kind: DockerImage
+        name: odh-kubeflow-trainer-universal-workbench-image
+      importPolicy:
+        importMode: Legacy
+      referencePolicy:
+        type: Source

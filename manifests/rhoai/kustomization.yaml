@@ -26,6 +26,19 @@ replacements:
       name: kubeflow-trainer-controller-manager
     fieldPaths:
     - spec.template.spec.containers.0.image
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.odh-kubeflow-trainer-universal-workbench-image
+  targets:
+  - select:
+      group: image.openshift.io
+      version: v1
+      kind: ImageStream
+      name: training-hub-universal-cuda
+    fieldPaths:
+    - spec.tags.0.from.name
 
 # Labels to add to all resources and selectors.
 labels:
@@ -41,6 +54,7 @@ resources:
 - ../base/webhook
 # - ../third-party/jobset #uncomment if jobset should be bundled under kubeflow trainer controller manager
 - runtimes
+- training-hub-universal-cuda-imagestream.yaml
 - kubeflow-training-roles.yaml
 - monitor.yaml
 
