@@ -44,6 +44,7 @@ import (
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/apply"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework"
 )
@@ -277,6 +278,21 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 				&jobSetSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].VolumeMounts,
 				container.VolumeMounts...,
 			)
+		}
+
+		// RHAI-specific: Inject preStop hook for progression tracking on trainer pods
+		// Note: This uses pkg/rhai/progression to keep RHAI logic centralized
+		if ps.Ancestor != nil && *ps.Ancestor == constants.AncestorTrainer {
+			if err := progression.InjectPreStopHookToApplyConfig(
+				jobSetSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec,
+				trainJob,
+			); err != nil {
+				log := ctrl.LoggerFrom(ctx)
+				log.Error(err, "Failed to inject preStop hook for progression tracking",
+					"trainJob", trainJob.Name,
+					"namespace", trainJob.Namespace)
+				// Don't fail pod creation, progression tracking is optional
+			}
 		}
 	}
 

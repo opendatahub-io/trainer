@@ -43,6 +43,7 @@ import (
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 	jobruntimes "github.com/kubeflow/trainer/v2/pkg/runtime"
 )
 
@@ -51,11 +52,12 @@ type TrainJobWatcher interface {
 }
 
 type TrainJobReconciler struct {
-	log      logr.Logger
-	client   client.Client
-	recorder record.EventRecorder
-	runtimes map[string]jobruntimes.Runtime
-	watchers iter.Seq[TrainJobWatcher]
+	log       logr.Logger
+	client    client.Client
+	apiReader client.Reader
+	recorder  record.EventRecorder
+	runtimes  map[string]jobruntimes.Runtime
+	watchers  iter.Seq[TrainJobWatcher]
 }
 
 type TrainJobReconcilerOptions struct {
@@ -73,17 +75,18 @@ func WithWatchers(watchers ...TrainJobWatcher) TrainJobReconcilerOption {
 var _ reconcile.Reconciler = (*TrainJobReconciler)(nil)
 var _ predicate.TypedPredicate[*trainer.TrainJob] = (*TrainJobReconciler)(nil)
 
-func NewTrainJobReconciler(client client.Client, recorder record.EventRecorder, runtimes map[string]jobruntimes.Runtime, opts ...TrainJobReconcilerOption) *TrainJobReconciler {
+func NewTrainJobReconciler(client client.Client, apiReader client.Reader, recorder record.EventRecorder, runtimes map[string]jobruntimes.Runtime, opts ...TrainJobReconcilerOption) *TrainJobReconciler {
 	options := &TrainJobReconcilerOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
 	return &TrainJobReconciler{
-		log:      ctrl.Log.WithName("trainjob-controller"),
-		client:   client,
-		recorder: recorder,
-		runtimes: runtimes,
-		watchers: options.Watchers,
+		log:       ctrl.Log.WithName("trainjob-controller"),
+		client:    client,
+		apiReader: apiReader,
+		recorder:  recorder,
+		runtimes:  runtimes,
+		watchers:  options.Watchers,
 	}
 }
 
@@ -139,7 +142,10 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
 		return ctrl.Result{}, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
 	}
-	return ctrl.Result{}, err
+
+	// RHAI progression tracking (use APIReader to avoid pod watches)
+	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
+	return result, errors.Join(err, progressionErr)
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {

@@ -598,6 +598,14 @@ func (t *TrainJobWrapper) SpecLabel(key, value string) *TrainJobWrapper {
 	return t
 }
 
+func (t *TrainJobWrapper) Annotation(key, value string) *TrainJobWrapper {
+	if t.ObjectMeta.Annotations == nil {
+		t.ObjectMeta.Annotations = make(map[string]string, 1)
+	}
+	t.ObjectMeta.Annotations[key] = value
+	return t
+}
+
 func (t *TrainJobWrapper) SpecAnnotation(key, value string) *TrainJobWrapper {
 	if t.Spec.Annotations == nil {
 		t.Spec.Annotations = make(map[string]string, 1)
@@ -676,6 +684,11 @@ func (t *TrainJobTrainerWrapper) Container(image string, command []string, args 
 
 func (t *TrainJobTrainerWrapper) Env(env ...corev1.EnvVar) *TrainJobTrainerWrapper {
 	t.Trainer.Env = env
+	return t
+}
+
+func (t *TrainJobTrainerWrapper) ResourcesPerNode(resources corev1.ResourceRequirements) *TrainJobTrainerWrapper {
+	t.Trainer.ResourcesPerNode = &resources
 	return t
 }
 
