@@ -254,7 +254,7 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 	}
 
 	metricsURL := fmt.Sprintf("http://%s:%s/metrics", pod.Status.PodIP, metricsPort)
-	requestCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, metricsURL, nil)
