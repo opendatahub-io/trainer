@@ -282,28 +282,32 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 		return nil, fmt.Errorf("failed to parse metrics JSON: %w", err)
 	}
 
-	if err := validateTrainerStatus(&status); err != nil {
-		return nil, fmt.Errorf("invalid training metrics: %w", err)
-	}
+	cleanInvalidMetrics(&status)
 
 	return &status, nil
 }
 
-// validateTrainerStatus validates training metrics are within acceptable bounds.
-func validateTrainerStatus(m *TrainerStatus) error {
+// cleanInvalidMetrics removes invalid values while keeping valid fields.
+// Defense against custom implementations, malformed requests, or edge cases.
+func cleanInvalidMetrics(m *TrainerStatus) {
 	if m.ProgressPercentage != nil && (*m.ProgressPercentage < 0 || *m.ProgressPercentage > 100) {
-		return fmt.Errorf("progressPercentage must be between 0 and 100, got %d", *m.ProgressPercentage)
+		m.ProgressPercentage = nil
 	}
-	if m.CurrentStep < 0 {
-		return fmt.Errorf("currentStep must be non-negative, got %d", m.CurrentStep)
+	if m.EstimatedRemainingSeconds != nil && *m.EstimatedRemainingSeconds < 0 {
+		m.EstimatedRemainingSeconds = nil
 	}
 	if m.TotalSteps != nil && *m.TotalSteps < 0 {
-		return fmt.Errorf("totalSteps must be non-negative, got %d", *m.TotalSteps)
+		m.TotalSteps = nil
+	}
+	if m.TotalEpochs != nil && *m.TotalEpochs < 0 {
+		m.TotalEpochs = nil
+	}
+	if m.CurrentStep < 0 {
+		m.CurrentStep = 0
 	}
 	if m.CurrentEpoch < 0 {
-		return fmt.Errorf("currentEpoch must be non-negative, got %d", m.CurrentEpoch)
+		m.CurrentEpoch = 0
 	}
-	return nil
 }
 
 // ToAnnotationStatus converts training status to annotation format with enhancements.

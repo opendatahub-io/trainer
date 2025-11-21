@@ -531,101 +531,211 @@ func TestGetPrimaryPod(t *testing.T) {
 	}
 }
 
-func TestValidateTrainerStatus(t *testing.T) {
+func TestCleanInvalidMetrics(t *testing.T) {
 	tests := []struct {
-		name    string
-		status  *TrainerStatus
-		wantErr bool
+		name   string
+		status *TrainerStatus
+		verify func(*testing.T, *TrainerStatus)
 	}{
 		{
-			name: "valid status all fields",
+			name: "valid status unchanged",
 			status: &TrainerStatus{
 				ProgressPercentage:        ptrInt(50),
-				EstimatedRemainingSeconds: ptrInt(1000),
+				EstimatedRemainingSeconds: ptrInt(1200),
 				CurrentStep:               500,
 				TotalSteps:                ptrInt(1000),
 				CurrentEpoch:              2,
 				TotalEpochs:               ptrInt(5),
 			},
-			wantErr: false,
-		},
-		{
-			name: "valid status zero progress",
-			status: &TrainerStatus{
-				ProgressPercentage: ptrInt(0),
-				CurrentStep:        0,
-				CurrentEpoch:       0,
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.ProgressPercentage == nil || *s.ProgressPercentage != 50 {
+					t.Errorf("ProgressPercentage should remain 50, got %v", s.ProgressPercentage)
+				}
+				if s.EstimatedRemainingSeconds == nil || *s.EstimatedRemainingSeconds != 1200 {
+					t.Errorf("EstimatedRemainingSeconds should remain 1200, got %v", s.EstimatedRemainingSeconds)
+				}
+				if s.CurrentStep != 500 {
+					t.Errorf("CurrentStep should remain 500, got %d", s.CurrentStep)
+				}
+				if s.TotalSteps == nil || *s.TotalSteps != 1000 {
+					t.Errorf("TotalSteps should remain 1000, got %v", s.TotalSteps)
+				}
 			},
-			wantErr: false,
 		},
 		{
-			name: "valid status 100 progress",
-			status: &TrainerStatus{
-				ProgressPercentage: ptrInt(100),
-				CurrentStep:        1000,
-				TotalSteps:         ptrInt(1000),
-			},
-			wantErr: false,
-		},
-		{
-			name: "negative progress percentage",
+			name: "negative progress percentage removed",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(-1),
 				CurrentStep:        500,
 			},
-			wantErr: true,
-		},
-		{
-			name: "progress percentage over 100",
-			status: &TrainerStatus{
-				ProgressPercentage: ptrInt(101),
-				CurrentStep:        500,
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.ProgressPercentage != nil {
+					t.Errorf("ProgressPercentage should be nil (removed), got %v", *s.ProgressPercentage)
+				}
+				if s.CurrentStep != 500 {
+					t.Errorf("CurrentStep should remain unchanged, got %d", s.CurrentStep)
+				}
 			},
-			wantErr: true,
 		},
 		{
-			name: "negative current step",
+			name: "progress percentage over 100 removed",
+			status: &TrainerStatus{
+				ProgressPercentage: ptrInt(150),
+				CurrentStep:        500,
+				TotalSteps:         ptrInt(1000),
+			},
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.ProgressPercentage != nil {
+					t.Errorf("ProgressPercentage should be nil (removed), got %v", *s.ProgressPercentage)
+				}
+				// Other fields should remain
+				if s.CurrentStep != 500 {
+					t.Errorf("CurrentStep should remain 500, got %d", s.CurrentStep)
+				}
+				if s.TotalSteps == nil || *s.TotalSteps != 1000 {
+					t.Errorf("TotalSteps should remain 1000, got %v", s.TotalSteps)
+				}
+			},
+		},
+		{
+			name: "negative current step clamped to 0",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(50),
 				CurrentStep:        -1,
 			},
-			wantErr: true,
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.CurrentStep != 0 {
+					t.Errorf("CurrentStep should be clamped to 0, got %d", s.CurrentStep)
+				}
+				// ProgressPercentage should remain valid
+				if s.ProgressPercentage == nil || *s.ProgressPercentage != 50 {
+					t.Errorf("ProgressPercentage should remain 50, got %v", s.ProgressPercentage)
+				}
+			},
 		},
 		{
-			name: "negative total steps",
+			name: "negative total steps removed",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(50),
 				CurrentStep:        500,
 				TotalSteps:         ptrInt(-100),
 			},
-			wantErr: true,
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.TotalSteps != nil {
+					t.Errorf("TotalSteps should be nil (removed), got %v", *s.TotalSteps)
+				}
+				// Other fields should remain
+				if s.ProgressPercentage == nil || *s.ProgressPercentage != 50 {
+					t.Errorf("ProgressPercentage should remain 50, got %v", s.ProgressPercentage)
+				}
+			},
 		},
 		{
-			name: "negative current epoch",
+			name: "zero total steps preserved (valid for indefinite training)",
+			status: &TrainerStatus{
+				CurrentStep: 500,
+				TotalSteps:  ptrInt(0),
+			},
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.TotalSteps == nil || *s.TotalSteps != 0 {
+					t.Errorf("TotalSteps=0 should be preserved (valid), got %v", s.TotalSteps)
+				}
+			},
+		},
+		{
+			name: "negative current epoch clamped to 0",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(50),
 				CurrentStep:        500,
-				CurrentEpoch:       -1,
+				CurrentEpoch:       -5,
 			},
-			wantErr: true,
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.CurrentEpoch != 0 {
+					t.Errorf("CurrentEpoch should be clamped to 0, got %d", s.CurrentEpoch)
+				}
+			},
 		},
 		{
-			name: "nil progress percentage allowed",
+			name: "negative total epochs removed",
+			status: &TrainerStatus{
+				CurrentEpoch: 2,
+				TotalEpochs:  ptrInt(-3),
+			},
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.TotalEpochs != nil {
+					t.Errorf("TotalEpochs should be nil (removed), got %v", *s.TotalEpochs)
+				}
+				if s.CurrentEpoch != 2 {
+					t.Errorf("CurrentEpoch should remain 2, got %d", s.CurrentEpoch)
+				}
+			},
+		},
+		{
+			name: "negative estimated remaining seconds removed",
+			status: &TrainerStatus{
+				ProgressPercentage:        ptrInt(50),
+				EstimatedRemainingSeconds: ptrInt(-100),
+			},
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.EstimatedRemainingSeconds != nil {
+					t.Errorf("EstimatedRemainingSeconds should be nil (removed), got %v", *s.EstimatedRemainingSeconds)
+				}
+				if s.ProgressPercentage == nil || *s.ProgressPercentage != 50 {
+					t.Errorf("ProgressPercentage should remain 50, got %v", s.ProgressPercentage)
+				}
+			},
+		},
+		{
+			name: "nil progress percentage preserved",
 			status: &TrainerStatus{
 				ProgressPercentage: nil,
 				CurrentStep:        500,
 				CurrentEpoch:       1,
 			},
-			wantErr: false,
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.ProgressPercentage != nil {
+					t.Errorf("ProgressPercentage should remain nil, got %v", s.ProgressPercentage)
+				}
+			},
+		},
+		{
+			name: "multiple invalid fields sanitized independently",
+			status: &TrainerStatus{
+				ProgressPercentage:        ptrInt(150),
+				EstimatedRemainingSeconds: ptrInt(-50),
+				CurrentStep:               -10,
+				TotalSteps:                ptrInt(-100),
+				CurrentEpoch:              -2,
+				TotalEpochs:               ptrInt(5),
+			},
+			verify: func(t *testing.T, s *TrainerStatus) {
+				if s.ProgressPercentage != nil {
+					t.Errorf("ProgressPercentage should be nil, got %v", *s.ProgressPercentage)
+				}
+				if s.EstimatedRemainingSeconds != nil {
+					t.Errorf("EstimatedRemainingSeconds should be nil, got %v", *s.EstimatedRemainingSeconds)
+				}
+				if s.CurrentStep != 0 {
+					t.Errorf("CurrentStep should be 0, got %d", s.CurrentStep)
+				}
+				if s.TotalSteps != nil {
+					t.Errorf("TotalSteps should be nil, got %v", *s.TotalSteps)
+				}
+				if s.CurrentEpoch != 0 {
+					t.Errorf("CurrentEpoch should be 0, got %d", s.CurrentEpoch)
+				}
+				// TotalEpochs was valid, should remain
+				if s.TotalEpochs == nil || *s.TotalEpochs != 5 {
+					t.Errorf("TotalEpochs should remain 5, got %v", s.TotalEpochs)
+				}
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateTrainerStatus(tt.status)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateTrainerStatus() error = %v, wantErr %v", err, tt.wantErr)
-			}
+			cleanInvalidMetrics(tt.status)
+			tt.verify(t, tt.status)
 		})
 	}
 }
