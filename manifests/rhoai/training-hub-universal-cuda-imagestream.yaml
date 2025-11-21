@@ -26,7 +26,7 @@ spec:
           [
             {"name": "JupyterLab", "version": "4.4"}
           ]
-        openshift.io/imported-from: quay.io/mstoklus/training-image
+        openshift.io/imported-from: quay.io/opendatahub/odh-training-th03-cuda128-torch28-py312-rhel9
       from:
         kind: DockerImage
         name: odh-kubeflow-trainer-universal-workbench-image
