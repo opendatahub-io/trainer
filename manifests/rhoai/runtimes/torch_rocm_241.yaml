@@ -20,6 +20,9 @@ spec:
             spec:
               template:
                 spec:
+                  securityContext:
+                    runAsUser: 1000
+                    fsGroup: 1000
                   containers:
                     - name: node
                       image: quay.io/modh/training:py311-rocm62-torch241
