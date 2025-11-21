@@ -241,9 +241,9 @@ func TestPollTrainingProgress(t *testing.T) {
 			wantStatus: &TrainerStatus{
 				ProgressPercentage:        ptrInt(45),
 				EstimatedRemainingSeconds: ptrInt(9855),
-				CurrentStep:               4530,
+				CurrentStep:               ptrInt(4530),
 				TotalSteps:                ptrInt(10000),
-				CurrentEpoch:              2,
+				CurrentEpoch:              ptrFloat64(2),
 				TotalEpochs:               ptrInt(5),
 				TrainMetrics: map[string]interface{}{
 					"loss":                   0.234,
@@ -334,9 +334,9 @@ func TestUpdateTrainerStatusAnnotation(t *testing.T) {
 			status: &AnnotationStatus{
 				ProgressPercentage:        ptrInt(10),
 				EstimatedRemainingSeconds: ptrInt(9000),
-				CurrentStep:               100,
+				CurrentStep:               ptrInt(100),
 				TotalSteps:                ptrInt(1000),
-				CurrentEpoch:              1,
+				CurrentEpoch:              ptrFloat64(1),
 				TotalEpochs:               ptrInt(10),
 				LastUpdatedTime:           "2025-11-18T10:00:00Z",
 			},
@@ -352,9 +352,9 @@ func TestUpdateTrainerStatusAnnotation(t *testing.T) {
 			},
 			status: &AnnotationStatus{
 				ProgressPercentage: ptrInt(50),
-				CurrentStep:        500,
+				CurrentStep:        ptrInt(500),
 				TotalSteps:         ptrInt(1000),
-				CurrentEpoch:       5,
+				CurrentEpoch:       ptrFloat64(5),
 				TrainMetrics: map[string]interface{}{
 					"loss":          0.5,
 					"learning_rate": 0.001,
@@ -542,9 +542,9 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			status: &TrainerStatus{
 				ProgressPercentage:        ptrInt(50),
 				EstimatedRemainingSeconds: ptrInt(1200),
-				CurrentStep:               500,
+				CurrentStep:               ptrInt(500),
 				TotalSteps:                ptrInt(1000),
-				CurrentEpoch:              2,
+				CurrentEpoch:              ptrFloat64(2),
 				TotalEpochs:               ptrInt(5),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
@@ -554,8 +554,8 @@ func TestCleanInvalidMetrics(t *testing.T) {
 				if s.EstimatedRemainingSeconds == nil || *s.EstimatedRemainingSeconds != 1200 {
 					t.Errorf("EstimatedRemainingSeconds should remain 1200, got %v", s.EstimatedRemainingSeconds)
 				}
-				if s.CurrentStep != 500 {
-					t.Errorf("CurrentStep should remain 500, got %d", s.CurrentStep)
+				if s.CurrentStep == nil || *s.CurrentStep != 500 {
+					t.Errorf("CurrentStep should remain 500, got %v", s.CurrentStep)
 				}
 				if s.TotalSteps == nil || *s.TotalSteps != 1000 {
 					t.Errorf("TotalSteps should remain 1000, got %v", s.TotalSteps)
@@ -566,14 +566,14 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			name: "negative progress percentage removed",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(-1),
-				CurrentStep:        500,
+				CurrentStep:        ptrInt(500),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
 				if s.ProgressPercentage != nil {
 					t.Errorf("ProgressPercentage should be nil (removed), got %v", *s.ProgressPercentage)
 				}
-				if s.CurrentStep != 500 {
-					t.Errorf("CurrentStep should remain unchanged, got %d", s.CurrentStep)
+				if s.CurrentStep == nil || *s.CurrentStep != 500 {
+					t.Errorf("CurrentStep should remain unchanged, got %v", s.CurrentStep)
 				}
 			},
 		},
@@ -581,7 +581,7 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			name: "progress percentage over 100 removed",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(150),
-				CurrentStep:        500,
+				CurrentStep:        ptrInt(500),
 				TotalSteps:         ptrInt(1000),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
@@ -589,8 +589,8 @@ func TestCleanInvalidMetrics(t *testing.T) {
 					t.Errorf("ProgressPercentage should be nil (removed), got %v", *s.ProgressPercentage)
 				}
 				// Other fields should remain
-				if s.CurrentStep != 500 {
-					t.Errorf("CurrentStep should remain 500, got %d", s.CurrentStep)
+				if s.CurrentStep == nil || *s.CurrentStep != 500 {
+					t.Errorf("CurrentStep should remain 500, got %v", s.CurrentStep)
 				}
 				if s.TotalSteps == nil || *s.TotalSteps != 1000 {
 					t.Errorf("TotalSteps should remain 1000, got %v", s.TotalSteps)
@@ -601,11 +601,11 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			name: "negative current step clamped to 0",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(50),
-				CurrentStep:        -1,
+				CurrentStep:        ptrInt(-1),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
-				if s.CurrentStep != 0 {
-					t.Errorf("CurrentStep should be clamped to 0, got %d", s.CurrentStep)
+				if s.CurrentStep == nil || *s.CurrentStep != 0 {
+					t.Errorf("CurrentStep should be clamped to 0, got %v", s.CurrentStep)
 				}
 				// ProgressPercentage should remain valid
 				if s.ProgressPercentage == nil || *s.ProgressPercentage != 50 {
@@ -617,7 +617,7 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			name: "negative total steps removed",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(50),
-				CurrentStep:        500,
+				CurrentStep:        ptrInt(500),
 				TotalSteps:         ptrInt(-100),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
@@ -633,7 +633,7 @@ func TestCleanInvalidMetrics(t *testing.T) {
 		{
 			name: "zero total steps preserved (valid for indefinite training)",
 			status: &TrainerStatus{
-				CurrentStep: 500,
+				CurrentStep: ptrInt(500),
 				TotalSteps:  ptrInt(0),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
@@ -646,27 +646,27 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			name: "negative current epoch clamped to 0",
 			status: &TrainerStatus{
 				ProgressPercentage: ptrInt(50),
-				CurrentStep:        500,
-				CurrentEpoch:       -5,
+				CurrentStep:        ptrInt(500),
+				CurrentEpoch:       ptrFloat64(-5),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
-				if s.CurrentEpoch != 0 {
-					t.Errorf("CurrentEpoch should be clamped to 0, got %d", s.CurrentEpoch)
+				if s.CurrentEpoch == nil || *s.CurrentEpoch != 0 {
+					t.Errorf("CurrentEpoch should be clamped to 0, got %v", s.CurrentEpoch)
 				}
 			},
 		},
 		{
 			name: "negative total epochs removed",
 			status: &TrainerStatus{
-				CurrentEpoch: 2,
+				CurrentEpoch: ptrFloat64(2),
 				TotalEpochs:  ptrInt(-3),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
 				if s.TotalEpochs != nil {
 					t.Errorf("TotalEpochs should be nil (removed), got %v", *s.TotalEpochs)
 				}
-				if s.CurrentEpoch != 2 {
-					t.Errorf("CurrentEpoch should remain 2, got %d", s.CurrentEpoch)
+				if s.CurrentEpoch == nil || *s.CurrentEpoch != 2 {
+					t.Errorf("CurrentEpoch should remain 2, got %v", s.CurrentEpoch)
 				}
 			},
 		},
@@ -689,8 +689,8 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			name: "nil progress percentage preserved",
 			status: &TrainerStatus{
 				ProgressPercentage: nil,
-				CurrentStep:        500,
-				CurrentEpoch:       1,
+				CurrentStep:        ptrInt(500),
+				CurrentEpoch:       ptrFloat64(1),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
 				if s.ProgressPercentage != nil {
@@ -703,9 +703,9 @@ func TestCleanInvalidMetrics(t *testing.T) {
 			status: &TrainerStatus{
 				ProgressPercentage:        ptrInt(150),
 				EstimatedRemainingSeconds: ptrInt(-50),
-				CurrentStep:               -10,
+				CurrentStep:               ptrInt(-10),
 				TotalSteps:                ptrInt(-100),
-				CurrentEpoch:              -2,
+				CurrentEpoch:              ptrFloat64(-2),
 				TotalEpochs:               ptrInt(5),
 			},
 			verify: func(t *testing.T, s *TrainerStatus) {
@@ -715,14 +715,14 @@ func TestCleanInvalidMetrics(t *testing.T) {
 				if s.EstimatedRemainingSeconds != nil {
 					t.Errorf("EstimatedRemainingSeconds should be nil, got %v", *s.EstimatedRemainingSeconds)
 				}
-				if s.CurrentStep != 0 {
-					t.Errorf("CurrentStep should be 0, got %d", s.CurrentStep)
+				if s.CurrentStep == nil || *s.CurrentStep != 0 {
+					t.Errorf("CurrentStep should be 0, got %v", s.CurrentStep)
 				}
 				if s.TotalSteps != nil {
 					t.Errorf("TotalSteps should be nil, got %v", *s.TotalSteps)
 				}
-				if s.CurrentEpoch != 0 {
-					t.Errorf("CurrentEpoch should be 0, got %d", s.CurrentEpoch)
+				if s.CurrentEpoch == nil || *s.CurrentEpoch != 0 {
+					t.Errorf("CurrentEpoch should be 0, got %v", s.CurrentEpoch)
 				}
 				// TotalEpochs was valid, should remain
 				if s.TotalEpochs == nil || *s.TotalEpochs != 5 {
@@ -751,9 +751,9 @@ func TestToAnnotationStatus(t *testing.T) {
 			input: &TrainerStatus{
 				ProgressPercentage:        ptrInt(45),
 				EstimatedRemainingSeconds: ptrInt(3665),
-				CurrentStep:               4500,
+				CurrentStep:               ptrInt(4500),
 				TotalSteps:                ptrInt(10000),
-				CurrentEpoch:              2,
+				CurrentEpoch:              ptrFloat64(2),
 				TotalEpochs:               ptrInt(5),
 				TrainMetrics: map[string]interface{}{
 					"loss":          0.234,
@@ -776,8 +776,8 @@ func TestToAnnotationStatus(t *testing.T) {
 				if result.LastUpdatedTime == "" {
 					t.Error("LastUpdatedTime should be set")
 				}
-				if result.CurrentStep != 4500 {
-					t.Errorf("CurrentStep = %d, want 4500", result.CurrentStep)
+				if result.CurrentStep == nil || *result.CurrentStep != 4500 {
+					t.Errorf("CurrentStep = %v, want 4500", result.CurrentStep)
 				}
 				if len(result.TrainMetrics) != 2 {
 					t.Errorf("TrainMetrics length = %d, want 2", len(result.TrainMetrics))
@@ -789,7 +789,7 @@ func TestToAnnotationStatus(t *testing.T) {
 			input: &TrainerStatus{
 				ProgressPercentage:        ptrInt(50),
 				EstimatedRemainingSeconds: nil,
-				CurrentStep:               500,
+				CurrentStep:               ptrInt(500),
 			},
 			verify: func(t *testing.T, result *AnnotationStatus) {
 				if result.EstimatedRemainingSeconds != nil {
@@ -805,7 +805,7 @@ func TestToAnnotationStatus(t *testing.T) {
 			input: &TrainerStatus{
 				ProgressPercentage:        ptrInt(100),
 				EstimatedRemainingSeconds: ptrInt(0),
-				CurrentStep:               1000,
+				CurrentStep:               ptrInt(1000),
 			},
 			verify: func(t *testing.T, result *AnnotationStatus) {
 				if result.EstimatedRemainingTimeSummary != "" {
