@@ -103,7 +103,9 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-func GetPrimaryPod(ctx context.Context, c client.Client, trainJob *trainer.TrainJob) (*corev1.Pod, error) {
+// GetPrimaryPod returns the first running and ready pod with an IP for a TrainJob.
+// Uses the provided reader (typically APIReader) to avoid setting up pod informers/watchers.
+func GetPrimaryPod(ctx context.Context, reader client.Reader, trainJob *trainer.TrainJob) (*corev1.Pod, error) {
 	// First, try to find the rank 0 pod (primary worker or launcher)
 	podList := &corev1.PodList{}
 
@@ -140,7 +142,7 @@ func GetPrimaryPod(ctx context.Context, c client.Client, trainJob *trainer.Train
 	// Try each label selector pattern
 	for _, labelSet := range labelSets {
 		labelSelector := labels.SelectorFromSet(labelSet)
-		if err := c.List(ctx, podList, &client.ListOptions{
+		if err := reader.List(ctx, podList, &client.ListOptions{
 			Namespace:     trainJob.Namespace,
 			LabelSelector: labelSelector,
 		}); err != nil {
@@ -160,7 +162,7 @@ func GetPrimaryPod(ctx context.Context, c client.Client, trainJob *trainer.Train
 	labelSelector := labels.SelectorFromSet(labels.Set{
 		"training.kubeflow.org/job-name": trainJob.Name,
 	})
-	if err := c.List(ctx, podList, &client.ListOptions{
+	if err := reader.List(ctx, podList, &client.ListOptions{
 		Namespace:     trainJob.Namespace,
 		LabelSelector: labelSelector,
 	}); err != nil {
@@ -172,7 +174,7 @@ func GetPrimaryPod(ctx context.Context, c client.Client, trainJob *trainer.Train
 		labelSelector = labels.SelectorFromSet(labels.Set{
 			"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
 		})
-		if err := c.List(ctx, podList, &client.ListOptions{
+		if err := reader.List(ctx, podList, &client.ListOptions{
 			Namespace:     trainJob.Namespace,
 			LabelSelector: labelSelector,
 		}); err != nil {
@@ -390,12 +392,12 @@ func UpdateTrainerStatusAnnotation(trainJob *trainer.TrainJob, status *Annotatio
 	return nil
 }
 
-func PollAndUpdateProgress(ctx context.Context, c client.Client, trainJob *trainer.TrainJob) (bool, error) {
+func PollAndUpdateProgress(ctx context.Context, c client.Client, reader client.Reader, trainJob *trainer.TrainJob) (bool, error) {
 	if !IsProgressionTrackingEnabled(trainJob) {
 		return false, nil
 	}
 
-	pod, err := GetPrimaryPod(ctx, c, trainJob)
+	pod, err := GetPrimaryPod(ctx, reader, trainJob)
 	if err != nil {
 		return false, fmt.Errorf("primary pod not available: %w", err)
 	}
@@ -471,13 +473,13 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 	return false
 }
 
-func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *trainer.TrainJob, completed bool) (bool, error) {
+func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader client.Reader, trainJob *trainer.TrainJob, completed bool) (bool, error) {
 	if !IsProgressionTrackingEnabled(trainJob) {
 		return false, nil
 	}
 
 	// Try to get final metrics from pod if it still exists
-	pod, err := GetPrimaryPod(ctx, c, trainJob)
+	pod, err := GetPrimaryPod(ctx, reader, trainJob)
 	if err == nil {
 		metricsPort := GetMetricsPort(trainJob)
 		if status, pollErr := PollTrainingProgress(ctx, pod, metricsPort); pollErr == nil {
@@ -674,7 +676,7 @@ func InjectPreStopHook(podSpec *corev1.PodSpec, trainJob *trainer.TrainJob) erro
 // ReconcileProgression handles progression tracking during TrainJob reconciliation.
 // Returns ctrl.Result for requeue behavior and any errors encountered.
 // This should be called at the end of TrainJob reconciliation when progression tracking is enabled.
-func ReconcileProgression(ctx context.Context, c client.Client, log logr.Logger, trainJob *trainer.TrainJob) (ctrl.Result, error) {
+func ReconcileProgression(ctx context.Context, c client.Client, reader client.Reader, log logr.Logger, trainJob *trainer.TrainJob) (ctrl.Result, error) {
 	if !IsProgressionTrackingEnabled(trainJob) {
 		return ctrl.Result{}, nil
 	}
@@ -688,7 +690,7 @@ func ReconcileProgression(ctx context.Context, c client.Client, log logr.Logger,
 
 	if isRunning {
 		// Poll metrics while job is running
-		if _, pollErr := PollAndUpdateProgress(ctx, c, trainJob); pollErr != nil {
+		if _, pollErr := PollAndUpdateProgress(ctx, c, reader, trainJob); pollErr != nil {
 			log.V(1).Info("Failed to poll training progress", "error", pollErr)
 		} else {
 			log.V(2).Info("Successfully updated training progress")
@@ -702,7 +704,7 @@ func ReconcileProgression(ctx context.Context, c client.Client, log logr.Logger,
 	if (isCompleted || isFailed) && !IsFinalStatusCaptured(trainJob) {
 		// Job just completed/failed - capture final metrics
 		// PreStop hook keeps pod alive, so this should succeed
-		captured, pollErr := PollAndUpdateFinalProgress(ctx, c, trainJob, isCompleted)
+		captured, pollErr := PollAndUpdateFinalProgress(ctx, c, reader, trainJob, isCompleted)
 		if pollErr != nil {
 			log.V(1).Info("Failed to capture final training progress, will retry", "error", pollErr, "completed", isCompleted)
 			// Requeue quickly - pod should still be alive in preStop window
