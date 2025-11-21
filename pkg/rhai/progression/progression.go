@@ -62,9 +62,9 @@ func getHTTPClient() *http.Client {
 type TrainerStatus struct {
 	ProgressPercentage        *int                   `json:"progressPercentage"`
 	EstimatedRemainingSeconds *int                   `json:"estimatedRemainingSeconds"`
-	CurrentStep               int                    `json:"currentStep"`
+	CurrentStep               *int                   `json:"currentStep"`
 	TotalSteps                *int                   `json:"totalSteps"`
-	CurrentEpoch              float64                `json:"currentEpoch"` // float64 for precision (1.98 not 1)
+	CurrentEpoch              *float64               `json:"currentEpoch"` // float64 for precision (1.98 not 1)
 	TotalEpochs               *int                   `json:"totalEpochs"`
 	TrainMetrics              map[string]interface{} `json:"trainMetrics"`
 	EvalMetrics               map[string]interface{} `json:"evalMetrics"`
@@ -76,9 +76,9 @@ type AnnotationStatus struct {
 	ProgressPercentage            *int                   `json:"progressPercentage"`
 	EstimatedRemainingSeconds     *int                   `json:"estimatedRemainingSeconds,omitempty"`
 	EstimatedRemainingTimeSummary string                 `json:"estimatedRemainingTimeSummary,omitempty"`
-	CurrentStep                   int                    `json:"currentStep"`
+	CurrentStep                   *int                   `json:"currentStep,omitempty"`
 	TotalSteps                    *int                   `json:"totalSteps,omitempty"`
-	CurrentEpoch                  float64                `json:"currentEpoch"` // float64 for precision (1.98 not 1)
+	CurrentEpoch                  *float64               `json:"currentEpoch,omitempty"` // float64 for precision (1.98 not 1)
 	TotalEpochs                   *int                   `json:"totalEpochs,omitempty"`
 	TrainMetrics                  map[string]interface{} `json:"trainMetrics,omitempty"`
 	EvalMetrics                   map[string]interface{} `json:"evalMetrics,omitempty"`
@@ -305,11 +305,13 @@ func cleanInvalidMetrics(m *TrainerStatus) {
 	if m.TotalEpochs != nil && *m.TotalEpochs < 0 {
 		m.TotalEpochs = nil
 	}
-	if m.CurrentStep < 0 {
-		m.CurrentStep = 0
+	if m.CurrentStep != nil && *m.CurrentStep < 0 {
+		zero := 0
+		m.CurrentStep = &zero
 	}
-	if m.CurrentEpoch < 0 {
-		m.CurrentEpoch = 0
+	if m.CurrentEpoch != nil && *m.CurrentEpoch < 0 {
+		zeroEpoch := 0.0
+		m.CurrentEpoch = &zeroEpoch
 	}
 }
 
@@ -405,12 +407,14 @@ func PollAndUpdateProgress(ctx context.Context, c client.Client, trainJob *train
 	}
 
 	annotationStatus := ToAnnotationStatus(status)
+
+	// Use Patch to avoid conflicts with main controller
+	patch := client.MergeFrom(trainJob.DeepCopy())
 	if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
 		return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
 	}
-
-	if err := c.Update(ctx, trainJob); err != nil {
-		return false, fmt.Errorf("failed to update TrainJob: %w", err)
+	if err := c.Patch(ctx, trainJob, patch); err != nil {
+		return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
 	}
 
 	return true, nil
@@ -481,14 +485,22 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *
 			annotationStatus := ToAnnotationStatus(status)
 			annotationStatus.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
 
+			// Add descriptive summary
 			if completed {
-				// Force remaining time to 0 for completed jobs (no work remains)
-				remaining := 0
-				annotationStatus.EstimatedRemainingSeconds = &remaining
-				annotationStatus.EstimatedRemainingTimeSummary = "complete"
+				// Detect early stop: currentStep < totalSteps
+				earlyStop := false
+				if annotationStatus.CurrentStep != nil && annotationStatus.TotalSteps != nil && *annotationStatus.TotalSteps > 0 {
+					if *annotationStatus.CurrentStep < *annotationStatus.TotalSteps {
+						earlyStop = true
+					}
+				}
+				if earlyStop {
+					annotationStatus.EstimatedRemainingTimeSummary = "complete (early stopped)"
+				} else {
+					annotationStatus.EstimatedRemainingTimeSummary = "complete"
+				}
 			} else {
-				// For failed jobs: keep remaining time estimate
-				// Show progress context in summary
+				// For failed jobs: show progress context in summary
 				progressPct := 0
 				if annotationStatus.ProgressPercentage != nil {
 					progressPct = *annotationStatus.ProgressPercentage
@@ -496,12 +508,13 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *
 				annotationStatus.EstimatedRemainingTimeSummary = fmt.Sprintf("failed at %d%%", progressPct)
 			}
 
+			// Use Patch to avoid conflicts with main controller
+			patch := client.MergeFrom(trainJob.DeepCopy())
 			if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
 				return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
 			}
-
-			if err := c.Update(ctx, trainJob); err != nil {
-				return false, fmt.Errorf("failed to update TrainJob: %w", err)
+			if err := c.Patch(ctx, trainJob, patch); err != nil {
+				return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
 			}
 
 			return true, nil
@@ -511,12 +524,13 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *
 	// Pod not available - update final status using existing metrics
 	// For completed: force remaining time to 0 (no work remains)
 	// For failed: keep remaining time estimate (useful for resume)
+	// Use Patch to avoid conflicts with main controller
+	patch := client.MergeFrom(trainJob.DeepCopy())
 	if err := updateFinalStatus(trainJob, completed); err != nil {
 		return false, fmt.Errorf("failed to update final status: %w", err)
 	}
-
-	if err := c.Update(ctx, trainJob); err != nil {
-		return false, fmt.Errorf("failed to update TrainJob with forced remaining time: %w", err)
+	if err := c.Patch(ctx, trainJob, patch); err != nil {
+		return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
 	}
 
 	return true, nil
@@ -537,14 +551,22 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 		return err
 	}
 
+	// Only update summary - don't modify actual metrics (progress %, remaining time, etc.)
 	if completed {
-		// Force remaining time to 0 for completed jobs (no work remains)
-		remaining := 0
-		status.EstimatedRemainingSeconds = &remaining
-		status.EstimatedRemainingTimeSummary = "complete"
+		// Detect early stop: currentStep < totalSteps
+		earlyStop := false
+		if status.CurrentStep != nil && status.TotalSteps != nil && *status.TotalSteps > 0 {
+			if *status.CurrentStep < *status.TotalSteps {
+				earlyStop = true
+			}
+		}
+		if earlyStop {
+			status.EstimatedRemainingTimeSummary = "early stopped"
+		} else {
+			status.EstimatedRemainingTimeSummary = "complete"
+		}
 	} else {
-		// For failed jobs: keep honest remaining time estimate (useful for resume)
-		// Only update summary to show context
+		// For failed jobs: show progress context in summary
 		progressPct := 0
 		if status.ProgressPercentage != nil {
 			progressPct = *status.ProgressPercentage

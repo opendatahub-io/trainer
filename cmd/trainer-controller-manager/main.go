@@ -154,7 +154,6 @@ func setupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, cer
 		setupLog.Error(err, "Could not create controller", "controller", failedCtrlName)
 		os.Exit(1)
 	}
-
 	if failedWebhook, err := webhooks.Setup(mgr, runtimes); err != nil {
 		setupLog.Error(err, "Could not create webhook", "webhook", failedWebhook)
 		os.Exit(1)
