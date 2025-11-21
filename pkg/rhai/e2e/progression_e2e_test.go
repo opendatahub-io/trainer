@@ -105,7 +105,6 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // minimum poll interval: 5s
-				Annotation(constants.AnnotationFramework, "transformers").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).

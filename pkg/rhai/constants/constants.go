@@ -41,10 +41,6 @@ const (
 	// Example: trainer.opendatahub.io/metrics-poll-interval: "45s"
 	AnnotationMetricsPollInterval string = "trainer.opendatahub.io/metrics-poll-interval"
 
-	// AnnotationFramework specifies the training framework (for framework-specific handling).
-	// Example: trainer.opendatahub.io/framework: "pytorch"
-	AnnotationFramework string = "trainer.opendatahub.io/framework"
-
 	// DefaultMetricsPort is the default port for metrics endpoints in training pods.
 	DefaultMetricsPort string = "28080"
 
