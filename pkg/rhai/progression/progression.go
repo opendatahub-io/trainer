@@ -481,14 +481,19 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *
 			annotationStatus := ToAnnotationStatus(status)
 			annotationStatus.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
 
-			// ALWAYS force remaining time to 0 when job is complete/failed
-			// (Progress % and steps/epochs remain honest, but remaining time is definitionally 0)
-			remaining := 0
-			annotationStatus.EstimatedRemainingSeconds = &remaining
 			if completed {
+				// Force remaining time to 0 for completed jobs (no work remains)
+				remaining := 0
+				annotationStatus.EstimatedRemainingSeconds = &remaining
 				annotationStatus.EstimatedRemainingTimeSummary = "complete"
 			} else {
-				annotationStatus.EstimatedRemainingTimeSummary = "failed"
+				// For failed jobs: keep remaining time estimate
+				// Show progress context in summary
+				progressPct := 0
+				if annotationStatus.ProgressPercentage != nil {
+					progressPct = *annotationStatus.ProgressPercentage
+				}
+				annotationStatus.EstimatedRemainingTimeSummary = fmt.Sprintf("failed at %d%%", progressPct)
 			}
 
 			if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
@@ -502,7 +507,53 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *
 			return true, nil
 		}
 	}
-	return false, nil
+
+	// Pod not available - update final status using existing metrics
+	// For completed: force remaining time to 0 (no work remains)
+	// For failed: keep remaining time estimate (useful for resume)
+	if err := updateFinalStatus(trainJob, completed); err != nil {
+		return false, fmt.Errorf("failed to update final status: %w", err)
+	}
+
+	if err := c.Update(ctx, trainJob); err != nil {
+		return false, fmt.Errorf("failed to update TrainJob with forced remaining time: %w", err)
+	}
+
+	return true, nil
+}
+
+func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
+	if trainJob.Annotations == nil {
+		return nil // No existing status to update
+	}
+
+	statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]
+	if !exists || statusJSON == "" {
+		return nil // No existing status to update
+	}
+
+	var status AnnotationStatus
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+		return err
+	}
+
+	if completed {
+		// Force remaining time to 0 for completed jobs (no work remains)
+		remaining := 0
+		status.EstimatedRemainingSeconds = &remaining
+		status.EstimatedRemainingTimeSummary = "complete"
+	} else {
+		// For failed jobs: keep honest remaining time estimate (useful for resume)
+		// Only update summary to show context
+		progressPct := 0
+		if status.ProgressPercentage != nil {
+			progressPct = *status.ProgressPercentage
+		}
+		status.EstimatedRemainingTimeSummary = fmt.Sprintf("failed at %d%%", progressPct)
+	}
+	status.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
+
+	return UpdateTrainerStatusAnnotation(trainJob, &status)
 }
 
 // InjectPreStopHookToApplyConfig adds a preStop lifecycle hook to the primary pod container
