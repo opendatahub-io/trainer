@@ -40,7 +40,6 @@ import (
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/config"
 	"github.com/kubeflow/trainer/v2/pkg/controller"
-	rhaisetup "github.com/kubeflow/trainer/v2/pkg/rhai"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 	runtimecore "github.com/kubeflow/trainer/v2/pkg/runtime/core"
 	"github.com/kubeflow/trainer/v2/pkg/util/cert"
@@ -151,48 +150,11 @@ func setupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, cer
 	<-certsReady
 	setupLog.Info("Certs ready")
 
-	// Setup controllers with optional RHAI features (decorator pattern for midstream extensions)
-	rhaiEnabled := os.Getenv("ENABLE_RHAI_FEATURES") == "true"
-	if rhaiEnabled {
-		setupLog.Info("RHAI features enabled")
-
-		// Setup TrainingRuntime controller
-		runtimeRec := controller.NewTrainingRuntimeReconciler(
-			mgr.GetClient(),
-			mgr.GetEventRecorderFor("trainer-trainingruntime-controller"),
-		)
-		if err := runtimeRec.SetupWithManager(mgr, ctrlpkg.Options{}); err != nil {
-			setupLog.Error(err, "Could not create controller", "controller", "TrainingRuntime")
-			os.Exit(1)
-		}
-
-		// Setup ClusterTrainingRuntime controller
-		clRuntimeRec := controller.NewClusterTrainingRuntimeReconciler(
-			mgr.GetClient(),
-			mgr.GetEventRecorderFor("trainer-clustertrainingruntime-controller"),
-		)
-		if err := clRuntimeRec.SetupWithManager(mgr, ctrlpkg.Options{}); err != nil {
-			setupLog.Error(err, "Could not create controller", "controller", "ClusterTrainingRuntime")
-			os.Exit(1)
-		}
-
-		// Wrap base TrainJob reconciler with RHAI progression tracking
-		baseReconciler := controller.NewTrainJobReconciler(
-			mgr.GetClient(),
-			mgr.GetEventRecorderFor("trainer-trainjob-controller"),
-			runtimes,
-			controller.WithWatchers(runtimeRec, clRuntimeRec),
-		)
-		if err := rhaisetup.SetupWithManager(mgr, baseReconciler); err != nil {
-			setupLog.Error(err, "Could not setup RHAI features")
-			os.Exit(1)
-		}
-	} else {
-		if failedCtrlName, err := controller.SetupControllers(mgr, runtimes, ctrlpkg.Options{}); err != nil {
-			setupLog.Error(err, "Could not create controller", "controller", failedCtrlName)
-			os.Exit(1)
-		}
+	if failedCtrlName, err := controller.SetupControllers(mgr, runtimes, ctrlpkg.Options{}); err != nil {
+		setupLog.Error(err, "Could not create controller", "controller", failedCtrlName)
+		os.Exit(1)
 	}
+
 	if failedWebhook, err := webhooks.Setup(mgr, runtimes); err != nil {
 		setupLog.Error(err, "Could not create webhook", "webhook", failedWebhook)
 		os.Exit(1)

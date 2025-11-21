@@ -26,9 +26,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
@@ -61,7 +64,7 @@ type TrainerStatus struct {
 	EstimatedRemainingSeconds *int                   `json:"estimatedRemainingSeconds"`
 	CurrentStep               int                    `json:"currentStep"`
 	TotalSteps                *int                   `json:"totalSteps"`
-	CurrentEpoch              int                    `json:"currentEpoch"`
+	CurrentEpoch              float64                `json:"currentEpoch"` // float64 for precision (1.98 not 1)
 	TotalEpochs               *int                   `json:"totalEpochs"`
 	TrainMetrics              map[string]interface{} `json:"trainMetrics"`
 	EvalMetrics               map[string]interface{} `json:"evalMetrics"`
@@ -75,7 +78,7 @@ type AnnotationStatus struct {
 	EstimatedRemainingTimeSummary string                 `json:"estimatedRemainingTimeSummary,omitempty"`
 	CurrentStep                   int                    `json:"currentStep"`
 	TotalSteps                    *int                   `json:"totalSteps,omitempty"`
-	CurrentEpoch                  int                    `json:"currentEpoch"`
+	CurrentEpoch                  float64                `json:"currentEpoch"` // float64 for precision (1.98 not 1)
 	TotalEpochs                   *int                   `json:"totalEpochs,omitempty"`
 	TrainMetrics                  map[string]interface{} `json:"trainMetrics,omitempty"`
 	EvalMetrics                   map[string]interface{} `json:"evalMetrics,omitempty"`
@@ -428,7 +431,40 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 		return false
 	}
 
-	return status.ProgressPercentage != nil && *status.ProgressPercentage == 100
+	// Consider final status captured if:
+	// 1. We have a progress percentage (any value, including <100% for epoch-based training)
+	// 2. Estimated remaining time is 0 (indicates training has ended)
+	if status.ProgressPercentage == nil {
+		return false
+	}
+
+	// Check if remaining time is explicitly 0 or summary indicates completion
+	hasZeroRemaining := status.EstimatedRemainingSeconds != nil && *status.EstimatedRemainingSeconds == 0
+	hasCompleteSummary := status.EstimatedRemainingTimeSummary == "complete" ||
+		status.EstimatedRemainingTimeSummary == "0 seconds"
+
+	if hasZeroRemaining || hasCompleteSummary {
+		return true
+	}
+
+	// Also consider captured if job completed/failed AND preStop window has expired
+	// This handles cases where on_train_end() never fired (pod killed, crash, etc.)
+	// Check if we're past the preStop hook duration since last update
+	if status.LastUpdatedTime != "" {
+		lastUpdate, err := time.Parse(time.RFC3339, status.LastUpdatedTime)
+		if err == nil {
+			pollInterval := GetMetricsPollInterval(trainJob)
+			preStopDuration := pollInterval*2 + time.Duration(constants.PreStopBufferSecs)*time.Second
+			gracePeriod := preStopDuration + time.Duration(constants.TerminationGraceBufferSecs)*time.Second
+
+			// If it's been longer than preStop + grace period, pod is definitely gone
+			if time.Since(lastUpdate) > gracePeriod {
+				return true // Stop trying, preserve last known state
+			}
+		}
+	}
+
+	return false
 }
 
 func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *trainer.TrainJob, completed bool) (bool, error) {
@@ -437,75 +473,36 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, trainJob *
 	}
 
 	// Try to get final metrics from pod if it still exists
-	var annotationStatus *AnnotationStatus
-
 	pod, err := GetPrimaryPod(ctx, c, trainJob)
 	if err == nil {
 		metricsPort := GetMetricsPort(trainJob)
 		if status, pollErr := PollTrainingProgress(ctx, pod, metricsPort); pollErr == nil {
-			annotationStatus = ToAnnotationStatus(status)
+			// Got real metrics from pod - update with final status
+			annotationStatus := ToAnnotationStatus(status)
+			annotationStatus.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
+
+			// ALWAYS force remaining time to 0 when job is complete/failed
+			// (Progress % and steps/epochs remain honest, but remaining time is definitionally 0)
+			remaining := 0
+			annotationStatus.EstimatedRemainingSeconds = &remaining
+			if completed {
+				annotationStatus.EstimatedRemainingTimeSummary = "complete"
+			} else {
+				annotationStatus.EstimatedRemainingTimeSummary = "failed"
+			}
+
+			if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
+				return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
+			}
+
+			if err := c.Update(ctx, trainJob); err != nil {
+				return false, fmt.Errorf("failed to update TrainJob: %w", err)
+			}
+
+			return true, nil
 		}
 	}
-
-	// If we couldn't get metrics, synthesize final status
-	if annotationStatus == nil {
-		progress := 100
-		remaining := 0
-		annotationStatus = &AnnotationStatus{
-			ProgressPercentage:            &progress,
-			EstimatedRemainingSeconds:     &remaining,
-			EstimatedRemainingTimeSummary: "complete",
-			LastUpdatedTime:               time.Now().UTC().Format(time.RFC3339),
-		}
-
-		// Try to preserve existing metrics if available
-		if existingStatus := getExistingStatus(trainJob); existingStatus != nil {
-			annotationStatus.CurrentStep = existingStatus.CurrentStep
-			annotationStatus.TotalSteps = existingStatus.TotalSteps
-			annotationStatus.CurrentEpoch = existingStatus.CurrentEpoch
-			annotationStatus.TotalEpochs = existingStatus.TotalEpochs
-			annotationStatus.TrainMetrics = existingStatus.TrainMetrics
-			annotationStatus.EvalMetrics = existingStatus.EvalMetrics
-		}
-	}
-
-	// Ensure final status shows 100%
-	progress := 100
-	remaining := 0
-	annotationStatus.ProgressPercentage = &progress
-	annotationStatus.EstimatedRemainingSeconds = &remaining
-	if annotationStatus.EstimatedRemainingTimeSummary == "" {
-		annotationStatus.EstimatedRemainingTimeSummary = "complete"
-	}
-	annotationStatus.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
-
-	if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
-		return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
-	}
-
-	if err := c.Update(ctx, trainJob); err != nil {
-		return false, fmt.Errorf("failed to update TrainJob: %w", err)
-	}
-
-	return true, nil
-}
-
-func getExistingStatus(trainJob *trainer.TrainJob) *AnnotationStatus {
-	if trainJob.Annotations == nil {
-		return nil
-	}
-
-	statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]
-	if !exists || statusJSON == "" {
-		return nil
-	}
-
-	var status AnnotationStatus
-	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
-		return nil
-	}
-
-	return &status
+	return false, nil
 }
 
 // InjectPreStopHookToApplyConfig adds a preStop lifecycle hook to the primary pod container
@@ -599,4 +596,52 @@ func InjectPreStopHook(podSpec *corev1.PodSpec, trainJob *trainer.TrainJob) erro
 	podSpec.TerminationGracePeriodSeconds = &terminationGraceSecs
 
 	return nil
+}
+
+// ReconcileProgression handles progression tracking during TrainJob reconciliation.
+// Returns ctrl.Result for requeue behavior and any errors encountered.
+// This should be called at the end of TrainJob reconciliation when progression tracking is enabled.
+func ReconcileProgression(ctx context.Context, c client.Client, log logr.Logger, trainJob *trainer.TrainJob) (ctrl.Result, error) {
+	if !IsProgressionTrackingEnabled(trainJob) {
+		return ctrl.Result{}, nil
+	}
+
+	isRunning := !meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobSuspended) &&
+		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete) &&
+		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
+
+	isCompleted := meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete)
+	isFailed := meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
+
+	if isRunning {
+		// Poll metrics while job is running
+		if _, pollErr := PollAndUpdateProgress(ctx, c, trainJob); pollErr != nil {
+			log.V(1).Info("Failed to poll training progress", "error", pollErr)
+		} else {
+			log.V(2).Info("Successfully updated training progress")
+		}
+		// Requeue to continue polling while job is running
+		pollInterval := GetMetricsPollInterval(trainJob)
+		log.V(2).Info("Requeuing for metrics polling", "interval", pollInterval)
+		return ctrl.Result{RequeueAfter: pollInterval}, nil
+	}
+
+	if (isCompleted || isFailed) && !IsFinalStatusCaptured(trainJob) {
+		// Job just completed/failed - capture final metrics
+		// PreStop hook keeps pod alive, so this should succeed
+		captured, pollErr := PollAndUpdateFinalProgress(ctx, c, trainJob, isCompleted)
+		if pollErr != nil {
+			log.V(1).Info("Failed to capture final training progress, will retry", "error", pollErr, "completed", isCompleted)
+			// Requeue quickly - pod should still be alive in preStop window
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		if !captured {
+			log.V(1).Info("Pod not available for final metrics poll, will retry", "completed", isCompleted)
+			// Pod might be in preStop or already terminated, retry a few times
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+		log.Info("Captured final training progress", "completed", isCompleted)
+	}
+
+	return ctrl.Result{}, nil
 }

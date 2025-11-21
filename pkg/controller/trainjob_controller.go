@@ -43,6 +43,7 @@ import (
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 	jobruntimes "github.com/kubeflow/trainer/v2/pkg/runtime"
 )
 
@@ -137,9 +138,14 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
+		if updateErr := r.client.Status().Update(ctx, &trainJob); updateErr != nil {
+			return ctrl.Result{}, errors.Join(err, updateErr)
+		}
 	}
-	return ctrl.Result{}, err
+
+	// RHAI progression tracking
+	result, progressionErr := progression.ReconcileProgression(ctx, r.client, log, &trainJob)
+	return result, errors.Join(err, progressionErr)
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {
