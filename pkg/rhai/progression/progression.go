@@ -149,9 +149,15 @@ func GetPrimaryPod(ctx context.Context, reader client.Reader, trainJob *trainer.
 			return nil, fmt.Errorf("failed to list pods: %w", err)
 		}
 
-		// Return first running and ready pod with IP from this label set
+		// Return first running/succeeded pod with IP from this label set
+		// Include Succeeded pods to capture final metrics during preStop hook window
 		for i := range podList.Items {
 			pod := &podList.Items[i]
+			// For Succeeded pods, skip ready check (they're in preStop window, not "ready" but still accessible)
+			if pod.Status.Phase == corev1.PodSucceeded && pod.Status.PodIP != "" {
+				return pod, nil
+			}
+			// For Running pods, require ready check
 			if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" && isPodReady(pod) {
 				return pod, nil
 			}
@@ -186,10 +192,16 @@ func GetPrimaryPod(ctx context.Context, reader client.Reader, trainJob *trainer.
 		return nil, fmt.Errorf("no pods found for TrainJob %s/%s", trainJob.Namespace, trainJob.Name)
 	}
 
-	// Return first running and ready pod with IP
+	// Return first running/succeeded pod with IP
+	// Include Succeeded pods to capture final metrics during preStop hook window
 	var podStates []string
 	for i := range podList.Items {
 		pod := &podList.Items[i]
+		// For Succeeded pods, skip ready check (they're in preStop window, not "ready" but still accessible)
+		if pod.Status.Phase == corev1.PodSucceeded && pod.Status.PodIP != "" {
+			return pod, nil
+		}
+		// For Running pods, require ready check
 		if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" && isPodReady(pod) {
 			return pod, nil
 		}
@@ -201,7 +213,7 @@ func GetPrimaryPod(ctx context.Context, reader client.Reader, trainJob *trainer.
 		podStates = append(podStates, fmt.Sprintf("%s: %s (IP: %s, %s)", pod.Name, pod.Status.Phase, pod.Status.PodIP, ready))
 	}
 
-	return nil, fmt.Errorf("no running and ready pod with IP found for TrainJob %s/%s; found pods: %v", trainJob.Namespace, trainJob.Name, podStates)
+	return nil, fmt.Errorf("no running/succeeded pod with IP found for TrainJob %s/%s; found pods: %v", trainJob.Namespace, trainJob.Name, podStates)
 }
 
 func GetMetricsPort(trainJob *trainer.TrainJob) string {
