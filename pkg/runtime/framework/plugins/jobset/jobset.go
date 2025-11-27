@@ -248,10 +248,31 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 		oldJobSet = nil
 	}
-	if oldJobSet != nil &&
-		!ptr.Deref(trainJob.Spec.Suspend, false) &&
-		!ptr.Deref(oldJobSet.Spec.Suspend, false) {
-		return nil, nil
+
+	if oldJobSet != nil {
+		oldSuspend := ptr.Deref(oldJobSet.Spec.Suspend, false)
+		newSuspend := ptr.Deref(trainJob.Spec.Suspend, false)
+		suspendChanged := oldSuspend != newSuspend
+
+		// If only suspend is changing, use direct patch instead of SSA to avoid webhook validation
+		// The JobSet webhook rejects ApplyConfigurations that don't include immutable fields
+		if suspendChanged {
+			// Use strategic merge patch to update only the suspend field
+			patch := client.MergeFrom(oldJobSet.DeepCopy())
+			oldJobSet.Spec.Suspend = ptr.To(newSuspend)
+
+			if err := j.client.Patch(ctx, oldJobSet, patch); err != nil {
+				return nil, fmt.Errorf("failed to patch JobSet suspend field: %w", err)
+			}
+
+			// Return nil to indicate we've already handled the update
+			return nil, nil
+		}
+
+		// If both are unsuspended (running), skip update to avoid unnecessary reconciliation
+		if !newSuspend && !oldSuspend {
+			return nil, nil
+		}
 	}
 
 	jobSetSpec, ok := runtime.TemplateSpecApply[jobsetv1alpha2ac.JobSetSpecApplyConfiguration](info)
