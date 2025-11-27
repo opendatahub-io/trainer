@@ -1325,3 +1325,198 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestJobSetSuspendResume(t *testing.T) {
+	cases := map[string]struct {
+		trainJobSuspend  *bool
+		oldJobSetSuspend *bool
+		oldJobSetExists  bool
+		expectPatch      bool
+		expectSSA        bool
+		patchErr         error
+		wantErr          bool
+	}{
+		"suspend running job - should patch": {
+			trainJobSuspend:  ptr.To(true),
+			oldJobSetSuspend: ptr.To(false),
+			oldJobSetExists:  true,
+			expectPatch:      true,
+			expectSSA:        false,
+		},
+		"resume suspended job - should patch": {
+			trainJobSuspend:  ptr.To(false),
+			oldJobSetSuspend: ptr.To(true),
+			oldJobSetExists:  true,
+			expectPatch:      true,
+			expectSSA:        false,
+		},
+		"both running - no update": {
+			trainJobSuspend:  ptr.To(false),
+			oldJobSetSuspend: ptr.To(false),
+			oldJobSetExists:  true,
+			expectPatch:      false,
+			expectSSA:        false,
+		},
+		"both suspended - use SSA": {
+			trainJobSuspend:  ptr.To(true),
+			oldJobSetSuspend: ptr.To(true),
+			oldJobSetExists:  true,
+			expectPatch:      false,
+			expectSSA:        true,
+		},
+		"first creation - use SSA": {
+			trainJobSuspend:  ptr.To(true),
+			oldJobSetSuspend: nil,
+			oldJobSetExists:  false,
+			expectPatch:      false,
+			expectSSA:        true,
+		},
+		"nil to false (resume) - skip update": {
+			trainJobSuspend:  ptr.To(false),
+			oldJobSetSuspend: nil, // defaults to false
+			oldJobSetExists:  true,
+			expectPatch:      false,
+			expectSSA:        false, // both are false, optimization kicks in
+		},
+		"nil to true (suspend) - should patch": {
+			trainJobSuspend:  ptr.To(true),
+			oldJobSetSuspend: nil, // defaults to false
+			oldJobSetExists:  true,
+			expectPatch:      true,
+			expectSSA:        false,
+		},
+		"patch failure - returns error": {
+			trainJobSuspend:  ptr.To(true),
+			oldJobSetSuspend: ptr.To(false),
+			oldJobSetExists:  true,
+			expectPatch:      true,
+			expectSSA:        false,
+			patchErr:         fmt.Errorf("patch failed"),
+			wantErr:          true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, ctx := ktesting.NewTestContext(t)
+			var cancel func()
+			ctx, cancel = context.WithCancel(ctx)
+			t.Cleanup(cancel)
+
+			// Track patch and apply calls
+			patchCalled := false
+
+			// Build client with existing JobSet if needed
+			clientBuilder := utiltesting.NewClientBuilder()
+			if tc.oldJobSetExists {
+				oldJobSet := &jobsetv1alpha2.JobSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-trainjob",
+						Namespace: metav1.NamespaceDefault,
+					},
+					Spec: jobsetv1alpha2.JobSetSpec{
+						Suspend: tc.oldJobSetSuspend,
+					},
+				}
+				clientBuilder = clientBuilder.WithObjects(oldJobSet)
+			}
+
+			// Intercept Patch calls
+			clientBuilder = clientBuilder.WithInterceptorFuncs(interceptor.Funcs{
+				Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+					if _, ok := obj.(*jobsetv1alpha2.JobSet); ok {
+						patchCalled = true
+						if tc.patchErr != nil {
+							return tc.patchErr
+						}
+					}
+					return cli.Patch(ctx, obj, patch, opts...)
+				},
+			})
+
+			cli := clientBuilder.Build()
+
+			// Create plugin
+			p, err := New(ctx, cli, nil)
+			if err != nil {
+				t.Fatalf("Failed to initialize JobSet plugin: %v", err)
+			}
+
+			// Create TrainJob with suspend setting
+			trainJob := utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-trainjob").
+				Suspend(ptr.Deref(tc.trainJobSuspend, false)).
+				Obj()
+
+			// Create runtime info with JobSet spec
+			info := &runtime.Info{
+				Labels:      map[string]string{},
+				Annotations: map[string]string{},
+				Scheduler: &runtime.Scheduler{
+					PodLabels:      map[string]string{},
+					PodAnnotations: map[string]string{},
+				},
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:       constants.Node,
+							Count:      ptr.To[int32](1),
+							Containers: make([]runtime.Container, 1),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			}
+
+			// Call Build
+			result, err := p.(framework.ComponentBuilderPlugin).Build(ctx, info, trainJob)
+
+			// Verify error handling
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			// Verify patch was called when expected
+			if tc.expectPatch && !patchCalled {
+				t.Errorf("Expected Patch to be called but it wasn't")
+			}
+			if !tc.expectPatch && patchCalled {
+				t.Errorf("Expected Patch not to be called but it was")
+			}
+
+			// Verify SSA behavior (result != nil means SSA path)
+			if tc.expectSSA {
+				if result == nil {
+					t.Errorf("Expected SSA (non-nil result) but got nil")
+				}
+			} else if !tc.expectPatch {
+				// If no patch and no SSA expected, result should be nil
+				if result != nil {
+					t.Errorf("Expected nil result (no-op) but got non-nil")
+				}
+			}
+		})
+	}
+}
