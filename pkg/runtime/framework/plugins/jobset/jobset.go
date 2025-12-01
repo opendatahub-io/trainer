@@ -44,7 +44,6 @@ import (
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/apply"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
-	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework"
 )
@@ -240,7 +239,7 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		return nil, fmt.Errorf("runtime info or object is missing")
 	}
 
-	// Do not update the JobSet if it already exists and is not suspended
+	// Check if JobSet already exists
 	oldJobSet := &jobsetv1alpha2.JobSet{}
 	if err := j.client.Get(ctx, client.ObjectKeyFromObject(trainJob), oldJobSet); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -248,12 +247,28 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 		oldJobSet = nil
 	}
-	if oldJobSet != nil &&
-		!ptr.Deref(trainJob.Spec.Suspend, false) &&
-		!ptr.Deref(oldJobSet.Spec.Suspend, false) {
-		return nil, nil
+
+	if oldJobSet != nil {
+		oldSuspend := ptr.Deref(oldJobSet.Spec.Suspend, false)
+		newSuspend := ptr.Deref(trainJob.Spec.Suspend, false)
+
+		// Use strategic merge patch for suspend changes to avoid immutable field validation
+		if oldSuspend != newSuspend {
+			patch := client.MergeFrom(oldJobSet.DeepCopy())
+			oldJobSet.Spec.Suspend = ptr.To(newSuspend)
+			if err := j.client.Patch(ctx, oldJobSet, patch); err != nil {
+				return nil, fmt.Errorf("failed to patch JobSet suspend field: %w", err)
+			}
+			return nil, nil
+		}
+
+		// Skip update if both TrainJob and JobSet are already running
+		if !newSuspend && !oldSuspend {
+			return nil, nil
+		}
 	}
 
+	// JobSet doesn't exist - create it with full spec
 	jobSetSpec, ok := runtime.TemplateSpecApply[jobsetv1alpha2ac.JobSetSpecApplyConfiguration](info)
 	if !ok {
 		return nil, nil
@@ -278,21 +293,6 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 				&jobSetSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec.Containers[containerIdx].VolumeMounts,
 				container.VolumeMounts...,
 			)
-		}
-
-		// RHAI-specific: Inject preStop hook for progression tracking on trainer pods
-		// Note: This uses pkg/rhai/progression to keep RHAI logic centralized
-		if ps.Ancestor != nil && *ps.Ancestor == constants.AncestorTrainer {
-			if err := progression.InjectPreStopHookToApplyConfig(
-				jobSetSpec.ReplicatedJobs[psIdx].Template.Spec.Template.Spec,
-				trainJob,
-			); err != nil {
-				log := ctrl.LoggerFrom(ctx)
-				log.Error(err, "Failed to inject preStop hook for progression tracking",
-					"trainJob", trainJob.Name,
-					"namespace", trainJob.Namespace)
-				// Don't fail pod creation, progression tracking is optional
-			}
 		}
 	}
 

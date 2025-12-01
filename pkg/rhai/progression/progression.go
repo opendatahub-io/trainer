@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -411,10 +410,11 @@ func PollAndUpdateProgress(ctx context.Context, c client.Client, reader client.R
 	annotationStatus := ToAnnotationStatus(status)
 
 	// Use Patch to avoid conflicts with main controller
-	patch := client.MergeFrom(trainJob.DeepCopy())
+	oldTrainJob := trainJob.DeepCopy()
 	if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
 		return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
 	}
+	patch := client.MergeFrom(oldTrainJob)
 	if err := c.Patch(ctx, trainJob, patch); err != nil {
 		return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
 	}
@@ -437,14 +437,11 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 		return false
 	}
 
-	// Consider final status captured if:
-	// 1. We have a progress percentage (any value, including <100% for epoch-based training)
-	// 2. Estimated remaining time is 0 (indicates training has ended)
+	// Final status is captured if: progress percentage exists AND (remaining time is 0 OR grace period expired)
 	if status.ProgressPercentage == nil {
 		return false
 	}
 
-	// Check if remaining time is explicitly 0 or summary indicates completion
 	hasZeroRemaining := status.EstimatedRemainingSeconds != nil && *status.EstimatedRemainingSeconds == 0
 	hasCompleteSummary := status.EstimatedRemainingTimeSummary == "complete" ||
 		status.EstimatedRemainingTimeSummary == "0 seconds"
@@ -453,17 +450,14 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 		return true
 	}
 
-	// Also consider captured if job completed/failed AND preStop window has expired
-	// This handles cases where on_train_end() never fired (pod killed, crash, etc.)
-	// Check if we're past the preStop hook duration since last update
+	// Consider captured if sufficient time has passed since last update (handles pod termination/crash)
 	if status.LastUpdatedTime != "" {
 		lastUpdate, err := time.Parse(time.RFC3339, status.LastUpdatedTime)
 		if err == nil {
 			pollInterval := GetMetricsPollInterval(trainJob)
-			preStopDuration := pollInterval*2 + time.Duration(constants.PreStopBufferSecs)*time.Second
-			gracePeriod := preStopDuration + time.Duration(constants.TerminationGraceBufferSecs)*time.Second
+			// Grace period = 3 polling cycles + buffer (allows multiple retry attempts)
+			gracePeriod := pollInterval*3 + time.Duration(constants.TerminationGraceBufferSecs)*time.Second
 
-			// If it's been longer than preStop + grace period, pod is definitely gone
 			if time.Since(lastUpdate) > gracePeriod {
 				return true // Stop trying, preserve last known state
 			}
@@ -473,64 +467,175 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 	return false
 }
 
+// CaptureMetricsFromTerminationMessage reads final metrics from pod's termination message.
+// Called when job completes/fails to capture final state written
+func CaptureMetricsFromTerminationMessage(ctx context.Context, pod *corev1.Pod) (*AnnotationStatus, error) {
+	if pod == nil {
+		return nil, fmt.Errorf("pod is nil")
+	}
+
+	// Look for the trainer container (typically named "node")
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		// Check if this is the trainer container
+		if containerStatus.Name != "node" && containerStatus.Name != "trainer" {
+			continue
+		}
+
+		// Check if container has terminated
+		if containerStatus.State.Terminated == nil {
+			continue
+		}
+
+		// Read termination message
+		message := containerStatus.State.Terminated.Message
+		if message == "" {
+			return nil, fmt.Errorf("termination message is empty for container %s", containerStatus.Name)
+		}
+
+		// Parse JSON from termination message
+		var status AnnotationStatus
+		if err := json.Unmarshal([]byte(message), &status); err != nil {
+			return nil, fmt.Errorf("failed to parse termination message JSON: %w", err)
+		}
+
+		// Validate critical fields
+		if status.ProgressPercentage == nil {
+			return nil, fmt.Errorf("termination message missing progressPercentage")
+		}
+
+		status.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
+
+		return &status, nil
+	}
+
+	return nil, fmt.Errorf("no terminated trainer container found in pod")
+}
+
 func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader client.Reader, trainJob *trainer.TrainJob, completed bool) (bool, error) {
 	if !IsProgressionTrackingEnabled(trainJob) {
 		return false, nil
 	}
 
-	// Try to get final metrics from pod if it still exists
-	pod, err := GetPrimaryPod(ctx, reader, trainJob)
-	if err == nil {
-		metricsPort := GetMetricsPort(trainJob)
-		if status, pollErr := PollTrainingProgress(ctx, pod, metricsPort); pollErr == nil {
-			// Got real metrics from pod - update with final status
-			annotationStatus := ToAnnotationStatus(status)
-			annotationStatus.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
+	log := ctrl.Log.WithName("progression").WithValues("trainjob", trainJob.Name, "namespace", trainJob.Namespace)
+
+	// Get pod (including terminated pods for termination message reading)
+	// For final progress, we need to check terminated pods, not just running ones
+	podList := &corev1.PodList{}
+	if err := reader.List(ctx, podList,
+		client.InNamespace(trainJob.Namespace),
+		client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name}); err != nil {
+		log.V(1).Info("Failed to list pods", "error", err)
+		// Fall through to updateFinalStatus
+	} else if len(podList.Items) > 0 {
+		// Find the primary pod (prefer index-0 pods, or use the first one)
+		var pod *corev1.Pod
+		for i := range podList.Items {
+			p := &podList.Items[i]
+			// Look for index-0 pod (primary in most frameworks)
+			if labels := p.Labels; labels != nil {
+				if idx := labels["jobset.sigs.k8s.io/job-index"]; idx == "0" {
+					pod = p
+					break
+				}
+				if idx := labels["training.kubeflow.org/replica-index"]; idx == "0" {
+					pod = p
+					break
+				}
+			}
+		}
+		if pod == nil {
+			pod = &podList.Items[0] // Fallback to first pod
+		}
+
+		// Priority 1: Try termination message (most authoritative for final state)
+		if terminationStatus, termErr := CaptureMetricsFromTerminationMessage(ctx, pod); termErr == nil {
+			log.Info("Captured final metrics from termination message",
+				"progress", *terminationStatus.ProgressPercentage)
 
 			// Add descriptive summary
 			if completed {
-				// Detect early stop: currentStep < totalSteps
 				earlyStop := false
-				if annotationStatus.CurrentStep != nil && annotationStatus.TotalSteps != nil && *annotationStatus.TotalSteps > 0 {
-					if *annotationStatus.CurrentStep < *annotationStatus.TotalSteps {
+				if terminationStatus.CurrentStep != nil && terminationStatus.TotalSteps != nil && *terminationStatus.TotalSteps > 0 {
+					if *terminationStatus.CurrentStep < *terminationStatus.TotalSteps {
 						earlyStop = true
 					}
 				}
 				if earlyStop {
-					annotationStatus.EstimatedRemainingTimeSummary = "complete (early stopped)"
+					terminationStatus.EstimatedRemainingTimeSummary = "complete (early stopped)"
 				} else {
-					annotationStatus.EstimatedRemainingTimeSummary = "complete"
+					terminationStatus.EstimatedRemainingTimeSummary = "complete"
 				}
 			} else {
-				// For failed jobs: show progress context in summary
 				progressPct := 0
-				if annotationStatus.ProgressPercentage != nil {
-					progressPct = *annotationStatus.ProgressPercentage
+				if terminationStatus.ProgressPercentage != nil {
+					progressPct = *terminationStatus.ProgressPercentage
 				}
-				annotationStatus.EstimatedRemainingTimeSummary = fmt.Sprintf("failed at %d%%", progressPct)
+				terminationStatus.EstimatedRemainingTimeSummary = fmt.Sprintf("failed at %d%%", progressPct)
 			}
 
-			// Use Patch to avoid conflicts with main controller
-			patch := client.MergeFrom(trainJob.DeepCopy())
-			if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
+			// Update annotation with termination message data
+			oldTrainJob := trainJob.DeepCopy()
+			if err := UpdateTrainerStatusAnnotation(trainJob, terminationStatus); err != nil {
 				return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
 			}
+			patch := client.MergeFrom(oldTrainJob)
 			if err := c.Patch(ctx, trainJob, patch); err != nil {
 				return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
 			}
 
 			return true, nil
+		} else {
+			log.V(1).Info("Termination message not available, trying HTTP polling", "error", termErr)
+		}
+
+		// Priority 2: Try HTTP polling (only if pod is still running with IP)
+		if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
+			metricsPort := GetMetricsPort(trainJob)
+			if status, pollErr := PollTrainingProgress(ctx, pod, metricsPort); pollErr == nil {
+				annotationStatus := ToAnnotationStatus(status)
+				annotationStatus.LastUpdatedTime = time.Now().UTC().Format(time.RFC3339)
+
+				// Add descriptive summary
+				if completed {
+					earlyStop := false
+					if annotationStatus.CurrentStep != nil && annotationStatus.TotalSteps != nil && *annotationStatus.TotalSteps > 0 {
+						if *annotationStatus.CurrentStep < *annotationStatus.TotalSteps {
+							earlyStop = true
+						}
+					}
+					if earlyStop {
+						annotationStatus.EstimatedRemainingTimeSummary = "complete (early stopped)"
+					} else {
+						annotationStatus.EstimatedRemainingTimeSummary = "complete"
+					}
+				} else {
+					progressPct := 0
+					if annotationStatus.ProgressPercentage != nil {
+						progressPct = *annotationStatus.ProgressPercentage
+					}
+					annotationStatus.EstimatedRemainingTimeSummary = fmt.Sprintf("failed at %d%%", progressPct)
+				}
+
+				oldTrainJob := trainJob.DeepCopy()
+				if err := UpdateTrainerStatusAnnotation(trainJob, annotationStatus); err != nil {
+					return false, fmt.Errorf("failed to update trainer status annotation: %w", err)
+				}
+				patch := client.MergeFrom(oldTrainJob)
+				if err := c.Patch(ctx, trainJob, patch); err != nil {
+					return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
+				}
+
+				return true, nil
+			}
 		}
 	}
 
-	// Pod not available - update final status using existing metrics
-	// For completed: force remaining time to 0 (no work remains)
-	// For failed: keep remaining time estimate (useful for resume)
-	// Use Patch to avoid conflicts with main controller
-	patch := client.MergeFrom(trainJob.DeepCopy())
+	// Priority 3: Update final status using existing metrics (pod not available or both methods failed)
+	oldTrainJob := trainJob.DeepCopy()
 	if err := updateFinalStatus(trainJob, completed); err != nil {
 		return false, fmt.Errorf("failed to update final status: %w", err)
 	}
+	patch := client.MergeFrom(oldTrainJob)
 	if err := c.Patch(ctx, trainJob, patch); err != nil {
 		return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
 	}
@@ -580,99 +685,6 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 	return UpdateTrainerStatusAnnotation(trainJob, &status)
 }
 
-// InjectPreStopHookToApplyConfig adds a preStop lifecycle hook to the primary pod container
-// using Apply Configuration. This is used by the jobset plugin to inject the hook during pod creation.
-func InjectPreStopHookToApplyConfig(podSpecAC *corev1ac.PodSpecApplyConfiguration, trainJob *trainer.TrainJob) error {
-	if !IsProgressionTrackingEnabled(trainJob) || podSpecAC == nil {
-		return nil
-	}
-
-	if len(podSpecAC.Containers) == 0 {
-		return fmt.Errorf("no containers in pod spec")
-	}
-
-	// Calculate preStop duration based on poll interval
-	pollInterval := GetMetricsPollInterval(trainJob)
-	preStopDuration := pollInterval*2 + time.Duration(constants.PreStopBufferSecs)*time.Second
-	preStopSleep := int(preStopDuration.Seconds())
-
-	// Termination grace must be greater than preStop duration
-	terminationGrace := int64((preStopDuration + time.Duration(constants.TerminationGraceBufferSecs)*time.Second).Seconds())
-
-	// Find the primary trainer container by name (typically "node")
-	containerIdx := -1
-	for i, container := range podSpecAC.Containers {
-		if container.Name != nil && *container.Name == "node" {
-			containerIdx = i
-			break
-		}
-	}
-
-	// Fallback to first container if "node" not found
-	if containerIdx == -1 {
-		containerIdx = 0
-	}
-
-	// Inject preStop hook into the target container
-	lifecycle := corev1ac.Lifecycle().
-		WithPreStop(corev1ac.LifecycleHandler().
-			WithExec(corev1ac.ExecAction().
-				WithCommand("sleep", strconv.Itoa(preStopSleep))))
-
-	podSpecAC.Containers[containerIdx].WithLifecycle(lifecycle)
-
-	// Set termination grace period (use max of existing and calculated)
-	if podSpecAC.TerminationGracePeriodSeconds == nil ||
-		*podSpecAC.TerminationGracePeriodSeconds < terminationGrace {
-		podSpecAC.WithTerminationGracePeriodSeconds(terminationGrace)
-	}
-
-	return nil
-}
-
-// InjectPreStopHook adds a preStop lifecycle hook to the primary pod container.
-// The hook keeps the metrics server alive after training completes, ensuring
-// the controller can capture final metrics before pod termination.
-//
-// PreStop duration is calculated as: (2 × poll_interval) + buffer
-// This guarantees at least 2 poll opportunities after training completion.
-func InjectPreStopHook(podSpec *corev1.PodSpec, trainJob *trainer.TrainJob) error {
-	if !IsProgressionTrackingEnabled(trainJob) {
-		return nil
-	}
-
-	if len(podSpec.Containers) == 0 {
-		return fmt.Errorf("no containers in pod spec")
-	}
-
-	// Inject into primary container (index 0)
-	container := &podSpec.Containers[0]
-
-	// Initialize lifecycle if nil
-	if container.Lifecycle == nil {
-		container.Lifecycle = &corev1.Lifecycle{}
-	}
-
-	// Calculate preStop duration based on poll interval
-	pollInterval := GetMetricsPollInterval(trainJob)
-	preStopDuration := pollInterval*2 + time.Duration(constants.PreStopBufferSecs)*time.Second
-	preStopSleep := int(preStopDuration.Seconds())
-
-	// Add preStop hook
-	container.Lifecycle.PreStop = &corev1.LifecycleHandler{
-		Exec: &corev1.ExecAction{
-			Command: []string{"sleep", strconv.Itoa(preStopSleep)},
-		},
-	}
-
-	// Set termination grace period (must be > preStop duration)
-	terminationGrace := preStopDuration + time.Duration(constants.TerminationGraceBufferSecs)*time.Second
-	terminationGraceSecs := int64(terminationGrace.Seconds())
-	podSpec.TerminationGracePeriodSeconds = &terminationGraceSecs
-
-	return nil
-}
-
 // ReconcileProgression handles progression tracking during TrainJob reconciliation.
 // Returns ctrl.Result for requeue behavior and any errors encountered.
 // This should be called at the end of TrainJob reconciliation when progression tracking is enabled.
@@ -702,20 +714,17 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 	}
 
 	if (isCompleted || isFailed) && !IsFinalStatusCaptured(trainJob) {
-		// Job just completed/failed - capture final metrics
-		// PreStop hook keeps pod alive, so this should succeed
+		// Capture final metrics (termination message + HTTP polling fallback)
 		captured, pollErr := PollAndUpdateFinalProgress(ctx, c, reader, trainJob, isCompleted)
 		if pollErr != nil {
 			log.V(1).Info("Failed to capture final training progress, will retry", "error", pollErr, "completed", isCompleted)
-			// Requeue quickly - pod should still be alive in preStop window
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 		if !captured {
 			log.V(1).Info("Pod not available for final metrics poll, will retry", "completed", isCompleted)
-			// Pod might be in preStop or already terminated, retry a few times
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
-		log.Info("Captured final training progress", "completed", isCompleted)
+		log.Info("Captured final training progress from HTTP poll", "completed", isCompleted)
 	}
 
 	return ctrl.Result{}, nil

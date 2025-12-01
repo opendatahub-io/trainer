@@ -459,6 +459,12 @@ func TestGetPrimaryPod(t *testing.T) {
 					Status: corev1.PodStatus{
 						Phase: corev1.PodRunning,
 						PodIP: "10.0.0.1",
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
 					},
 				},
 			},
@@ -920,7 +926,7 @@ func TestIsFinalStatusCaptured(t *testing.T) {
 			trainJob: &trainer.TrainJob{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						constants.AnnotationTrainerStatus: `{"progressPercentage":100,"currentStep":1000,"totalSteps":1000}`,
+						constants.AnnotationTrainerStatus: `{"progressPercentage":100,"estimatedRemainingSeconds":0,"currentStep":1000,"totalSteps":1000}`,
 					},
 				},
 			},
@@ -1012,6 +1018,12 @@ func TestGetPrimaryPod_DifferentLabelPatterns(t *testing.T) {
 					Status: corev1.PodStatus{
 						Phase: corev1.PodRunning,
 						PodIP: "10.0.0.1",
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
 					},
 				},
 			},
@@ -1040,6 +1052,12 @@ func TestGetPrimaryPod_DifferentLabelPatterns(t *testing.T) {
 					Status: corev1.PodStatus{
 						Phase: corev1.PodRunning,
 						PodIP: "10.0.0.2",
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
 					},
 				},
 			},
@@ -1067,6 +1085,12 @@ func TestGetPrimaryPod_DifferentLabelPatterns(t *testing.T) {
 					Status: corev1.PodStatus{
 						Phase: corev1.PodRunning,
 						PodIP: "10.0.0.3",
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
 					},
 				},
 			},
@@ -1129,6 +1153,601 @@ func TestGetPrimaryPod_DifferentLabelPatterns(t *testing.T) {
 				}
 				if pod.Name != tt.wantPod {
 					t.Errorf("GetPrimaryPod() returned pod %q, want %q", pod.Name, tt.wantPod)
+				}
+			}
+		})
+	}
+}
+
+func TestCaptureMetricsFromTerminationMessage(t *testing.T) {
+	tests := []struct {
+		name      string
+		pod       *corev1.Pod
+		wantErr   bool
+		wantNil   bool
+		checkFunc func(*testing.T, *AnnotationStatus)
+	}{
+		{
+			name:    "nil pod",
+			pod:     nil,
+			wantErr: true,
+			wantNil: true,
+		},
+		{
+			name: "valid termination message with all fields",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "node",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: `{
+										"progressPercentage": 100,
+										"estimatedRemainingSeconds": 0,
+										"currentStep": 124,
+										"totalSteps": 124,
+										"currentEpoch": 1.976,
+										"totalEpochs": 2,
+										"trainMetrics": {"loss": 3.4241},
+										"evalMetrics": {"eval_loss": 3.451}
+									}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			wantNil: false,
+			checkFunc: func(t *testing.T, status *AnnotationStatus) {
+				if status.ProgressPercentage == nil || *status.ProgressPercentage != 100 {
+					t.Errorf("ProgressPercentage = %v, want 100", status.ProgressPercentage)
+				}
+				if status.CurrentStep == nil || *status.CurrentStep != 124 {
+					t.Errorf("CurrentStep = %v, want 124", status.CurrentStep)
+				}
+				if status.TotalSteps == nil || *status.TotalSteps != 124 {
+					t.Errorf("TotalSteps = %v, want 124", status.TotalSteps)
+				}
+				if status.CurrentEpoch == nil || *status.CurrentEpoch != 1.976 {
+					t.Errorf("CurrentEpoch = %v, want 1.976", status.CurrentEpoch)
+				}
+				if len(status.TrainMetrics) == 0 {
+					t.Error("TrainMetrics is empty")
+				}
+				if len(status.EvalMetrics) == 0 {
+					t.Error("EvalMetrics is empty")
+				}
+				if status.LastUpdatedTime == "" {
+					t.Error("LastUpdatedTime should be set")
+				}
+			},
+		},
+		{
+			name: "trainer container name",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "trainer",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: `{"progressPercentage": 50, "currentStep": 50}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			wantNil: false,
+			checkFunc: func(t *testing.T, status *AnnotationStatus) {
+				if status.ProgressPercentage == nil || *status.ProgressPercentage != 50 {
+					t.Errorf("ProgressPercentage = %v, want 50", status.ProgressPercentage)
+				}
+			},
+		},
+		{
+			name: "empty termination message",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "node",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: "",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			wantNil: true,
+		},
+		{
+			name: "invalid JSON in termination message",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "node",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: `{invalid json}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			wantNil: true,
+		},
+		{
+			name: "missing progressPercentage field",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "node",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: `{"currentStep": 100, "totalSteps": 1000}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			wantNil: true,
+		},
+		{
+			name: "container not terminated",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "node",
+							State: corev1.ContainerState{
+								Running: &corev1.ContainerStateRunning{},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			wantNil: true,
+		},
+		{
+			name: "wrong container name",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "sidecar",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: `{"progressPercentage": 100}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			wantNil: true,
+		},
+		{
+			name: "no container statuses",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{},
+				},
+			},
+			wantErr: true,
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			status, err := CaptureMetricsFromTerminationMessage(ctx, tt.pod)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CaptureMetricsFromTerminationMessage() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantNil && status != nil {
+				t.Errorf("CaptureMetricsFromTerminationMessage() returned status, want nil")
+				return
+			}
+
+			if !tt.wantNil && status == nil {
+				t.Error("CaptureMetricsFromTerminationMessage() returned nil status")
+				return
+			}
+
+			if tt.checkFunc != nil && status != nil {
+				tt.checkFunc(t, status)
+			}
+		})
+	}
+}
+
+func TestIsFinalStatusCaptured_WithGracePeriod(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name     string
+		trainJob *trainer.TrainJob
+		want     bool
+	}{
+		{
+			name: "final status with zero remaining seconds",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						constants.AnnotationTrainerStatus: `{
+							"progressPercentage": 100,
+							"estimatedRemainingSeconds": 0,
+							"lastUpdatedTime": "` + now.Format(time.RFC3339) + `"
+						}`,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "final status with complete summary",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						constants.AnnotationTrainerStatus: `{
+							"progressPercentage": 100,
+							"estimatedRemainingTimeSummary": "complete",
+							"lastUpdatedTime": "` + now.Format(time.RFC3339) + `"
+						}`,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "grace period not expired (recent update)",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						constants.AnnotationTrainerStatus: `{
+							"progressPercentage": 50,
+							"estimatedRemainingSeconds": 100,
+							"lastUpdatedTime": "` + now.Add(-1*time.Second).Format(time.RFC3339) + `"
+						}`,
+						constants.AnnotationMetricsPollInterval: "30s",
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "grace period expired (old update)",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						constants.AnnotationTrainerStatus: `{
+							"progressPercentage": 50,
+							"estimatedRemainingSeconds": 100,
+							"lastUpdatedTime": "` + now.Add(-200*time.Second).Format(time.RFC3339) + `"
+						}`,
+						constants.AnnotationMetricsPollInterval: "7s",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "no progress percentage",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						constants.AnnotationTrainerStatus: `{
+							"currentStep": 50,
+							"lastUpdatedTime": "` + now.Format(time.RFC3339) + `"
+						}`,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "incomplete with remaining time",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						constants.AnnotationTrainerStatus: `{
+							"progressPercentage": 75,
+							"estimatedRemainingSeconds": 300,
+							"lastUpdatedTime": "` + now.Format(time.RFC3339) + `"
+						}`,
+					},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsFinalStatusCaptured(tt.trainJob)
+			if got != tt.want {
+				t.Errorf("IsFinalStatusCaptured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPollAndUpdateFinalProgress(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = trainer.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name                  string
+		trainJob              *trainer.TrainJob
+		pods                  []corev1.Pod
+		completed             bool
+		wantProgressPct       *int
+		wantUpdated           bool // Function return value (true = handled, don't retry)
+		wantAnnotationCreated bool // Was annotation actually created/modified
+		wantErr               bool
+	}{
+		{
+			name: "capture from termination message on Succeeded pod",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-job",
+					Namespace: "default",
+					Annotations: map[string]string{
+						constants.AnnotationProgressionTracking: "true",
+						constants.AnnotationMetricsPort:         "28080",
+					},
+				},
+			},
+			pods: []corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-job-node-0-0",
+						Namespace: "default",
+						Labels: map[string]string{
+							"training.kubeflow.org/job-name": "test-job",
+							"jobset.sigs.k8s.io/job-index":   "0",
+						},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodSucceeded,
+						PodIP: "10.0.0.1",
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "node",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										Message: `{"progressPercentage":100,"estimatedRemainingSeconds":0,"currentStep":50,"totalSteps":50,"currentEpoch":1.0,"totalEpochs":1,"trainMetrics":{"loss":0.5},"evalMetrics":{"eval_accuracy":0.95}}`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			completed:             true,
+			wantProgressPct:       nil,
+			wantUpdated:           true,
+			wantAnnotationCreated: false, // Fake client doesn't persist patches
+			wantErr:               false,
+		},
+		{
+			name: "capture from termination message on Failed pod",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "failed-job",
+					Namespace: "default",
+					Annotations: map[string]string{
+						constants.AnnotationProgressionTracking: "true",
+					},
+				},
+			},
+			pods: []corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "failed-job-worker-0",
+						Namespace: "default",
+						Labels: map[string]string{
+							"training.kubeflow.org/job-name":      "failed-job",
+							"training.kubeflow.org/replica-index": "0",
+						},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodFailed,
+						PodIP: "10.0.0.2",
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "node",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										Message: `{"progressPercentage":100,"estimatedRemainingSeconds":0,"currentStep":25,"totalSteps":50}`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			completed:             false,
+			wantProgressPct:       nil,
+			wantUpdated:           true,
+			wantAnnotationCreated: false, // Fake client doesn't persist patches
+			wantErr:               false,
+		},
+		{
+			name: "no termination message and no existing status",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-job",
+					Namespace: "default",
+					Annotations: map[string]string{
+						constants.AnnotationProgressionTracking: "true",
+					},
+				},
+			},
+			pods: []corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-job-node-0",
+						Namespace: "default",
+						Labels: map[string]string{
+							"training.kubeflow.org/job-name": "test-job",
+						},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodSucceeded,
+						PodIP: "10.0.0.3",
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "node",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										Message: "", // No termination message
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			completed:             true,
+			wantProgressPct:       nil,
+			wantUpdated:           true,
+			wantAnnotationCreated: false,
+			wantErr:               false,
+		},
+		{
+			name: "updates existing status when no termination message",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-job",
+					Namespace: "default",
+					Annotations: map[string]string{
+						constants.AnnotationProgressionTracking: "true",
+						constants.AnnotationTrainerStatus:       `{"progressPercentage":85,"currentStep":42,"totalSteps":50}`,
+					},
+				},
+			},
+			pods: []corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-job-node-0",
+						Namespace: "default",
+						Labels: map[string]string{
+							"training.kubeflow.org/job-name": "test-job",
+						},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodSucceeded,
+						PodIP: "10.0.0.4",
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "node",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										Message: "", // No termination message
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			completed:             true,
+			wantProgressPct:       ptrInt(85), // Keeps existing progress
+			wantUpdated:           true,
+			wantAnnotationCreated: true,
+			wantErr:               false,
+		},
+		{
+			name: "progression tracking disabled",
+			trainJob: &trainer.TrainJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-job",
+					Namespace: "default",
+				},
+			},
+			pods:                  []corev1.Pod{},
+			completed:             true,
+			wantUpdated:           false,
+			wantAnnotationCreated: false,
+			wantErr:               false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clientBuilder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.trainJob)
+			for i := range tt.pods {
+				clientBuilder = clientBuilder.WithObjects(&tt.pods[i])
+			}
+			fakeClient := clientBuilder.Build()
+
+			updated, err := PollAndUpdateFinalProgress(context.Background(), fakeClient, fakeClient, tt.trainJob, tt.completed)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("PollAndUpdateFinalProgress() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Check return value (true = handled, don't retry)
+			if updated != tt.wantUpdated {
+				t.Errorf("PollAndUpdateFinalProgress() updated = %v, want %v", updated, tt.wantUpdated)
+			}
+
+			// Fetch the updated TrainJob from the API to check annotations
+			updatedTrainJob := &trainer.TrainJob{}
+			if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(tt.trainJob), updatedTrainJob); err != nil {
+				t.Errorf("Failed to fetch updated TrainJob: %v", err)
+				return
+			}
+
+			// Check if annotation was actually created/modified
+			statusJSON, exists := updatedTrainJob.Annotations[constants.AnnotationTrainerStatus]
+			if tt.wantAnnotationCreated && !exists {
+				t.Errorf("Expected trainerStatus annotation to be created but not found")
+				return
+			}
+			if !tt.wantAnnotationCreated && exists {
+				if _, hadAnnotation := tt.trainJob.Annotations[constants.AnnotationTrainerStatus]; !hadAnnotation {
+					t.Errorf("Expected no new trainerStatus annotation but found one: %s", statusJSON)
+					return
+				}
+			}
+
+			// Validate progress percentage if annotation exists and expected value is set
+			if exists && tt.wantProgressPct != nil {
+				var status AnnotationStatus
+				if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+					t.Errorf("Failed to parse trainerStatus JSON: %v", err)
+					return
+				}
+
+				if status.ProgressPercentage == nil {
+					t.Errorf("Expected progressPercentage to be set")
+					return
+				}
+
+				if *status.ProgressPercentage != *tt.wantProgressPct {
+					t.Errorf("PollAndUpdateFinalProgress() progressPercentage = %v, want %v", *status.ProgressPercentage, *tt.wantProgressPct)
 				}
 			}
 		})
