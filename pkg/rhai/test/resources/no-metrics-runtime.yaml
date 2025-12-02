@@ -21,16 +21,17 @@ spec:
                 spec:
                   containers:
                     - name: node
-                      image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+                      image: quay.io/modh/training:py311-cuda124-torch251
                       command:
                         - python
                         - "-c"
                         - |
                           import time
                           import sys
+                          import json
 
-                          # This job does NOT expose metrics endpoint
-                          # Controller should handle connection errors gracefully
+                          # Test fallback when HTTP metrics unavailable
+                          # Only writes termination message (no HTTP server)
                           print("Starting training WITHOUT metrics server...")
 
                           # Fast simulation (5 seconds total)
@@ -41,5 +42,24 @@ spec:
                                   print(f"Step {step}/{total_steps} (no metrics exposed)")
 
                           print("Training completed (no metrics were exposed)")
+
+                          # Write final metrics to termination message
+                          try:
+                              termination_message = {
+                                  "progressPercentage": 100,
+                                  "estimatedRemainingSeconds": 0,
+                                  "currentStep": total_steps,
+                                  "totalSteps": total_steps,
+                                  "currentEpoch": 1.0,
+                                  "totalEpochs": 1,
+                                  "trainMetrics": {},
+                                  "evalMetrics": {}
+                              }
+                              with open("/dev/termination-log", "w") as f:
+                                  json.dump(termination_message, f)
+                              print("Final metrics written to termination message")
+                          except Exception as e:
+                              print(f"Warning: Failed to write termination message: {e}")
+
                           sys.exit(0)
                   restartPolicy: Never
