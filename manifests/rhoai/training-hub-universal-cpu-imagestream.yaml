@@ -1,15 +1,14 @@
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:
-  name: training-hub-universal-cuda
+  name: training-hub-universal-cpu
   labels:
     opendatahub.io/notebook-image: "true"
   annotations:
     opendatahub.io/notebook-image-url: "https://github.com/opendatahub-io/distributed-workloads/tree/main/images/universal/training"
-    opendatahub.io/notebook-image-name: "Training | Jupyter | PyTorch | CUDA | Python"
-    opendatahub.io/notebook-image-desc: "Training runtime image for CUDA-based fine-tuning and distributed training."
-    opendatahub.io/notebook-image-order: "1"
-    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/notebook-image-name: "Training | Jupyter | PyTorch | CPU | Python"
+    opendatahub.io/notebook-image-desc: "Training runtime image for CPU-based fine-tuning and distributed training."
+    opendatahub.io/notebook-image-order: "3"
 spec:
   lookupPolicy:
     local: true
@@ -18,21 +17,17 @@ spec:
       annotations:
         opendatahub.io/notebook-software: |
           [
-            {"name": "CUDA", "version": "12.8"},
             {"name": "Python", "version": "v3.12"},
             {"name": "PyTorch", "version": "2.8.0"},
-            {"name": "Kubeflow SDK", "version": "0.2.0"}
+            {"name": "Kubeflow SDK", "version": "0.2.0"},
             {"name": "Training Hub", "version": "v0.3.0"}
           ]
         opendatahub.io/notebook-python-dependencies: |
           [
             {"name": "jupyterlab", "version": "4.4.4"},
-            {"name": "flash-attn", "version": "2.8.3"},
             {"name": "transformers", "version": "4.57.1"},
             {"name": "accelerate", "version": "1.10.0"},
-            {"name": "liger-kernel", "version": "0.6.2"},
             {"name": "peft", "version": "0.17.0"},
-            {"name": "triton", "version": "3.4.0"},
             {"name": "trl", "version": "0.21.0"},
             {"name": "numpy", "version": "2.3.5"},
             {"name": "pandas", "version": "2.3.3"},
@@ -42,6 +37,6 @@ spec:
         openshift.io/imported-from: quay.io/opendatahub/odh-training-th03-cuda128-torch28-py312-rhel9
       from:
         kind: DockerImage
-        name: odh-kubeflow-trainer-universal-workbench-image-cuda
+        name: odh-kubeflow-trainer-universal-workbench-image-cpu
       referencePolicy:
         type: Source

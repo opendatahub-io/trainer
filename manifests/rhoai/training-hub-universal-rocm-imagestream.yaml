@@ -1,0 +1,43 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: training-hub-universal-rocm
+  labels:
+    opendatahub.io/notebook-image: "true"
+  annotations:
+    opendatahub.io/notebook-image-url: "https://github.com/opendatahub-io/distributed-workloads/tree/main/images/universal/training"
+    opendatahub.io/notebook-image-name: "Training | Jupyter | PyTorch | ROCm | Python"
+    opendatahub.io/notebook-image-desc: "Training runtime image for ROCm-based fine-tuning and distributed training."
+    opendatahub.io/notebook-image-order: "2"
+    opendatahub.io/recommended-accelerators: '["amd.com/gpu"]'
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: "2025.1"
+      annotations:
+        opendatahub.io/notebook-software: |
+          [
+            {"name": "ROCm", "version": "6.4"},
+            {"name": "Python", "version": "v3.12"},
+            {"name": "PyTorch", "version": "2.8.0"},
+            {"name": "Kubeflow SDK", "version": "0.2.0"}
+          ]
+        opendatahub.io/notebook-python-dependencies: |
+          [
+            {"name": "jupyterlab", "version": "4.4.9"},
+            {"name": "transformers", "version": "4.55.2"},
+            {"name": "accelerate", "version": "1.10.0"},
+            {"name": "liger-kernel", "version": "0.5.10"},
+            {"name": "peft", "version": "0.17.0"},
+            {"name": "trl", "version": "0.21.0"},
+            {"name": "deepspeed", "version": "0.14.3"},
+            {"name": "datasets", "version": "4.0.0"},
+            {"name": "tensorboard", "version": "2.19.0"}
+          ]
+        openshift.io/imported-from: quay.io/mstoklus/workbench-images
+      from:
+        kind: DockerImage
+        name: odh-kubeflow-trainer-universal-workbench-image-rocm
+      referencePolicy:
+        type: Source

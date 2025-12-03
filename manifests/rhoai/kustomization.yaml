@@ -30,13 +30,39 @@ replacements:
     kind: ConfigMap
     name: rhoai-config
     version: v1
-    fieldPath: data.odh-kubeflow-trainer-universal-workbench-image
+    fieldPath: data.odh-kubeflow-trainer-universal-workbench-image-cuda
   targets:
   - select:
       group: image.openshift.io
       version: v1
       kind: ImageStream
       name: training-hub-universal-cuda
+    fieldPaths:
+    - spec.tags.0.from.name
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.odh-kubeflow-trainer-universal-workbench-image-rocm
+  targets:
+  - select:
+      group: image.openshift.io
+      version: v1
+      kind: ImageStream
+      name: training-hub-universal-rocm
+    fieldPaths:
+    - spec.tags.0.from.name
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.odh-kubeflow-trainer-universal-workbench-image-cpu
+  targets:
+  - select:
+      group: image.openshift.io
+      version: v1
+      kind: ImageStream
+      name: training-hub-universal-cpu
     fieldPaths:
     - spec.tags.0.from.name
 
@@ -55,6 +81,8 @@ resources:
 # - ../third-party/jobset #uncomment if jobset should be bundled under kubeflow trainer controller manager
 - runtimes
 - training-hub-universal-cuda-imagestream.yaml
+- training-hub-universal-rocm-imagestream.yaml
+- training-hub-universal-cpu-imagestream.yaml
 - kubeflow-training-roles.yaml
 - monitor.yaml
 
