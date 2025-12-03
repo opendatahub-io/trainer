@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	pkgconstants "github.com/kubeflow/trainer/v2/pkg/constants"
 	"github.com/kubeflow/trainer/v2/pkg/rhai/constants"
 )
 
@@ -477,7 +478,7 @@ func CaptureMetricsFromTerminationMessage(ctx context.Context, pod *corev1.Pod) 
 	// Look for the trainer container (typically named "node")
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		// Check if this is the trainer container
-		if containerStatus.Name != "node" && containerStatus.Name != "trainer" {
+		if containerStatus.Name != pkgconstants.Node {
 			continue
 		}
 

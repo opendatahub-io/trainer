@@ -1225,12 +1225,12 @@ func TestCaptureMetricsFromTerminationMessage(t *testing.T) {
 			},
 		},
 		{
-			name: "trainer container name",
+			name: "node container name",
 			pod: &corev1.Pod{
 				Status: corev1.PodStatus{
 					ContainerStatuses: []corev1.ContainerStatus{
 						{
-							Name: "trainer",
+							Name: "node",
 							State: corev1.ContainerState{
 								Terminated: &corev1.ContainerStateTerminated{
 									Message: `{"progressPercentage": 50, "currentStep": 50}`,
