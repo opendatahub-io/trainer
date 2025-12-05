@@ -32,33 +32,37 @@ import (
 )
 
 var (
-	k8sClient client.Client
-	ctx       context.Context
-	testNs    *corev1.Namespace
+	k8sClient     client.Client
+	ctx           context.Context
+	testNs        *corev1.Namespace
+	suiteHasFailed bool
 )
 
 func TestRHAIE2E(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
+
+	ginkgo.ReportAfterEach(func(report ginkgo.SpecReport) {
+		if report.Failed() {
+			suiteHasFailed = true
+		}
+	})
+
 	ginkgo.RunSpecs(t, "RHAI Progression Tracking E2E Suite")
 }
 
 var _ = ginkgo.BeforeSuite(func() {
 	ctx = context.Background()
 
-	// Get Kubernetes config
 	cfg := config.GetConfigOrDie()
 	gomega.ExpectWithOffset(1, cfg).NotTo(gomega.BeNil())
 
-	// Add Trainer APIs to scheme
 	err := trainer.AddToScheme(scheme.Scheme)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
-	// Configure k8s client
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(k8sClient).NotTo(gomega.BeNil())
 
-	// Create shared test namespace for all tests
 	testNs = &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "rhai-e2e-progression-",
@@ -69,9 +73,16 @@ var _ = ginkgo.BeforeSuite(func() {
 })
 
 var _ = ginkgo.AfterSuite(func() {
-	// Cleanup shared test namespace
-	if testNs != nil {
-		ginkgo.GinkgoWriter.Printf("Cleaning up test namespace: %s\n", testNs.Name)
-		gomega.Expect(k8sClient.Delete(ctx, testNs)).To(gomega.Succeed())
+	// Cleanup namespace only on success; keep for debugging on failure
+	if testNs != nil && k8sClient != nil {
+		if !suiteHasFailed {
+			ginkgo.GinkgoWriter.Printf("✓ All tests passed - cleaning up: %s\n", testNs.Name)
+			if err := k8sClient.Delete(ctx, testNs); err != nil {
+				ginkgo.GinkgoWriter.Printf("Warning: Failed to delete namespace %s: %v\n", testNs.Name, err)
+			}
+		} else {
+			ginkgo.GinkgoWriter.Printf("✗ Tests failed - keeping namespace for debugging: %s\n", testNs.Name)
+			ginkgo.GinkgoWriter.Printf("  To cleanup: oc delete namespace %s\n", testNs.Name)
+		}
 	}
 })

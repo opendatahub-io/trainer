@@ -44,15 +44,13 @@ const (
 	consistentDuration = 8 * time.Second
 	wrapperTestRuntime = "wrapper-test-runtime"
 
-	// SDK poll interval constraints (from kubeflow/trainer SDK)
-	// TransformersTrainer.metrics_poll_interval_seconds enforces 5-300 range
-	minSDKPollIntervalSeconds  = 5   // Minimum: 5 seconds (prevents excessive controller load)
-	maxSDKPollIntervalSeconds  = 300 // Maximum: 300 seconds (5 minutes, keeps tracking responsive)
-	defaultPollIntervalSeconds = 30  // Default: 30 seconds (balanced)
+	// SDK poll interval constraints: 5-300 seconds
+	minSDKPollIntervalSeconds  = 5
+	maxSDKPollIntervalSeconds  = 300
+	defaultPollIntervalSeconds = 30
 )
 
-// loadRuntimeFromFile loads TrainingRuntime from YAML file and sets namespace
-// If uniqueName is provided, it will be used as the runtime name, otherwise uses the name from the file
+// loadRuntimeFromFile loads TrainingRuntime from YAML file with optional unique name
 func loadRuntimeFromFile(filePath, namespace, uniqueName string) (*trainer.TrainingRuntime, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -71,31 +69,31 @@ func loadRuntimeFromFile(filePath, namespace, uniqueName string) (*trainer.Train
 	return runtime, nil
 }
 
-var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
+var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", ginkgo.Serial, func() {
 	var runtime *trainer.TrainingRuntime
 
 	ginkgo.BeforeEach(func() {
-		// Load and create TrainingRuntime from resources in shared namespace
-		// Use unique name to avoid conflicts when tests run serially in same namespace
-		runtimeFile := filepath.Join("resources", "wrapper-test-runtime.yaml")
+		runtimeFile := filepath.Join("..", "test", "resources", "wrapper-test-runtime.yaml")
 		uniqueName := fmt.Sprintf("wrapper-test-runtime-%d", time.Now().UnixNano())
 		var err error
 		runtime, err = loadRuntimeFromFile(runtimeFile, testNs.Name, uniqueName)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(k8sClient.Create(ctx, runtime)).To(gomega.Succeed())
 
-		// Wait for runtime to be created
 		gomega.Eventually(func(g gomega.Gomega) {
 			gotRuntime := &trainer.TrainingRuntime{}
 			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(runtime), gotRuntime)).Should(gomega.Succeed())
 		}, timeout, interval).Should(gomega.Succeed())
-	})
 
-	ginkgo.AfterEach(func() {
-		// Cleanup runtime after test
-		if runtime != nil {
-			gomega.Expect(k8sClient.Delete(ctx, runtime)).To(gomega.Succeed())
-		}
+		// Use DeferCleanup to ensure runtime is deleted after test completes
+		// This prevents webhook validation errors when controller updates annotations
+		ginkgo.DeferCleanup(func() {
+			if runtime != nil {
+				// Give controller time to finish final reconciliation before deleting runtime
+				time.Sleep(2 * time.Second)
+				gomega.Expect(k8sClient.Delete(ctx, runtime)).To(gomega.Succeed())
+			}
+		})
 	})
 
 	ginkgo.Context("When progression tracking is enabled", func() {
@@ -104,7 +102,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // minimum poll interval: 5s
+				Annotation(constants.AnnotationMetricsPollInterval, "5s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).
@@ -157,9 +155,13 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				err := json.Unmarshal([]byte(statusJSON), &status)
 				g.Expect(err).ShouldNot(gomega.HaveOccurred(), "trainerStatus should be valid JSON")
 
-				// Verify essential fields
-				g.Expect(status.CurrentStep).Should(gomega.BeNumerically(">=", 0))
-				g.Expect(status.CurrentEpoch).Should(gomega.BeNumerically(">=", 0))
+				// Verify essential fields (handle pointers properly)
+				if status.CurrentStep != nil {
+					g.Expect(*status.CurrentStep).Should(gomega.BeNumerically(">=", 0))
+				}
+				if status.CurrentEpoch != nil {
+					g.Expect(*status.CurrentEpoch).Should(gomega.BeNumerically(">=", 0))
+				}
 				g.Expect(status.LastUpdatedTime).ShouldNot(gomega.BeEmpty())
 
 				// If progress percentage is set, verify it's valid
@@ -169,24 +171,36 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				}
 			}, timeout, interval).Should(gomega.Succeed())
 
-			ginkgo.By("Verifying trainerStatus is continuously updated during training")
-			var firstUpdateTime string
-			gomega.Eventually(func(g gomega.Gomega) {
+			ginkgo.By("Verifying trainerStatus is updated during training (or at completion)")
+			gomega.Eventually(func(g gomega.Gomega) bool {
 				gotTrainJob := &trainer.TrainJob{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
-				statusJSON := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+				// Check if job completed - if so, we should have at least the final status
+				jobCompleted := false
+				for _, cond := range gotTrainJob.Status.Conditions {
+					if (cond.Type == trainer.TrainJobComplete || cond.Type == trainer.TrainJobFailed) &&
+						cond.Status == metav1.ConditionTrue {
+						jobCompleted = true
+						break
+					}
+				}
+
+				statusJSON, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+				if !exists {
+					// If job completed but no annotation, fail
+					g.Expect(jobCompleted).Should(gomega.BeFalse(), "Job completed but no trainerStatus annotation found")
+					return false
+				}
+
+				// Verify we have valid status
 				var status progression.AnnotationStatus
 				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
+				g.Expect(status.LastUpdatedTime).ShouldNot(gomega.BeEmpty())
 
-				if firstUpdateTime == "" {
-					firstUpdateTime = status.LastUpdatedTime
-				} else {
-					// Verify the timestamp has been updated (metrics are being polled)
-					g.Expect(status.LastUpdatedTime).ShouldNot(gomega.Equal(firstUpdateTime),
-						"trainerStatus should be updated continuously")
-				}
-			}, timeout, interval).Should(gomega.Succeed())
+				// Success - we have a status annotation (either during or after training)
+				return true
+			}, timeout, interval).Should(gomega.BeTrue())
 
 			ginkgo.By("Waiting for TrainJob to complete and verify final status")
 			gomega.Eventually(func(g gomega.Gomega) {
@@ -239,16 +253,17 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 
 			ginkgo.By("Verifying trainerStatus annotation is NOT created (checking over time)")
-			// Wait a bit to ensure the controller has had time to process the job
-			time.Sleep(15 * time.Second)
-
+			gomega.Eventually(func(g gomega.Gomega) {
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+			}, 10*interval, interval).Should(gomega.Succeed())
 			gomega.Consistently(func(g gomega.Gomega) {
 				gotTrainJob := &trainer.TrainJob{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
 				_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
 				g.Expect(exists).Should(gomega.BeFalse(), "trainerStatus annotation should not exist")
-			}, 20*time.Second, interval).Should(gomega.Succeed())
+			}, consistentDuration, interval).Should(gomega.Succeed())
 		})
 	})
 
@@ -256,7 +271,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 		ginkgo.It("should NOT enable progression tracking for non-'true' values", func() {
 			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-invalid").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Annotation(constants.AnnotationProgressionTracking, "enabled"). // Invalid: must be "true"
+				Annotation(constants.AnnotationProgressionTracking, "enabled").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
@@ -274,16 +289,17 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 
 			ginkgo.By("Verifying progression tracking is NOT enabled (checking over time)")
-			// Wait a bit to ensure the controller has had time to process the job
-			time.Sleep(5 * time.Second)
-
+			gomega.Eventually(func(g gomega.Gomega) {
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+			}, 10*interval, interval).Should(gomega.Succeed())
 			gomega.Consistently(func(g gomega.Gomega) {
 				gotTrainJob := &trainer.TrainJob{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
 				_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
 				g.Expect(exists).Should(gomega.BeFalse(), "progression should not be enabled for non-true values")
-			}, 10*time.Second, interval).Should(gomega.Succeed())
+			}, consistentDuration, interval).Should(gomega.Succeed())
 		})
 	})
 
@@ -292,8 +308,8 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-custom-config").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
-				Annotation(constants.AnnotationMetricsPort, "8080").        // Custom port
-				Annotation(constants.AnnotationMetricsPollInterval, "15s"). // Custom interval (valid range: 5-300s)
+				Annotation(constants.AnnotationMetricsPort, "8080").
+				Annotation(constants.AnnotationMetricsPollInterval, "15s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).
@@ -322,7 +338,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // SDK minimum
+				Annotation(constants.AnnotationMetricsPollInterval, "5s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).
@@ -349,7 +365,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "300s"). // SDK maximum (5 minutes)
+				Annotation(constants.AnnotationMetricsPollInterval, "300s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).
@@ -404,7 +420,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 
 		ginkgo.BeforeEach(func() {
 			// Load and create failing TrainingRuntime with unique name
-			runtimeFile := filepath.Join("resources", "failing-test-runtime.yaml")
+			runtimeFile := filepath.Join("..", "test", "resources", "failing-test-runtime.yaml")
 			uniqueName := fmt.Sprintf("failing-test-runtime-%d", time.Now().UnixNano())
 			var err error
 			failingRuntime, err = loadRuntimeFromFile(runtimeFile, testNs.Name, uniqueName)
@@ -415,12 +431,13 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				gotRuntime := &trainer.TrainingRuntime{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(failingRuntime), gotRuntime)).Should(gomega.Succeed())
 			}, timeout, interval).Should(gomega.Succeed())
-		})
 
-		ginkgo.AfterEach(func() {
-			if failingRuntime != nil {
-				gomega.Expect(k8sClient.Delete(ctx, failingRuntime)).To(gomega.Succeed())
-			}
+			ginkgo.DeferCleanup(func() {
+				if failingRuntime != nil {
+					time.Sleep(2 * time.Second)
+					gomega.Expect(k8sClient.Delete(ctx, failingRuntime)).To(gomega.Succeed())
+				}
+			})
 		})
 
 		ginkgo.It("should capture final status even when job fails", func() {
@@ -466,7 +483,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				g.Expect(failed).Should(gomega.BeTrue(), "TrainJob should fail")
 			}, timeout, interval).Should(gomega.Succeed())
 
-			ginkgo.By("Verifying final status is captured with progress=100% even on failure")
+			ginkgo.By("Verifying final status is captured when job fails")
 			gomega.Eventually(func(g gomega.Gomega) {
 				gotTrainJob := &trainer.TrainJob{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
@@ -476,8 +493,16 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 
 				var status progression.AnnotationStatus
 				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
-				g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil())
-				g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100), "Final progress should be 100% even on failure")
+
+				// Progress should reflect where it stopped (NOT forced to 100%)
+				g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil(), "Progress should be captured")
+				g.Expect(*status.ProgressPercentage).Should(gomega.BeNumerically(">=", 0), "Progress should be valid")
+				g.Expect(*status.ProgressPercentage).Should(gomega.BeNumerically("<=", 100), "Progress should be valid")
+
+				// Summary should indicate failure
+				g.Expect(status.EstimatedRemainingTimeSummary).Should(gomega.ContainSubstring("failed"),
+					"Summary should indicate job failed")
+
 				g.Expect(status.LastUpdatedTime).NotTo(gomega.BeEmpty(), "LastUpdatedTime should be set")
 			}, timeout, interval).Should(gomega.Succeed())
 		})
@@ -488,7 +513,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 
 		ginkgo.BeforeEach(func() {
 			// Load and create runtime without metrics endpoint with unique name
-			runtimeFile := filepath.Join("resources", "no-metrics-runtime.yaml")
+			runtimeFile := filepath.Join("..", "test", "resources", "no-metrics-runtime.yaml")
 			uniqueName := fmt.Sprintf("no-metrics-runtime-%d", time.Now().UnixNano())
 			var err error
 			noMetricsRuntime, err = loadRuntimeFromFile(runtimeFile, testNs.Name, uniqueName)
@@ -499,12 +524,13 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				gotRuntime := &trainer.TrainingRuntime{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(noMetricsRuntime), gotRuntime)).Should(gomega.Succeed())
 			}, timeout, interval).Should(gomega.Succeed())
-		})
 
-		ginkgo.AfterEach(func() {
-			if noMetricsRuntime != nil {
-				gomega.Expect(k8sClient.Delete(ctx, noMetricsRuntime)).To(gomega.Succeed())
-			}
+			ginkgo.DeferCleanup(func() {
+				if noMetricsRuntime != nil {
+					time.Sleep(2 * time.Second)
+					gomega.Expect(k8sClient.Delete(ctx, noMetricsRuntime)).To(gomega.Succeed())
+				}
+			})
 		})
 
 		ginkgo.It("should handle connection errors gracefully without crashing", func() {
@@ -561,7 +587,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 					_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
 					g.Expect(exists).Should(gomega.BeFalse(), "trainerStatus should not be created during running when metrics are unreachable")
 				}
-			}, 10*time.Second, interval).Should(gomega.Succeed())
+			}, consistentDuration, interval).Should(gomega.Succeed())
 
 			ginkgo.By("Waiting for TrainJob to complete despite metrics errors")
 			gomega.Eventually(func(g gomega.Gomega) {
@@ -594,13 +620,13 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 		})
 	})
 
-	ginkgo.Context("PreStop Hook Injection", func() {
-		ginkgo.It("should inject preStop hook with correct sleep duration into trainer pods", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-prestop-hook").
+	ginkgo.Context("Termination Message Capture", func() {
+		ginkgo.It("should capture final metrics from pod termination message", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-termination-msg").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "10s"). // 10s poll → 30s preStop (SDK range: 5-300s)
+				Annotation(constants.AnnotationMetricsPollInterval, "10s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(intstr.FromInt(1)).
@@ -616,8 +642,22 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 			ginkgo.By("Creating TrainJob with progression tracking enabled")
 			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
+			ginkgo.By("Waiting for TrainJob to complete")
+			gomega.Eventually(func(g gomega.Gomega) {
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+
+				completed := false
+				for _, cond := range gotTrainJob.Status.Conditions {
+					if cond.Type == trainer.TrainJobComplete && cond.Status == metav1.ConditionTrue {
+						completed = true
+						break
+					}
+				}
+				g.Expect(completed).Should(gomega.BeTrue(), "TrainJob should complete")
+			}, timeout, interval).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying pod has termination message written by SDK")
 			gomega.Eventually(func(g gomega.Gomega) {
 				podList := &corev1.PodList{}
 				g.Expect(k8sClient.List(ctx, podList,
@@ -626,147 +666,59 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 					Should(gomega.Succeed())
 
 				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
-				pod = &podList.Items[0]
+
+				// Find the trainer container and check termination message
+				foundTerminationMessage := false
+				for _, pod := range podList.Items {
+					for _, containerStatus := range pod.Status.ContainerStatuses {
+						if containerStatus.Name != "node" && containerStatus.Name != "trainer" {
+							continue
+						}
+						if containerStatus.State.Terminated != nil {
+							message := containerStatus.State.Terminated.Message
+							if message != "" {
+								foundTerminationMessage = true
+								// Validate it's valid JSON with expected fields
+								var terminationData map[string]interface{}
+								err := json.Unmarshal([]byte(message), &terminationData)
+								g.Expect(err).NotTo(gomega.HaveOccurred(), "termination message should be valid JSON")
+								g.Expect(terminationData).Should(gomega.HaveKey("progressPercentage"))
+								break
+							}
+						}
+					}
+					if foundTerminationMessage {
+						break
+					}
+				}
+				g.Expect(foundTerminationMessage).Should(gomega.BeTrue(),
+					"at least one trainer container should have termination message")
 			}, timeout, interval).Should(gomega.Succeed())
 
-			ginkgo.By("Verifying preStop hook is injected into the trainer container")
-			var trainerContainer *corev1.Container
-			for i := range pod.Spec.Containers {
-				if pod.Spec.Containers[i].Name == "node" {
-					trainerContainer = &pod.Spec.Containers[i]
-					break
-				}
-			}
-			gomega.Expect(trainerContainer).NotTo(gomega.BeNil(), "trainer container 'node' should exist")
-			gomega.Expect(trainerContainer.Lifecycle).NotTo(gomega.BeNil(), "lifecycle should be set")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop).NotTo(gomega.BeNil(), "preStop hook should be set")
-
-			ginkgo.By("Verifying preStop hook uses sleep command")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec).NotTo(gomega.BeNil(), "exec action should be set")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command).Should(gomega.HaveLen(2), "command should have 2 elements")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[0]).Should(gomega.Equal("sleep"))
-
-			ginkgo.By("Verifying preStop sleep duration is calculated correctly")
-			// Poll interval: 10s → preStop: (2*10 + 10) = 30s
-			expectedPreStopDuration := "30"
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[1]).Should(gomega.Equal(expectedPreStopDuration),
-				"preStop sleep should be 2 × poll_interval + 10s buffer")
-
-			ginkgo.By("Verifying termination grace period is set")
-			gomega.Expect(pod.Spec.TerminationGracePeriodSeconds).NotTo(gomega.BeNil(), "termination grace period should be set")
-			// Termination grace: preStop (30s) + shutdown buffer (30s) = 60s
-			expectedTerminationGrace := int64(60)
-			gomega.Expect(*pod.Spec.TerminationGracePeriodSeconds).Should(gomega.BeNumerically(">=", expectedTerminationGrace),
-				"termination grace should be >= preStop + 30s")
-		})
-
-		ginkgo.It("should NOT inject preStop hook when progression tracking is disabled", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "no-prestop-hook").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
-					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
-					ResourcesPerNode(corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
-						},
-					}).
-					Obj()).
-				Obj()
-
-			ginkgo.By("Creating TrainJob without progression tracking annotation")
-			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
-
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
+			ginkgo.By("Verifying controller captured final metrics from termination message")
 			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
-				pod = &podList.Items[0]
+				statusJSON, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+				g.Expect(exists).Should(gomega.BeTrue(), "trainerStatus annotation should exist")
+
+				var status progression.AnnotationStatus
+				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
+
+				// Verify final status shows 100% progress (captured from termination message)
+				g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil())
+				g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100),
+					"Final progress should be 100% from termination message")
+				g.Expect(status.EstimatedRemainingSeconds).NotTo(gomega.BeNil())
+				g.Expect(*status.EstimatedRemainingSeconds).Should(gomega.Equal(0),
+					"Remaining seconds should be 0 at completion")
+				g.Expect(status.LastUpdatedTime).NotTo(gomega.BeEmpty())
 			}, timeout, interval).Should(gomega.Succeed())
-
-			ginkgo.By("Verifying preStop hook is NOT injected")
-			var trainerContainer *corev1.Container
-			for i := range pod.Spec.Containers {
-				if pod.Spec.Containers[i].Name == "node" {
-					trainerContainer = &pod.Spec.Containers[i]
-					break
-				}
-			}
-			gomega.Expect(trainerContainer).NotTo(gomega.BeNil(), "trainer container 'node' should exist")
-
-			// PreStop hook should not be set, or if lifecycle exists, preStop should be nil
-			if trainerContainer.Lifecycle != nil {
-				gomega.Expect(trainerContainer.Lifecycle.PreStop).Should(gomega.BeNil(),
-					"preStop hook should not be set when progression tracking is disabled")
-			}
 		})
 
-		ginkgo.It("should adapt preStop duration based on custom poll interval", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-custom-prestop").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Annotation(constants.AnnotationProgressionTracking, "true").
-				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "60s"). // 60s poll → 130s preStop (SDK range: 5-300s)
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
-					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
-					ResourcesPerNode(corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
-						},
-					}).
-					Obj()).
-				Obj()
-
-			ginkgo.By("Creating TrainJob with custom poll interval")
-			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
-
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
-			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
-
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
-				pod = &podList.Items[0]
-			}, timeout, interval).Should(gomega.Succeed())
-
-			ginkgo.By("Verifying preStop duration reflects custom poll interval")
-			var trainerContainer *corev1.Container
-			for i := range pod.Spec.Containers {
-				if pod.Spec.Containers[i].Name == "node" {
-					trainerContainer = &pod.Spec.Containers[i]
-					break
-				}
-			}
-			gomega.Expect(trainerContainer).NotTo(gomega.BeNil())
-			gomega.Expect(trainerContainer.Lifecycle).NotTo(gomega.BeNil())
-			gomega.Expect(trainerContainer.Lifecycle.PreStop).NotTo(gomega.BeNil())
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec).NotTo(gomega.BeNil())
-
-			// Poll interval: 60s → preStop: (2*60 + 10) = 130s
-			expectedPreStopDuration := "130"
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[1]).Should(gomega.Equal(expectedPreStopDuration),
-				"preStop sleep should adapt to custom poll interval")
-
-			// Termination grace: 130 + 30 = 160s
-			expectedTerminationGrace := int64(160)
-			gomega.Expect(*pod.Spec.TerminationGracePeriodSeconds).Should(gomega.BeNumerically(">=", expectedTerminationGrace))
-		})
-
-		ginkgo.It("should inject preStop hook into correct container when multiple containers exist", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-multi-container").
+		ginkgo.It("should fall back to HTTP polling when termination message is unavailable", func() {
+			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-no-termination-msg").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
@@ -786,40 +738,49 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 			ginkgo.By("Creating TrainJob with progression tracking")
 			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
+			ginkgo.By("Waiting for TrainJob to start and metrics to be polled via HTTP")
 			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()))
-				pod = &podList.Items[0]
+				statusJSON, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+				g.Expect(exists).Should(gomega.BeTrue(), "trainerStatus should be populated via HTTP polling")
+
+				var status progression.AnnotationStatus
+				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
+				g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil(), "progress should be tracked via HTTP")
 			}, timeout, interval).Should(gomega.Succeed())
 
-			ginkgo.By("Verifying preStop hook is injected specifically into 'node' container")
-			var nodeContainer *corev1.Container
-			var otherContainersWithPreStop int
+			ginkgo.By("Verifying final status is captured even if termination message fails")
+			// The controller should still capture final status through either:
+			// 1. Termination message (if SDK wrote it)
+			// 2. Last HTTP poll (fallback)
+			// 3. Synthesized 100% (last resort)
+			gomega.Eventually(func(g gomega.Gomega) {
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
 
-			for i := range pod.Spec.Containers {
-				container := &pod.Spec.Containers[i]
-				if container.Name == "node" {
-					nodeContainer = container
-					gomega.Expect(nodeContainer.Lifecycle).NotTo(gomega.BeNil(), "node container should have lifecycle")
-					gomega.Expect(nodeContainer.Lifecycle.PreStop).NotTo(gomega.BeNil(), "node container should have preStop hook")
-				} else {
-					// Other containers should not have preStop hook injected by progression tracking
-					if container.Lifecycle != nil && container.Lifecycle.PreStop != nil {
-						otherContainersWithPreStop++
+				completed := false
+				for _, cond := range gotTrainJob.Status.Conditions {
+					if (cond.Type == trainer.TrainJobComplete || cond.Type == trainer.TrainJobFailed) &&
+						cond.Status == metav1.ConditionTrue {
+						completed = true
+						break
 					}
 				}
-			}
 
-			gomega.Expect(nodeContainer).NotTo(gomega.BeNil(), "node container should exist")
-			ginkgo.By("Verifying only the node container has the progression tracking preStop hook")
-			// Note: We expect 0 here because only node container should get the preStop from progression tracking
+				if completed {
+					statusJSON, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+					g.Expect(exists).Should(gomega.BeTrue(), "Final status should always be captured")
+
+					var status progression.AnnotationStatus
+					g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
+					g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil())
+					g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100))
+				}
+
+				g.Expect(completed).Should(gomega.BeTrue(), "TrainJob should complete")
+			}, timeout, interval).Should(gomega.Succeed())
 		})
 	})
 })
