@@ -14,8 +14,10 @@ The `rhai/` package provides midstream-specific features that are not part of up
 ```
 pkg/rhai/
 ├── constants/          # RHAI-specific constants and annotations
-├── progression/        # Core progression tracking logic and tests
-└── test/              # End-to-end tests
+└── progression/        # Core progression tracking logic and tests
+
+pkg/test/e2e/
+└── rhai/               # End-to-end tests for rhai functionality
 ```
 
 ## Integration
@@ -64,6 +66,14 @@ watch -n 2 'kubectl get trainjob <job-name> -n <namespace> -o jsonpath="{.metada
 
 ## Development
 
+
+Run unit tests with
 ```bash
-go test ./pkg/rhai/test/... -v -timeout 30m -ginkgo.v -ginkgo.progress
+go test ./pkg/rhai/...
+```
+
+Run e2e tests with:
+```bash
+make test-e2e-setup-cluster
+go test ./test/e2e/rhai... -v -timeout 30m -ginkgo.v -ginkgo.progress
 ```
