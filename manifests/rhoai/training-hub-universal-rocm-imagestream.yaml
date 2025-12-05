@@ -38,6 +38,6 @@ spec:
         openshift.io/imported-from: quay.io/mstoklus/workbench-images
       from:
         kind: DockerImage
-        name: odh-kubeflow-trainer-universal-workbench-image-rocm
+        name: odh-kubeflow-trainer-universal-workbench-image-rocm-2025-1
       referencePolicy:
         type: Source

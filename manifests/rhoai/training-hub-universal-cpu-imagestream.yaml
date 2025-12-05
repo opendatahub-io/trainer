@@ -18,25 +18,26 @@ spec:
         opendatahub.io/notebook-software: |
           [
             {"name": "Python", "version": "v3.12"},
-            {"name": "PyTorch", "version": "2.8.0"},
+            {"name": "PyTorch", "version": "2.9.0"},
             {"name": "Kubeflow SDK", "version": "0.2.0"},
-            {"name": "Training Hub", "version": "v0.3.0"}
+            {"name": "Training Hub", "version": "v0.4.0"}
           ]
         opendatahub.io/notebook-python-dependencies: |
           [
-            {"name": "jupyterlab", "version": "4.4.4"},
+            {"name": "jupyterlab", "version": "4.4.9"},
             {"name": "transformers", "version": "4.57.1"},
             {"name": "accelerate", "version": "1.10.0"},
             {"name": "peft", "version": "0.17.0"},
             {"name": "trl", "version": "0.21.0"},
-            {"name": "numpy", "version": "2.3.5"},
+            {"name": "numpy", "version": "1.26.4"},
             {"name": "pandas", "version": "2.3.3"},
-            {"name": "matplotlib", "version": "3.10.7"},
-            {"name": "scikit-learn", "version": "1.7.2"}
+            {"name": "matplotlib-inline", "version": "0.1.7"},
+            {"name": "tensorboard", "version": "2.19.0"},
+            {"name": "instructlab-training", "version": "0.12.1"}
           ]
         openshift.io/imported-from: quay.io/opendatahub/odh-training-th03-cuda128-torch28-py312-rhel9
       from:
         kind: DockerImage
-        name: odh-kubeflow-trainer-universal-workbench-image-cpu
+        name: odh-kubeflow-trainer-universal-workbench-image-cpu-2025-1
       referencePolicy:
         type: Source

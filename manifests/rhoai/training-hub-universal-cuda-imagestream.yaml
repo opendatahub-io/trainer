@@ -22,7 +22,7 @@ spec:
             {"name": "Python", "version": "v3.12"},
             {"name": "PyTorch", "version": "2.8.0"},
             {"name": "Kubeflow SDK", "version": "0.2.0"},
-            {"name": "Training Hub", "version": "v0.3.0"}
+            {"name": "Training Hub", "version": "v0.4.0"}
           ]
         opendatahub.io/notebook-python-dependencies: |
           [
@@ -42,6 +42,6 @@ spec:
         openshift.io/imported-from: quay.io/opendatahub/odh-training-th03-cuda128-torch28-py312-rhel9
       from:
         kind: DockerImage
-        name: odh-kubeflow-trainer-universal-workbench-image-cuda
+        name: odh-kubeflow-trainer-universal-workbench-image-cuda-2025-1
       referencePolicy:
         type: Source
