@@ -21,8 +21,8 @@ const (
 	// Progression tracking feature annotations
 
 	// AnnotationProgressionTracking enables/disables progression tracking for a TrainJob.
-	// Value: "enabled" to enable tracking, any other value or absence disables it.
-	// Example: trainer.opendatahub.io/progression-tracking: "enabled"
+	// Value: "true" to enable tracking, any other value or absence disables it.
+	// Example: trainer.opendatahub.io/progression-tracking: "true"
 	AnnotationProgressionTracking string = "trainer.opendatahub.io/progression-tracking"
 
 	// AnnotationTrainerStatus stores the JSON-encoded training status/progress.
@@ -31,7 +31,9 @@ const (
 	AnnotationTrainerStatus string = "trainer.opendatahub.io/trainerStatus"
 
 	// AnnotationMetricsPort specifies the port where the training pod exposes metrics.
-	// Default: 28080
+	// Default: 28080. Valid range: 1024-65535 (non-privileged ports).
+	// Ports 0-1023 require root privileges and are incompatible with OpenShift
+	// restricted SCCs and Kubernetes non-root security policies.
 	// Example: trainer.opendatahub.io/metrics-port: "8080"
 	AnnotationMetricsPort string = "trainer.opendatahub.io/metrics-port"
 
@@ -60,4 +62,27 @@ const (
 	// TerminationGraceBufferSecs is added to preStop duration for pod termination grace period.
 	// This allows time for graceful process shutdown after preStop hook completes.
 	TerminationGraceBufferSecs int = 30
+
+	// NetworkPolicy constants for metrics endpoint security
+
+	// DefaultControllerNamespace is the fallback when SA namespace file is unavailable.
+	DefaultControllerNamespace string = "opendatahub"
+
+	// ControllerPodLabelName is the label key used to identify the controller pod.
+	// NetworkPolicy uses this to allow controller access to training pod metrics.
+	ControllerPodLabelName string = "app.kubernetes.io/name"
+
+	// ControllerPodLabelNameValue is the expected value for the controller name label.
+	// Must match the label applied to controller pods in deployment manifests.
+	// RHOAI: Set via kustomization.yaml labels overlay.
+	ControllerPodLabelNameValue string = "trainer"
+
+	// ControllerPodLabelComponent is the label key for component identification.
+	ControllerPodLabelComponent string = "app.kubernetes.io/component"
+
+	// ControllerPodLabelComponentValue is the expected value for the controller component label.
+	// RHOAI uses "controller" (set via kustomization.yaml).
+	// Upstream Kubeflow uses "manager" (set in base/manager/manager.yaml).
+	// This value must match your deployment's controller pod labels.
+	ControllerPodLabelComponentValue string = "controller"
 )
