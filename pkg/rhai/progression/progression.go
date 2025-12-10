@@ -694,6 +694,13 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 		return ctrl.Result{}, nil
 	}
 
+	// Ensure NetworkPolicy exists to restrict metrics endpoint access to controller only
+	if err := ReconcileNetworkPolicy(ctx, c, trainJob); err != nil {
+		log.V(1).Info("Failed to reconcile NetworkPolicy for metrics security", "error", err)
+		// Non-fatal: continue with progression tracking even if NetworkPolicy fails
+		// This allows graceful degradation in environments without NetworkPolicy support
+	}
+
 	isRunning := !meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobSuspended) &&
 		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete) &&
 		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)

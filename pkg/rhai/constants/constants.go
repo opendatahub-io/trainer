@@ -31,7 +31,9 @@ const (
 	AnnotationTrainerStatus string = "trainer.opendatahub.io/trainerStatus"
 
 	// AnnotationMetricsPort specifies the port where the training pod exposes metrics.
-	// Default: 28080
+	// Default: 28080. Valid range: 1024-65535 (non-privileged ports).
+	// Ports 0-1023 require root privileges and are incompatible with OpenShift
+	// restricted SCCs and Kubernetes non-root security policies.
 	// Example: trainer.opendatahub.io/metrics-port: "8080"
 	AnnotationMetricsPort string = "trainer.opendatahub.io/metrics-port"
 
@@ -60,4 +62,12 @@ const (
 	// TerminationGraceBufferSecs is added to preStop duration for pod termination grace period.
 	// This allows time for graceful process shutdown after preStop hook completes.
 	TerminationGraceBufferSecs int = 30
+
+	// NetworkPolicy constants for metrics endpoint security
+
+	// NetworkPolicyNameSuffix is appended to TrainJob name to create NetworkPolicy name.
+	NetworkPolicyNameSuffix string = "-metrics-netpol"
+
+	// DefaultControllerNamespace is where the controller is deployed (override via CONTROLLER_NAMESPACE env).
+	DefaultControllerNamespace string = "opendatahub"
 )
