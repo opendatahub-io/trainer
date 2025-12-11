@@ -42,12 +42,12 @@ func TestGetNetworkPolicyName(t *testing.T) {
 		{
 			name:         "simple name",
 			trainJobName: "my-training-job",
-			want:         "my-training-job" + constants.NetworkPolicyNameSuffix,
+			want:         "my-training-job",
 		},
 		{
 			name:         "short name",
 			trainJobName: "job",
-			want:         "job" + constants.NetworkPolicyNameSuffix,
+			want:         "job",
 		},
 	}
 
@@ -86,7 +86,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 					UID:       types.UID("test-uid-123"),
 				},
 			},
-			wantName:         "test-job" + constants.NetworkPolicyNameSuffix,
+			wantName:         "test-job",
 			wantNamespace:    "user-namespace",
 			wantMetricsPort:  28080,
 			wantJobSelector:  "test-job",
@@ -105,7 +105,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 					},
 				},
 			},
-			wantName:         "custom-port-job" + constants.NetworkPolicyNameSuffix,
+			wantName:         "custom-port-job",
 			wantNamespace:    "ml-workloads",
 			wantMetricsPort:  8080,
 			wantJobSelector:  "custom-port-job",
@@ -124,7 +124,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 					},
 				},
 			},
-			wantName:         "invalid-port-job" + constants.NetworkPolicyNameSuffix,
+			wantName:         "invalid-port-job",
 			wantNamespace:    "default",
 			wantMetricsPort:  28080,
 			wantJobSelector:  "invalid-port-job",
@@ -150,9 +150,9 @@ func TestBuildNetworkPolicy(t *testing.T) {
 				t.Errorf("Label trainjob-name = %q, want %q",
 					policy.Labels["trainer.kubeflow.org/trainjob-name"], tt.trainJob.Name)
 			}
-			if policy.Labels["trainer.kubeflow.org/component"] != "metrics-security" {
+			if policy.Labels["trainer.kubeflow.org/component"] != "network-policy" {
 				t.Errorf("Label component = %q, want %q",
-					policy.Labels["trainer.kubeflow.org/component"], "metrics-security")
+					policy.Labels["trainer.kubeflow.org/component"], "network-policy")
 			}
 
 			// Verify OwnerReference
@@ -288,37 +288,6 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 			wantErr:           false,
 		},
 		{
-			name: "does nothing when progression tracking disabled",
-			trainJob: &trainer.TrainJob{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "disabled-job",
-					Namespace: "default",
-					UID:       types.UID("uid-disabled"),
-					Annotations: map[string]string{
-						constants.AnnotationProgressionTracking: "false",
-					},
-				},
-			},
-			existingPolicy:    nil,
-			wantPolicyCreated: false,
-			wantPolicyUpdated: false,
-			wantErr:           false,
-		},
-		{
-			name: "does nothing when no annotations",
-			trainJob: &trainer.TrainJob{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "no-annotation-job",
-					Namespace: "default",
-					UID:       types.UID("uid-no-ann"),
-				},
-			},
-			existingPolicy:    nil,
-			wantPolicyCreated: false,
-			wantPolicyUpdated: false,
-			wantErr:           false,
-		},
-		{
 			name: "updates existing NetworkPolicy",
 			trainJob: &trainer.TrainJob{
 				ObjectMeta: metav1.ObjectMeta{
@@ -333,7 +302,7 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 			},
 			existingPolicy: &networkingv1.NetworkPolicy{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "existing-job" + constants.NetworkPolicyNameSuffix,
+					Name:      "existing-job",
 					Namespace: "default",
 				},
 				Spec: networkingv1.NetworkPolicySpec{

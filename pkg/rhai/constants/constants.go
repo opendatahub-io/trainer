@@ -65,10 +65,6 @@ const (
 
 	// NetworkPolicy constants for metrics endpoint security
 
-	// NetworkPolicyNameSuffix is appended to TrainJob name to create NetworkPolicy name.
-	NetworkPolicyNameSuffix string = "-metrics-netpol"
-
-	// DefaultControllerNamespace is the fallback namespace when service account namespace file
-	// and CONTROLLER_NAMESPACE env are unavailable (e.g., local development).
+	// DefaultControllerNamespace is the fallback when SA namespace file is unavailable.
 	DefaultControllerNamespace string = "opendatahub"
 )

@@ -47,10 +47,10 @@ func getControllerNamespace() string {
 }
 
 func getNetworkPolicyName(trainJob *trainer.TrainJob) string {
-	return trainJob.Name + constants.NetworkPolicyNameSuffix
+	return trainJob.Name
 }
 
-// buildNetworkPolicy creates a NetworkPolicy restricting metrics port access to controller only.
+// buildNetworkPolicy creates a NetworkPolicy for the TrainJob's pods.
 func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy {
 	metricsPort := GetMetricsPort(trainJob)
 	portNum, err := strconv.Atoi(metricsPort)
@@ -67,7 +67,7 @@ func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy 
 			Namespace: trainJob.Namespace,
 			Labels: map[string]string{
 				"trainer.kubeflow.org/trainjob-name": trainJob.Name,
-				"trainer.kubeflow.org/component":     "metrics-security",
+				"trainer.kubeflow.org/component":     "network-policy",
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -139,13 +139,9 @@ func protocolPtr(p corev1.Protocol) *corev1.Protocol {
 	return &p
 }
 
-// ReconcileNetworkPolicy creates/updates NetworkPolicy for metrics endpoint security.
+// ReconcileNetworkPolicy creates/updates NetworkPolicy for the TrainJob.
 // Uses OwnerReference for automatic cleanup.
 func ReconcileNetworkPolicy(ctx context.Context, c client.Client, trainJob *trainer.TrainJob) error {
-	if !IsProgressionTrackingEnabled(trainJob) {
-		return nil
-	}
-
 	desiredPolicy := buildNetworkPolicy(trainJob)
 	existingPolicy := &networkingv1.NetworkPolicy{}
 	err := c.Get(ctx, client.ObjectKey{

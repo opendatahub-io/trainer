@@ -158,6 +158,10 @@ func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobru
 			return err
 		}
 	}
+	// Reconcile NetworkPolicy for pod isolation
+	if err := progression.ReconcileNetworkPolicy(ctx, r.client, trainJob); err != nil {
+		return err
+	}
 	return nil
 }
 
