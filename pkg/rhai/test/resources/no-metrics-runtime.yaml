@@ -1,0 +1,45 @@
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainingRuntime
+metadata:
+  name: no-metrics-runtime
+spec:
+  mlPolicy:
+    numNodes: 1
+    torch:
+      numProcPerNode: auto
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              backoffLimit: 0
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+                      command:
+                        - python
+                        - "-c"
+                        - |
+                          import time
+                          import sys
+
+                          # This job does NOT expose metrics endpoint
+                          # Controller should handle connection errors gracefully
+                          print("Starting training WITHOUT metrics server...")
+
+                          # Fast simulation (5 seconds total)
+                          total_steps = 25
+                          for step in range(total_steps):
+                              time.sleep(0.2)
+                              if step % 5 == 0:
+                                  print(f"Step {step}/{total_steps} (no metrics exposed)")
+
+                          print("Training completed (no metrics were exposed)")
+                          sys.exit(0)
+                  restartPolicy: Never

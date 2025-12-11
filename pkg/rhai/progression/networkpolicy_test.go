@@ -35,13 +35,15 @@ import (
 )
 
 func TestGetControllerNamespace(t *testing.T) {
+	// Note: In-cluster, the function first tries /var/run/secrets/kubernetes.io/serviceaccount/namespace.
+	// Since that file doesn't exist in unit tests, these tests verify env var and default fallback behavior.
 	tests := []struct {
 		name     string
 		envValue string
 		want     string
 	}{
 		{
-			name:     "default namespace when env not set",
+			name:     "default namespace when env not set and SA file missing",
 			envValue: "",
 			want:     constants.DefaultControllerNamespace,
 		},
@@ -267,7 +269,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 				t.Errorf("Rule 1: Controller name label = %q, want trainer",
 					controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/name"])
 			}
-			if controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/component"] != "manager" {
+			if controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/component"] != "controller" {
 				t.Errorf("Rule 1: Controller component label = %q, want manager",
 					controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/component"])
 			}
@@ -561,7 +563,7 @@ func TestBuildNetworkPolicy_SecurityProperties(t *testing.T) {
 		if peer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "trainer" {
 			t.Error("Missing trainer name label requirement")
 		}
-		if peer.PodSelector.MatchLabels["app.kubernetes.io/component"] != "manager" {
+		if peer.PodSelector.MatchLabels["app.kubernetes.io/component"] != "controller" {
 			t.Error("Missing manager component label requirement")
 		}
 	})

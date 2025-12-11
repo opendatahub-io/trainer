@@ -1,0 +1,100 @@
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainingRuntime
+metadata:
+  name: wrapper-test-runtime
+spec:
+  mlPolicy:
+    numNodes: 1
+    torch:
+      numProcPerNode: auto
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              backoffLimit: 0
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+                      command:
+                        - python
+                        - "-c"
+                        - |
+                          import torch
+                          import time
+                          import json
+                          from http.server import HTTPServer, BaseHTTPRequestHandler
+                          from threading import Thread
+
+                          class MetricsHandler(BaseHTTPRequestHandler):
+                              progress_data = {
+                                  "progressPercentage": 0,
+                                  "estimatedRemainingSeconds": 50,
+                                  "currentStep": 0,
+                                  "totalSteps": 50,
+                                  "currentEpoch": 0,
+                                  "totalEpochs": 1,
+                                  "trainMetrics": {"loss": 1.0},
+                                  "evalMetrics": {}
+                              }
+
+                              def do_GET(self):
+                                  if self.path == '/metrics':
+                                      self.send_response(200)
+                                      self.send_header('Content-Type', 'application/json')
+                                      self.end_headers()
+                                      self.wfile.write(json.dumps(self.progress_data).encode())
+                                  else:
+                                      self.send_error(404)
+
+                              def log_message(self, *args): pass
+
+                          def start_metrics_server(port=28080):
+                              server = HTTPServer(('0.0.0.0', port), MetricsHandler)
+                              Thread(target=server.serve_forever, daemon=True).start()
+                              print(f"Metrics server started on port {port}")
+
+                          # Start metrics server
+                          start_metrics_server(28080)
+
+                          # Wait briefly for server to be ready
+                          time.sleep(1)
+
+                          # Fast training loop (10 seconds total)
+                          print("Starting training...")
+                          total_steps = 50
+                          for step in range(total_steps + 1):
+                              time.sleep(0.2)  # 0.2s per step = 10s total
+                              progress = int((step / total_steps) * 100)
+                              remaining = int((total_steps - step) * 0.2)
+
+                              MetricsHandler.progress_data = {
+                                  "progressPercentage": progress,
+                                  "estimatedRemainingSeconds": remaining,
+                                  "currentStep": step,
+                                  "totalSteps": total_steps,
+                                  "currentEpoch": 1,
+                                  "totalEpochs": 1,
+                                  "trainMetrics": {"loss": 1.0 - (progress / 100.0)},
+                                  "evalMetrics": {"accuracy": 0.5 + (progress / 200.0)}
+                              }
+                              if step % 10 == 0:
+                                  print(f"Step {step}/{total_steps}, Progress {progress}%")
+
+                          print("Training completed!")
+                          time.sleep(3)  # Keep pod alive briefly for final metrics poll
+                      readinessProbe:
+                        httpGet:
+                          path: /metrics
+                          port: 28080
+                        initialDelaySeconds: 2
+                        periodSeconds: 1
+                        timeoutSeconds: 1
+                        failureThreshold: 2
+                  restartPolicy: Never

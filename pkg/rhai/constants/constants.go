@@ -68,6 +68,7 @@ const (
 	// NetworkPolicyNameSuffix is appended to TrainJob name to create NetworkPolicy name.
 	NetworkPolicyNameSuffix string = "-metrics-netpol"
 
-	// DefaultControllerNamespace is where the controller is deployed (override via CONTROLLER_NAMESPACE env).
+	// DefaultControllerNamespace is the fallback namespace when service account namespace file
+	// and CONTROLLER_NAMESPACE env are unavailable (e.g., local development).
 	DefaultControllerNamespace string = "opendatahub"
 )

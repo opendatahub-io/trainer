@@ -14,7 +14,7 @@
 # RHAI-specific: Permissions for NetworkPolicy management
 # Required to create/update NetworkPolicies that restrict metrics endpoint access
 # to controller pods only (security hardening for progression tracking)
-# Note: delete not needed - OwnerReference handles cleanup via garbage collection
+# Note: list/watch needed for controller-runtime cache, delete not needed (OwnerReference cleanup)
 - op: add
   path: /rules/-
   value:
@@ -24,5 +24,7 @@
     - networkpolicies
     verbs:
     - get
+    - list
+    - watch
     - create
     - update

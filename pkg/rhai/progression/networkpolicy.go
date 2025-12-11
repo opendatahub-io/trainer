@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -33,8 +34,16 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/rhai/constants"
 )
 
-// getControllerNamespace returns the controller namespace from env or default.
+const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// getControllerNamespace returns the controller's namespace.
+// Tries: SA namespace file > CONTROLLER_NAMESPACE env > default.
 func getControllerNamespace() string {
+	if data, err := os.ReadFile(serviceAccountNamespaceFile); err == nil {
+		if ns := strings.TrimSpace(string(data)); ns != "" {
+			return ns
+		}
+	}
 	if ns := os.Getenv("CONTROLLER_NAMESPACE"); ns != "" {
 		return ns
 	}
@@ -97,7 +106,7 @@ func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy 
 							PodSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{
 									"app.kubernetes.io/name":      "trainer",
-									"app.kubernetes.io/component": "manager",
+									"app.kubernetes.io/component": "controller",
 								},
 							},
 						},
