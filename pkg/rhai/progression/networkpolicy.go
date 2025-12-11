@@ -36,16 +36,12 @@ import (
 
 const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
-// getControllerNamespace returns the controller's namespace.
-// Tries: SA namespace file > CONTROLLER_NAMESPACE env > default.
+// getControllerNamespace returns the controller's namespace from SA mount.
 func getControllerNamespace() string {
 	if data, err := os.ReadFile(serviceAccountNamespaceFile); err == nil {
 		if ns := strings.TrimSpace(string(data)); ns != "" {
 			return ns
 		}
-	}
-	if ns := os.Getenv("CONTROLLER_NAMESPACE"); ns != "" {
-		return ns
 	}
 	return constants.DefaultControllerNamespace
 }

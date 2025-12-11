@@ -18,7 +18,6 @@ package progression
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -33,57 +32,6 @@ import (
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/rhai/constants"
 )
-
-func TestGetControllerNamespace(t *testing.T) {
-	// Note: In-cluster, the function first tries /var/run/secrets/kubernetes.io/serviceaccount/namespace.
-	// Since that file doesn't exist in unit tests, these tests verify env var and default fallback behavior.
-	tests := []struct {
-		name     string
-		envValue string
-		want     string
-	}{
-		{
-			name:     "default namespace when env not set and SA file missing",
-			envValue: "",
-			want:     constants.DefaultControllerNamespace,
-		},
-		{
-			name:     "custom namespace from env",
-			envValue: "custom-namespace",
-			want:     "custom-namespace",
-		},
-		{
-			name:     "redhat-ods-applications namespace",
-			envValue: "redhat-ods-applications",
-			want:     "redhat-ods-applications",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Save and restore env
-			oldValue := os.Getenv("CONTROLLER_NAMESPACE")
-			defer func() {
-				if oldValue == "" {
-					os.Unsetenv("CONTROLLER_NAMESPACE")
-				} else {
-					os.Setenv("CONTROLLER_NAMESPACE", oldValue)
-				}
-			}()
-
-			if tt.envValue != "" {
-				os.Setenv("CONTROLLER_NAMESPACE", tt.envValue)
-			} else {
-				os.Unsetenv("CONTROLLER_NAMESPACE")
-			}
-
-			got := getControllerNamespace()
-			if got != tt.want {
-				t.Errorf("getControllerNamespace() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 
 func TestGetNetworkPolicyName(t *testing.T) {
 	tests := []struct {
@@ -459,65 +407,6 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestReconcileNetworkPolicy_ControllerNamespaceFromEnv(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = trainer.AddToScheme(scheme)
-	_ = networkingv1.AddToScheme(scheme)
-
-	// Set custom controller namespace
-	oldValue := os.Getenv("CONTROLLER_NAMESPACE")
-	os.Setenv("CONTROLLER_NAMESPACE", "custom-controller-ns")
-	defer func() {
-		if oldValue == "" {
-			os.Unsetenv("CONTROLLER_NAMESPACE")
-		} else {
-			os.Setenv("CONTROLLER_NAMESPACE", oldValue)
-		}
-	}()
-
-	trainJob := &trainer.TrainJob{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "env-test-job",
-			Namespace: "user-ns",
-			UID:       types.UID("uid-env"),
-			Annotations: map[string]string{
-				constants.AnnotationProgressionTracking: "true",
-			},
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	ctx := context.Background()
-
-	err := ReconcileNetworkPolicy(ctx, fakeClient, trainJob)
-	if err != nil {
-		t.Fatalf("ReconcileNetworkPolicy() error = %v", err)
-	}
-
-	// Get the created policy
-	policy := &networkingv1.NetworkPolicy{}
-	if err := fakeClient.Get(ctx, client.ObjectKey{
-		Namespace: trainJob.Namespace,
-		Name:      getNetworkPolicyName(trainJob),
-	}, policy); err != nil {
-		t.Fatalf("Failed to get NetworkPolicy: %v", err)
-	}
-
-	// Verify the namespace selector uses the custom namespace
-	if len(policy.Spec.Ingress) == 0 || len(policy.Spec.Ingress[0].From) == 0 {
-		t.Fatal("NetworkPolicy missing ingress rules")
-	}
-
-	nsSelector := policy.Spec.Ingress[0].From[0].NamespaceSelector
-	if nsSelector == nil {
-		t.Fatal("NamespaceSelector is nil")
-	}
-	if nsSelector.MatchLabels["kubernetes.io/metadata.name"] != "custom-controller-ns" {
-		t.Errorf("NamespaceSelector = %q, want custom-controller-ns",
-			nsSelector.MatchLabels["kubernetes.io/metadata.name"])
 	}
 }
 
