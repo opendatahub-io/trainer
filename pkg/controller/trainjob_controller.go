@@ -43,6 +43,7 @@ import (
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
+	"github.com/kubeflow/trainer/v2/pkg/rhai"
 	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 	jobruntimes "github.com/kubeflow/trainer/v2/pkg/runtime"
 )
@@ -159,7 +160,7 @@ func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobru
 		}
 	}
 	// Reconcile NetworkPolicy for pod isolation
-	if err := progression.ReconcileNetworkPolicy(ctx, r.client, trainJob); err != nil {
+	if err := rhai.ReconcileNetworkPolicy(ctx, r.client, trainJob); err != nil {
 		return err
 	}
 	return nil

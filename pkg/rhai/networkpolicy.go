@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package progression
+package rhai
 
 import (
 	"context"
@@ -32,6 +32,7 @@ import (
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/rhai/constants"
+	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 )
 
 const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -52,7 +53,7 @@ func getNetworkPolicyName(trainJob *trainer.TrainJob) string {
 
 // buildNetworkPolicy creates a NetworkPolicy for the TrainJob's pods.
 func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy {
-	metricsPort := GetMetricsPort(trainJob)
+	metricsPort := progression.GetMetricsPort(trainJob)
 	portNum, err := strconv.Atoi(metricsPort)
 	if err != nil {
 		portNum = 28080 // default
