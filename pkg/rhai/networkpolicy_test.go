@@ -293,7 +293,8 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 					Namespace: "default",
 					UID:       types.UID("uid-existing"),
 					Annotations: map[string]string{
-						constants.AnnotationMetricsPort: "9090", // Changed port
+						constants.AnnotationProgressionTracking: "true",
+						constants.AnnotationMetricsPort:         "9090", // Changed port
 					},
 				},
 			},
@@ -357,11 +358,20 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 					t.Errorf("Expected NetworkPolicy to exist for update, but Get failed: %v", getErr)
 					return
 				}
-				// Verify the spec was updated (check port)
-				if len(policy.Spec.Ingress) > 0 && len(policy.Spec.Ingress[0].Ports) > 0 {
+				// Find metrics rule (has ports) and verify port was updated
+				var metricsRule *networkingv1.NetworkPolicyIngressRule
+				for i := range policy.Spec.Ingress {
+					if len(policy.Spec.Ingress[i].Ports) > 0 {
+						metricsRule = &policy.Spec.Ingress[i]
+						break
+					}
+				}
+				if metricsRule == nil {
+					t.Error("Expected metrics rule after update, but not found")
+				} else {
 					expectedPort := intstr.FromInt(9090)
-					if *policy.Spec.Ingress[0].Ports[0].Port != expectedPort {
-						t.Errorf("Expected port 9090 after update, got %v", policy.Spec.Ingress[0].Ports[0].Port)
+					if *metricsRule.Ports[0].Port != expectedPort {
+						t.Errorf("Expected port 9090 after update, got %v", metricsRule.Ports[0].Port)
 					}
 				}
 			}
