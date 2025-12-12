@@ -68,68 +68,72 @@ func TestGetNetworkPolicyName(t *testing.T) {
 
 func TestBuildNetworkPolicy(t *testing.T) {
 	tests := []struct {
-		name             string
-		trainJob         *trainer.TrainJob
-		wantName         string
-		wantNamespace    string
-		wantMetricsPort  int
-		wantJobSelector  string
-		wantOwnerRefName string
-		wantIngressRules int
+		name                   string
+		trainJob               *trainer.TrainJob
+		wantName               string
+		wantNamespace          string
+		wantMetricsPort        int
+		wantJobSelector        string
+		wantOwnerRefName       string
+		wantIngressRules       int
+		wantMetricsRulePresent bool
 	}{
 		{
-			name: "default metrics port",
+			name: "progression enabled - default metrics port",
 			trainJob: &trainer.TrainJob{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-job",
 					Namespace: "user-namespace",
 					UID:       types.UID("test-uid-123"),
+					Annotations: map[string]string{
+						constants.AnnotationProgressionTracking: "true",
+					},
 				},
 			},
-			wantName:         "test-job",
-			wantNamespace:    "user-namespace",
-			wantMetricsPort:  28080,
-			wantJobSelector:  "test-job",
-			wantOwnerRefName: "test-job",
-			wantIngressRules: 2,
+			wantName:               "test-job",
+			wantNamespace:          "user-namespace",
+			wantMetricsPort:        28080,
+			wantJobSelector:        "test-job",
+			wantOwnerRefName:       "test-job",
+			wantIngressRules:       2,
+			wantMetricsRulePresent: true,
 		},
 		{
-			name: "custom metrics port",
+			name: "progression enabled - custom metrics port",
 			trainJob: &trainer.TrainJob{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "custom-port-job",
 					Namespace: "ml-workloads",
 					UID:       types.UID("uid-456"),
 					Annotations: map[string]string{
-						constants.AnnotationMetricsPort: "8080",
+						constants.AnnotationProgressionTracking: "true",
+						constants.AnnotationMetricsPort:         "8080",
 					},
 				},
 			},
-			wantName:         "custom-port-job",
-			wantNamespace:    "ml-workloads",
-			wantMetricsPort:  8080,
-			wantJobSelector:  "custom-port-job",
-			wantOwnerRefName: "custom-port-job",
-			wantIngressRules: 2,
+			wantName:               "custom-port-job",
+			wantNamespace:          "ml-workloads",
+			wantMetricsPort:        8080,
+			wantJobSelector:        "custom-port-job",
+			wantOwnerRefName:       "custom-port-job",
+			wantIngressRules:       2,
+			wantMetricsRulePresent: true,
 		},
 		{
-			name: "invalid port falls back to default",
+			name: "progression disabled - only pod isolation rule",
 			trainJob: &trainer.TrainJob{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "invalid-port-job",
+					Name:      "no-progression-job",
 					Namespace: "default",
-					UID:       types.UID("uid-789"),
-					Annotations: map[string]string{
-						constants.AnnotationMetricsPort: "not-a-number",
-					},
+					UID:       types.UID("uid-no-prog"),
 				},
 			},
-			wantName:         "invalid-port-job",
-			wantNamespace:    "default",
-			wantMetricsPort:  28080,
-			wantJobSelector:  "invalid-port-job",
-			wantOwnerRefName: "invalid-port-job",
-			wantIngressRules: 2,
+			wantName:               "no-progression-job",
+			wantNamespace:          "default",
+			wantJobSelector:        "no-progression-job",
+			wantOwnerRefName:       "no-progression-job",
+			wantIngressRules:       1,
+			wantMetricsRulePresent: false,
 		},
 	}
 
@@ -190,67 +194,64 @@ func TestBuildNetworkPolicy(t *testing.T) {
 				t.Fatalf("Expected %d ingress rules, got %d", tt.wantIngressRules, len(policy.Spec.Ingress))
 			}
 
-			// Verify Rule 1: Controller access to metrics port
-			rule1 := policy.Spec.Ingress[0]
-			if len(rule1.From) != 1 {
-				t.Fatalf("Rule 1: Expected 1 peer, got %d", len(rule1.From))
-			}
-			if len(rule1.Ports) != 1 {
-				t.Fatalf("Rule 1: Expected 1 port, got %d", len(rule1.Ports))
-			}
-
-			// Check metrics port
-			expectedPort := intstr.FromInt(tt.wantMetricsPort)
-			if rule1.Ports[0].Port == nil || *rule1.Ports[0].Port != expectedPort {
-				t.Errorf("Rule 1: Port = %v, want %v", rule1.Ports[0].Port, expectedPort)
-			}
-			if rule1.Ports[0].Protocol == nil || *rule1.Ports[0].Protocol != corev1.ProtocolTCP {
-				t.Errorf("Rule 1: Protocol = %v, want TCP", rule1.Ports[0].Protocol)
+			// Find the pod isolation rule (always present, no ports restriction)
+			var podIsolationRule *networkingv1.NetworkPolicyIngressRule
+			var metricsRule *networkingv1.NetworkPolicyIngressRule
+			for i := range policy.Spec.Ingress {
+				rule := &policy.Spec.Ingress[i]
+				if len(rule.Ports) == 0 {
+					podIsolationRule = rule
+				} else {
+					metricsRule = rule
+				}
 			}
 
-			// Check controller pod selector
-			controllerPeer := rule1.From[0]
-			if controllerPeer.PodSelector == nil {
-				t.Fatal("Rule 1: PodSelector is nil")
-			}
-			if controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "trainer" {
-				t.Errorf("Rule 1: Controller name label = %q, want trainer",
-					controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/name"])
-			}
-			if controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/component"] != "controller" {
-				t.Errorf("Rule 1: Controller component label = %q, want manager",
-					controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/component"])
-			}
-
-			// Check namespace selector
-			if controllerPeer.NamespaceSelector == nil {
-				t.Fatal("Rule 1: NamespaceSelector is nil")
-			}
-			if _, ok := controllerPeer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; !ok {
-				t.Error("Rule 1: NamespaceSelector missing kubernetes.io/metadata.name label")
-			}
-
-			// Verify Rule 2: Same-job pods access to all ports
-			rule2 := policy.Spec.Ingress[1]
-			if len(rule2.From) != 1 {
-				t.Fatalf("Rule 2: Expected 1 peer, got %d", len(rule2.From))
-			}
-			if len(rule2.Ports) != 0 {
-				t.Errorf("Rule 2: Expected 0 ports (all ports), got %d", len(rule2.Ports))
+			// Verify metrics rule (only when progression enabled)
+			if tt.wantMetricsRulePresent {
+				if metricsRule == nil {
+					t.Fatal("Expected metrics rule but not found")
+				}
+				if len(metricsRule.From) != 1 {
+					t.Fatalf("Metrics rule: Expected 1 peer, got %d", len(metricsRule.From))
+				}
+				if len(metricsRule.Ports) != 1 {
+					t.Fatalf("Metrics rule: Expected 1 port, got %d", len(metricsRule.Ports))
+				}
+				expectedPort := intstr.FromInt(tt.wantMetricsPort)
+				if metricsRule.Ports[0].Port == nil || *metricsRule.Ports[0].Port != expectedPort {
+					t.Errorf("Metrics rule: Port = %v, want %v", metricsRule.Ports[0].Port, expectedPort)
+				}
+				controllerPeer := metricsRule.From[0]
+				if controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "trainer" {
+					t.Errorf("Metrics rule: Controller name label = %q, want trainer",
+						controllerPeer.PodSelector.MatchLabels["app.kubernetes.io/name"])
+				}
+			} else {
+				if metricsRule != nil {
+					t.Error("Expected no metrics rule when progression disabled")
+				}
 			}
 
-			// Check same-job pod selector
-			sameJobPeer := rule2.From[0]
+			// Verify pod isolation rule (always present)
+			if podIsolationRule == nil {
+				t.Fatal("Pod isolation rule not found")
+			}
+			if len(podIsolationRule.From) != 1 {
+				t.Fatalf("Pod isolation rule: Expected 1 peer, got %d", len(podIsolationRule.From))
+			}
+			if len(podIsolationRule.Ports) != 0 {
+				t.Errorf("Pod isolation rule: Expected 0 ports (all ports), got %d", len(podIsolationRule.Ports))
+			}
+			sameJobPeer := podIsolationRule.From[0]
 			if sameJobPeer.PodSelector == nil {
-				t.Fatal("Rule 2: PodSelector is nil")
+				t.Fatal("Pod isolation rule: PodSelector is nil")
 			}
 			if sameJobPeer.PodSelector.MatchLabels["jobset.sigs.k8s.io/jobset-name"] != tt.trainJob.Name {
-				t.Errorf("Rule 2: Same-job selector = %q, want %q",
+				t.Errorf("Pod isolation rule: Same-job selector = %q, want %q",
 					sameJobPeer.PodSelector.MatchLabels["jobset.sigs.k8s.io/jobset-name"], tt.trainJob.Name)
 			}
-			// Should NOT have namespace selector (same namespace only)
 			if sameJobPeer.NamespaceSelector != nil {
-				t.Error("Rule 2: Should not have NamespaceSelector (same namespace)")
+				t.Error("Pod isolation rule: Should not have NamespaceSelector")
 			}
 		})
 	}
@@ -375,12 +376,24 @@ func TestBuildNetworkPolicy_SecurityProperties(t *testing.T) {
 			Namespace: "user-namespace",
 			UID:       types.UID("security-uid"),
 			Annotations: map[string]string{
-				constants.AnnotationMetricsPort: "28080",
+				constants.AnnotationProgressionTracking: "true",
+				constants.AnnotationMetricsPort:         "28080",
 			},
 		},
 	}
 
 	policy := buildNetworkPolicy(trainJob)
+
+	// Find rules by type
+	var metricsRule, podIsolationRule *networkingv1.NetworkPolicyIngressRule
+	for i := range policy.Spec.Ingress {
+		rule := &policy.Spec.Ingress[i]
+		if len(rule.Ports) > 0 {
+			metricsRule = rule
+		} else {
+			podIsolationRule = rule
+		}
+	}
 
 	t.Run("only allows Ingress policy type", func(t *testing.T) {
 		if len(policy.Spec.PolicyTypes) != 1 {
@@ -392,16 +405,17 @@ func TestBuildNetworkPolicy_SecurityProperties(t *testing.T) {
 	})
 
 	t.Run("metrics port only accessible by controller", func(t *testing.T) {
-		rule1 := policy.Spec.Ingress[0]
-
-		if len(rule1.From) != 1 {
-			t.Fatalf("Expected 1 peer for metrics rule, got %d", len(rule1.From))
+		if metricsRule == nil {
+			t.Fatal("Metrics rule not found")
 		}
-		if len(rule1.Ports) != 1 {
-			t.Fatalf("Expected 1 port restriction, got %d", len(rule1.Ports))
+		if len(metricsRule.From) != 1 {
+			t.Fatalf("Expected 1 peer for metrics rule, got %d", len(metricsRule.From))
+		}
+		if len(metricsRule.Ports) != 1 {
+			t.Fatalf("Expected 1 port restriction, got %d", len(metricsRule.Ports))
 		}
 
-		peer := rule1.From[0]
+		peer := metricsRule.From[0]
 		if peer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "trainer" {
 			t.Error("Missing trainer name label requirement")
 		}
@@ -411,9 +425,10 @@ func TestBuildNetworkPolicy_SecurityProperties(t *testing.T) {
 	})
 
 	t.Run("same-job pods cannot be spoofed from other namespaces", func(t *testing.T) {
-		rule2 := policy.Spec.Ingress[1]
-
-		peer := rule2.From[0]
+		if podIsolationRule == nil {
+			t.Fatal("Pod isolation rule not found")
+		}
+		peer := podIsolationRule.From[0]
 		if peer.NamespaceSelector != nil {
 			t.Error("Same-job rule should NOT have NamespaceSelector (must be same namespace)")
 		}

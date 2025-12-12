@@ -52,15 +52,58 @@ func getNetworkPolicyName(trainJob *trainer.TrainJob) string {
 }
 
 // buildNetworkPolicy creates a NetworkPolicy for the TrainJob's pods.
+// Rule 1 (same-job pods → all ports) is always added for pod isolation.
+// Rule 2 (controller → metrics port) is only added when progression tracking is enabled.
 func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy {
-	metricsPort := progression.GetMetricsPort(trainJob)
-	portNum, err := strconv.Atoi(metricsPort)
-	if err != nil {
-		portNum = 28080 // default
-	}
-	port := intstr.FromInt(portNum)
+	ingressRules := []networkingv1.NetworkPolicyIngressRule{}
 
-	controllerNamespace := getControllerNamespace()
+	// Rule 1: Same-job pods → all ports (always, for NCCL/MPI/gRPC)
+	ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
+		From: []networkingv1.NetworkPolicyPeer{
+			{
+				PodSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
+					},
+				},
+			},
+		},
+	})
+
+	// Rule 2: Controller → metrics port (only when progression tracking enabled)
+	if progression.IsProgressionTrackingEnabled(trainJob) {
+		metricsPort := progression.GetMetricsPort(trainJob)
+		portNum, err := strconv.Atoi(metricsPort)
+		if err != nil {
+			portNum = 28080 // default
+		}
+		port := intstr.FromInt(portNum)
+		controllerNamespace := getControllerNamespace()
+
+		ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": controllerNamespace,
+						},
+					},
+					PodSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app.kubernetes.io/name":      "trainer",
+							"app.kubernetes.io/component": "controller",
+						},
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protocolPtr(corev1.ProtocolTCP),
+					Port:     &port,
+				},
+			},
+		})
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -90,44 +133,7 @@ func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy 
 			PolicyTypes: []networkingv1.PolicyType{
 				networkingv1.PolicyTypeIngress,
 			},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{
-					// Rule 1: Controller → metrics port
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": controllerNamespace,
-								},
-							},
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"app.kubernetes.io/name":      "trainer",
-									"app.kubernetes.io/component": "controller",
-								},
-							},
-						},
-					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: protocolPtr(corev1.ProtocolTCP),
-							Port:     &port,
-						},
-					},
-				},
-				{
-					// Rule 2: Same-job pods → all ports (for NCCL/MPI/gRPC)
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
-								},
-							},
-						},
-					},
-				},
-			},
+			Ingress: ingressRules,
 		},
 	}
 }
