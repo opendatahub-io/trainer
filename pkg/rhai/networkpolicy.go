@@ -75,7 +75,8 @@ func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy 
 		metricsPort := progression.GetMetricsPort(trainJob)
 		portNum, err := strconv.Atoi(metricsPort)
 		if err != nil {
-			portNum = 28080 // default
+			// Parse default port constant as fallback
+			portNum, _ = strconv.Atoi(constants.DefaultMetricsPort)
 		}
 		port := intstr.FromInt(portNum)
 		controllerNamespace := getControllerNamespace()
