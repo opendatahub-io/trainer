@@ -1,6 +1,6 @@
 module github.com/kubeflow/trainer/v2
 
-go 1.24.0
+go 1.24.9
 
 require (
 	github.com/go-logr/logr v1.4.3
@@ -46,7 +46,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
+	github.com/google/pprof v0.0.0-20251213031049-b05bdaca462f // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
