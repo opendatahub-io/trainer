@@ -8,7 +8,7 @@ metadata:
     pipelinesascode.tekton.dev/cancel-in-progress: "false"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
     pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch
-      == "main"
+      == "release/odh-3.3"
   creationTimestamp: null
   labels:
     appstudio.openshift.io/application: opendatahub-release
@@ -23,7 +23,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/opendatahub/trainer:v2.1.0
+    value: quay.io/opendatahub/trainer:3.3.0
   - name: dockerfile
     value: cmd/trainer-controller-manager/Dockerfile.odh
   - name: path-context
