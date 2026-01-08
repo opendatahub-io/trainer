@@ -23,7 +23,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/opendatahub/trainer:3.3.0
+    value: quay.io/opendatahub/trainer:odh-3.3
   - name: dockerfile
     value: cmd/trainer-controller-manager/Dockerfile.odh
   - name: path-context
