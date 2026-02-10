@@ -1,0 +1,172 @@
+name: Sync Stream to Lake
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'  # Run every 4 hours
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  lake-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check for differences between main and stable
+        id: check_diff
+        run: |
+          git fetch origin main stable
+
+          # Get commits in main but not in stable
+          COMMITS=$(git log origin/stable..origin/main --oneline)
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits to sync"
+            echo "has_diff=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "has_diff=true" >> $GITHUB_OUTPUT
+
+          # Get latest commit info
+          LATEST_COMMIT=$(git rev-parse origin/main)
+          LATEST_COMMIT_SHORT=$(git rev-parse --short origin/main)
+          LATEST_COMMIT_MSG=$(git log -1 --pretty=%B origin/main)
+
+          echo "latest_commit=${LATEST_COMMIT}" >> $GITHUB_OUTPUT
+          echo "latest_commit_short=${LATEST_COMMIT_SHORT}" >> $GITHUB_OUTPUT
+          echo "latest_commit_msg<<EOF" >> $GITHUB_OUTPUT
+          echo "$LATEST_COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "Commits to sync:"
+          echo "$COMMITS"
+
+      - name: Check for existing lake-gate PR
+        if: steps.check_diff.outputs.has_diff == 'true'
+        id: check_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find open PRs with lake-gate label
+          PR_LIST=$(gh pr list --label "lake-gate" --state open --json number,headRefName,title,body)
+
+          if [ "$PR_LIST" = "[]" ]; then
+            echo "No existing lake-gate PR found"
+            echo "pr_exists=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if existing PR contains the latest commit
+          LATEST_COMMIT="${{ steps.check_diff.outputs.latest_commit }}"
+          PR_NUMBER=$(echo "$PR_LIST" | jq -r '.[0].number')
+          PR_BRANCH=$(echo "$PR_LIST" | jq -r '.[0].headRefName')
+
+          echo "Found existing PR #${PR_NUMBER} with branch ${PR_BRANCH}"
+
+          # Fetch the PR branch and check if it contains the latest commit
+          git fetch origin "$PR_BRANCH"
+
+          if git merge-base --is-ancestor "$LATEST_COMMIT" "origin/$PR_BRANCH"; then
+            echo "Existing PR already contains the latest commit"
+            echo "pr_exists=true" >> $GITHUB_OUTPUT
+            echo "pr_current=true" >> $GITHUB_OUTPUT
+            echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          else
+            echo "Existing PR does not contain the latest commit - will create new PR"
+            echo "pr_exists=true" >> $GITHUB_OUTPUT
+            echo "pr_current=false" >> $GITHUB_OUTPUT
+            echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+            echo "pr_branch=${PR_BRANCH}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Close outdated PR and cleanup branch
+        if: steps.check_diff.outputs.has_diff == 'true' && steps.check_pr.outputs.pr_exists == 'true' && steps.check_pr.outputs.pr_current == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.check_pr.outputs.pr_number }}"
+          PR_BRANCH="${{ steps.check_pr.outputs.pr_branch }}"
+
+          echo "Closing outdated PR #${PR_NUMBER}"
+          gh pr close "$PR_NUMBER" --comment "Closing this PR as a newer version with more recent commits is available."
+
+          # Delete the automation branch (only if it matches lake-gate-* pattern for safety)
+          if [[ "$PR_BRANCH" =~ ^lake-gate- ]]; then
+            echo "Deleting branch ${PR_BRANCH}"
+            git push origin --delete "$PR_BRANCH" || echo "Branch already deleted or doesn't exist remotely"
+          else
+            echo "Skipping branch deletion - branch name doesn't match lake-gate-* pattern"
+          fi
+
+      - name: Create new sync PR
+        if: steps.check_diff.outputs.has_diff == 'true' && (steps.check_pr.outputs.pr_exists == 'false' || steps.check_pr.outputs.pr_current == 'false')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create timestamp-based branch name
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          BRANCH_NAME="lake-gate-${TIMESTAMP}"
+
+          echo "Creating branch ${BRANCH_NAME}"
+
+          # Create and push new branch from main
+          git checkout -b "$BRANCH_NAME" origin/main
+          git push origin "$BRANCH_NAME"
+
+          # Create PR with detailed description
+          LATEST_COMMIT_SHORT="${{ steps.check_diff.outputs.latest_commit_short }}"
+          LATEST_COMMIT_MSG="${{ steps.check_diff.outputs.latest_commit_msg }}"
+
+          PR_BODY=$(cat <<EOF
+          ## Sync Stream (main) to Lake (stable)
+
+          This PR synchronizes changes from the \`main\` branch (Stream) to the \`stable\` branch (Lake).
+
+          **Latest commit:** ${LATEST_COMMIT_SHORT}
+          **Commit message:** ${LATEST_COMMIT_MSG}
+
+          ### Automated Merge Process
+
+          This PR will be **automatically fast-forwarded** once all the following conditions are met:
+
+          - [ ] All PR checks have passed
+          - [ ] E2E tests are successful
+          - [ ] No merge conflicts
+
+          The auto-merge workflow will monitor check status and merge this PR automatically when all checks are green.
+
+          **Note:** After all checks pass, the \`stable\` branch will be fast-forwarded to point to the exact same commit as \`main\`. No merge commit will be created - both branches will share the same commit SHA.
+
+          ---
+          *This is an automated PR created by the lake-gate workflow.*
+          EOF
+          )
+
+          gh pr create \
+            --base stable \
+            --head "$BRANCH_NAME" \
+            --title "Sync main to stable (${LATEST_COMMIT_SHORT})" \
+            --body "$PR_BODY" \
+            --label "lake-gate"
+
+      - name: Summary
+        if: steps.check_diff.outputs.has_diff == 'true'
+        run: |
+          if [ "${{ steps.check_pr.outputs.pr_current }}" = "true" ]; then
+            echo "✅ Existing PR #${{ steps.check_pr.outputs.pr_number }} is up to date"
+          else
+            echo "✅ New sync PR created successfully"
+          fi

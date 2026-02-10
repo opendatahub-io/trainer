@@ -1,0 +1,220 @@
+name: Auto-merge Lake Gate PRs
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - labeled
+      - reopened
+  schedule:
+    - cron: '0 * * * *'  # Run every hour to check lake-gate PRs
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'lake-gate')
+    env:
+      ALLOWED_REPO: opendatahub-io/trainer
+    steps:
+      - name: Check repository
+        id: check_repo
+        run: |
+          if [ "${{ github.repository }}" != "$ALLOWED_REPO" ]; then
+            echo "Workflow is configured to run only on $ALLOWED_REPO"
+            echo "Current repository: ${{ github.repository }}"
+            echo "Skipping workflow execution"
+            echo "allowed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "✅ Running on allowed repository: ${{ github.repository }}"
+          echo "allowed=true" >> $GITHUB_OUTPUT
+
+      - name: Checkout repository
+        if: steps.check_repo.outputs.allowed == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        if: steps.check_repo.outputs.allowed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get PR details
+        if: steps.check_repo.outputs.allowed == 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Determine which PR to work with based on event type
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          elif [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # For scheduled/manual runs, find the first open lake-gate PR
+            PR_NUMBER=$(gh pr list --label "lake-gate" --state open --json number --jq '.[0].number')
+
+            if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+              echo "No open lake-gate PR found"
+              exit 0
+            fi
+          else
+            echo "No PR found for event type ${{ github.event_name }}"
+            exit 0
+          fi
+
+          # Verify PR has lake-gate label and get PR details
+          PR_DATA=$(gh pr view "$PR_NUMBER" --json labels,baseRefName,headRefName,isCrossRepository)
+          LABELS=$(echo "$PR_DATA" | jq -r '.labels[].name')
+
+          if ! echo "$LABELS" | grep -q "lake-gate"; then
+            echo "PR #$PR_NUMBER does not have lake-gate label"
+            exit 0
+          fi
+
+          # Disallow forks
+          IS_CROSS=$(echo "$PR_DATA" | jq -r '.isCrossRepository')
+          if [ "$IS_CROSS" = "true" ]; then
+            echo "PR #$PR_NUMBER is from a fork - not supported for lake-gate"
+            gh pr comment "$PR_NUMBER" --body "❌ Cannot auto-merge: fork-based PRs are not supported for lake-gate. Please open the PR from a branch in the main repository."
+            exit 0
+          fi
+
+          BASE_BRANCH=$(echo "$PR_DATA" | jq -r '.baseRefName')
+          HEAD_BRANCH=$(echo "$PR_DATA" | jq -r '.headRefName')
+
+          # Verify base is stable
+          if [ "$BASE_BRANCH" != "stable" ]; then
+            echo "PR #$PR_NUMBER base is not stable (base: $BASE_BRANCH)"
+            exit 0
+          fi
+
+          echo "Found PR #$PR_NUMBER with lake-gate label"
+          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "head_branch=$HEAD_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Wait for checks
+        if: steps.pr.outputs.number
+        id: wait
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+
+          # Wait a bit to ensure all checks are registered
+          sleep 10
+
+          # Check PR status
+          CHECKS_OUTPUT=$(gh pr checks "$PR_NUMBER" 2>&1) || true
+          CHECKS_STATUS=$?
+
+          echo "Checks output:"
+          echo "$CHECKS_OUTPUT"
+
+          # Check if all checks passed
+          if echo "$CHECKS_OUTPUT" | grep -qE "(pending|fail)"; then
+            echo "Some checks are still pending or have failed"
+            echo "ready=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # If we get here and checks command succeeded, all checks passed
+          if [ $CHECKS_STATUS -eq 0 ]; then
+            echo "All checks have passed"
+            echo "ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "No checks found yet or error checking status"
+            echo "ready=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify fast-forward is possible
+        if: steps.pr.outputs.number && steps.wait.outputs.ready == 'true'
+        id: verify
+        run: |
+          HEAD_BRANCH="${{ steps.pr.outputs.head_branch }}"
+
+          # Fetch latest refs including the PR branch
+          echo "Fetching branches: main, stable, $HEAD_BRANCH"
+          git fetch origin main:refs/remotes/origin/main stable:refs/remotes/origin/stable "$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH"
+
+          # Verify that head branch points to same commit as main
+          MAIN_SHA=$(git rev-parse origin/main)
+          HEAD_SHA=$(git rev-parse origin/"$HEAD_BRANCH")
+
+          if [ "$MAIN_SHA" != "$HEAD_SHA" ]; then
+            echo "ERROR: Head branch $HEAD_BRANCH ($HEAD_SHA) does not point to same commit as main ($MAIN_SHA)"
+            echo "can_ff=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Verify that main is descendant of stable (can fast-forward)
+          if ! git merge-base --is-ancestor origin/stable origin/main; then
+            echo "ERROR: Cannot fast-forward - main is not a descendant of stable"
+            echo "can_ff=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "✅ Verification passed - can perform fast-forward"
+          echo "can_ff=true" >> $GITHUB_OUTPUT
+          echo "target_sha=$MAIN_SHA" >> $GITHUB_OUTPUT
+
+      - name: Perform fast-forward merge
+        if: steps.pr.outputs.number && steps.wait.outputs.ready == 'true' && steps.verify.outputs.can_ff == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          TARGET_SHA="${{ steps.verify.outputs.target_sha }}"
+          HEAD_BRANCH="${{ steps.pr.outputs.head_branch }}"
+
+          echo "Performing fast-forward: pushing commit $TARGET_SHA to stable"
+
+          # Key change: push the commit SHA directly to stable
+          git push origin "$TARGET_SHA:refs/heads/stable"
+
+          # Verify the push worked
+          git fetch origin stable
+          STABLE_SHA=$(git rev-parse origin/stable)
+
+          if [ "$STABLE_SHA" = "$TARGET_SHA" ]; then
+            echo "✅ Successfully fast-forwarded stable to $TARGET_SHA"
+
+            # Add success comment
+            printf "✅ **Successfully synced!**\n\nThe \`stable\` branch has been fast-forwarded to point to the exact same commit as \`main\` (\`${TARGET_SHA:0:8}\`).\n\nThe \`stable\` and \`main\` branches now point to identical commits - no merge commit was created.\n\n\`\`\`\nmain   → ${TARGET_SHA:0:8}\nstable → ${TARGET_SHA:0:8}  (same SHA)\n\`\`\`\n" | gh pr comment "$PR_NUMBER" --body-file -
+
+            # Close the PR (if not already closed by GitHub)
+            gh pr close "$PR_NUMBER" 2>/dev/null || echo "PR already closed (likely auto-closed by GitHub)"
+          else
+            echo "ERROR: Fast-forward push succeeded but stable is at unexpected SHA: $STABLE_SHA (expected $TARGET_SHA)"
+            gh pr comment "$PR_NUMBER" --body "⚠️ Fast-forward completed but verification failed. Please check manually."
+            exit 1
+          fi
+
+      - name: Report failure
+        if: steps.pr.outputs.number && steps.wait.outputs.ready == 'true' && steps.verify.outputs.can_ff == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          printf "❌ **Cannot perform fast-forward merge**\n\nVerification failed - please check the workflow logs for details.\n\nThis usually means:\n- The PR branch doesn't point to the same commit as \`main\`\n- The \`main\` branch is not a direct descendant of \`stable\`\n\nA new sync PR will be created on the next scheduled run.\n" | gh pr comment "$PR_NUMBER" --body-file -
+
+      - name: Cleanup branch
+        if: steps.pr.outputs.number && steps.wait.outputs.ready == 'true' && steps.verify.outputs.can_ff == 'true'
+        continue-on-error: true
+        run: |
+          HEAD_BRANCH="${{ steps.pr.outputs.head_branch }}"
+
+          # Only delete if it's an automation branch
+          if [[ "$HEAD_BRANCH" =~ ^lake-gate- ]]; then
+            echo "Deleting branch $HEAD_BRANCH"
+            git push origin --delete "$HEAD_BRANCH" || echo "Branch already deleted or doesn't exist remotely"
+          else
+            echo "Skipping branch deletion - branch name doesn't match lake-gate-* pattern"
+          fi
