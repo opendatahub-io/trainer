@@ -158,7 +158,7 @@ jobs:
           gh pr create \
             --base stable \
             --head "$BRANCH_NAME" \
-            --title "Sync main to stable (${LATEST_COMMIT_SHORT})" \
+            --title "[DO NOT MERGE MANUALLY] Sync main to stable (${LATEST_COMMIT_SHORT})" \
             --body "$PR_BODY" \
             --label "lake-gate"
 
