@@ -16,7 +16,7 @@ spec:
     - name: "3.4"
       annotations:
         opendatahub.io/workbench-image-recommended: 'true'
-        opendatahub.io/notebook-build-commit: odh-th06-cpu-torch291-py312-commit-3-4_PLACEHOLDER
+        opendatahub.io/notebook-build-commit: a66ec72
         opendatahub.io/notebook-software: |
           [
             {"name": "Python", "version": "v3.12"},
@@ -34,6 +34,6 @@ spec:
         openshift.io/imported-from: quay.io/opendatahub/odh-th06-cpu-torch291-py312
       from:
         kind: DockerImage
-        name: PLACEHOLDER
+        name: quay.io/opendatahub/odh-th06-cpu-torch291-py312:odh-3.4-ea2
       referencePolicy:
         type: Source
