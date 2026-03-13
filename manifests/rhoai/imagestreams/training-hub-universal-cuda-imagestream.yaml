@@ -16,6 +16,7 @@ spec:
   tags:
     - name: "2026.1"
       annotations:
+        opendatahub.io/workbench-image-recommended: 'true'
         opendatahub.io/notebook-software: |
           [
             {"name": "CUDA", "version": "13.0"},
