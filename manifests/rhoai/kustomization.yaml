@@ -228,7 +228,7 @@ replacements:
     kind: ConfigMap
     name: rhoai-config
     version: v1
-    fieldPath: data.odh-training-universal-workbench-image-cpu-2026-1
+    fieldPath: data.odh-training-universal-workbench-image-cpu-3-4
   targets:
   - select:
       group: image.openshift.io
@@ -243,7 +243,7 @@ replacements:
     kind: ConfigMap
     name: rhoai-config
     version: v1
-    fieldPath: data.odh-training-universal-workbench-image-cuda-2026-1
+    fieldPath: data.odh-training-universal-workbench-image-cuda-3-4
   targets:
   - select:
       group: image.openshift.io
@@ -258,7 +258,7 @@ replacements:
     kind: ConfigMap
     name: rhoai-config
     version: v1
-    fieldPath: data.odh-training-universal-workbench-image-rocm-2026-1
+    fieldPath: data.odh-training-universal-workbench-image-rocm-3-4
   targets:
   - select:
       group: image.openshift.io

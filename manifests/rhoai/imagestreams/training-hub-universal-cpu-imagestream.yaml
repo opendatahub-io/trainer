@@ -13,9 +13,10 @@ spec:
   lookupPolicy:
     local: true
   tags:
-    - name: "2026.1"
+    - name: "3.4"
       annotations:
         opendatahub.io/workbench-image-recommended: 'true'
+        opendatahub.io/notebook-build-commit: odh-th06-cpu-torch291-py312-commit-3-4_PLACEHOLDER
         opendatahub.io/notebook-software: |
           [
             {"name": "Python", "version": "v3.12"},
