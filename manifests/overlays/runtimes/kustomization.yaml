@@ -14,4 +14,4 @@ images:
   - name: ghcr.io/kubeflow/trainer/mlx-runtime
     newTag: v2.1.0
   - name: ghcr.io/kubeflow/trainer/deepspeed-runtime
-    newTag: v2.1.0
+    newTag: v2.2.0
