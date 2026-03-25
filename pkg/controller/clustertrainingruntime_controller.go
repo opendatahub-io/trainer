@@ -122,7 +122,7 @@ func (r *ClusterTrainingRuntimeReconciler) GracefulShutdown(ctx context.Context)
 		log.Info("Removing finalizer from terminating ClusterTrainingRuntime",
 			"name", clRuntime.Name)
 
-		// Remove the finalizer to allow deletion
+		// Remove the finalizer using the standard controller-runtime API
 		ctrlutil.RemoveFinalizer(clRuntime, constants.ResourceInUseFinalizer)
 		if err := r.client.Update(ctx, clRuntime); err != nil {
 			log.Error(err, "Failed to remove finalizer during graceful shutdown",

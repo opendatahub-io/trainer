@@ -17,6 +17,10 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"time"
+
+	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
@@ -28,6 +32,43 @@ import (
 type Reconcilers struct {
 	TrainingRuntime        *TrainingRuntimeReconciler
 	ClusterTrainingRuntime *ClusterTrainingRuntimeReconciler
+}
+
+// GracefulShutdownRunnable implements the controller-runtime Runnable interface
+// to perform graceful shutdown when the manager's context is cancelled.
+type GracefulShutdownRunnable struct {
+	ClusterTrainingRuntime *ClusterTrainingRuntimeReconciler
+	TrainingRuntime        *TrainingRuntimeReconciler
+	log                    logr.Logger
+}
+
+// Start blocks until the context is cancelled (SIGTERM received), then performs graceful shutdown.
+// This is called by the controller-runtime manager and provides a window where the webhook
+// server is still draining but the context is cancelled, allowing client.Update() to succeed.
+func (r *GracefulShutdownRunnable) Start(ctx context.Context) error {
+	// Block until context is cancelled (SIGTERM received)
+	<-ctx.Done()
+
+	r.log.Info("Performing graceful shutdown")
+
+	// Create new context with timeout for cleanup operations
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if r.ClusterTrainingRuntime != nil {
+		if err := r.ClusterTrainingRuntime.GracefulShutdown(shutdownCtx); err != nil {
+			r.log.Error(err, "Error during ClusterTrainingRuntime graceful shutdown")
+		}
+	}
+
+	if r.TrainingRuntime != nil {
+		if err := r.TrainingRuntime.GracefulShutdown(shutdownCtx); err != nil {
+			r.log.Error(err, "Error during TrainingRuntime graceful shutdown")
+		}
+	}
+
+	r.log.Info("Graceful shutdown completed")
+	return nil
 }
 
 func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, options controller.Options) (string, *Reconcilers, error) {
@@ -55,7 +96,19 @@ func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, opt
 		return trainer.TrainJobKind, nil, err
 	}
 
-	// Return reconciler instances for graceful shutdown handling
+	// Register the graceful shutdown runnable
+	// This will be called when the manager's context is cancelled (SIGTERM),
+	// providing a window where the webhook server is still draining but client.Update() can succeed
+	shutdownRunnable := &GracefulShutdownRunnable{
+		ClusterTrainingRuntime: clRuntimeRec,
+		TrainingRuntime:        runtimeRec,
+		log:                    ctrl.Log.WithName("graceful-shutdown"),
+	}
+	if err := mgr.Add(shutdownRunnable); err != nil {
+		return "graceful-shutdown-runnable", nil, err
+	}
+
+	// Return reconciler instances for backward compatibility
 	reconcilers := &Reconcilers{
 		TrainingRuntime:        runtimeRec,
 		ClusterTrainingRuntime: clRuntimeRec,

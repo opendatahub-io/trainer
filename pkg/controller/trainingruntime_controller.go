@@ -126,7 +126,7 @@ func (r *TrainingRuntimeReconciler) GracefulShutdown(ctx context.Context) error 
 		log.Info("Removing finalizer from terminating TrainingRuntime",
 			"namespace", runtime.Namespace, "name", runtime.Name)
 
-		// Remove the finalizer to allow deletion
+		// Remove the finalizer using the standard controller-runtime API
 		ctrlutil.RemoveFinalizer(runtime, constants.ResourceInUseFinalizer)
 		if err := r.client.Update(ctx, runtime); err != nil {
 			log.Error(err, "Failed to remove finalizer during graceful shutdown",

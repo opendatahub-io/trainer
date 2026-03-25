@@ -106,7 +106,7 @@ func (f *Framework) RunManager(cfg *rest.Config, startControllers bool) (context
 	gomega.ExpectWithOffset(1, runtimes).NotTo(gomega.BeNil())
 
 	if startControllers {
-		failedCtrlName, err := controller.SetupControllers(mgr, runtimes, ctrlpkg.Options{
+		failedCtrlName, _, err := controller.SetupControllers(mgr, runtimes, ctrlpkg.Options{
 			// controller-runtime v0.19+ validates controller names are unique, to make sure
 			// exported Prometheus metrics for each controller do not conflict. The current check
 			// relies on static state that's not compatible with testing execution model.
