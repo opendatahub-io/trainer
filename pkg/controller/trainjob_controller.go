@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -137,6 +138,15 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	setSuspendedCondition(&trainJob)
 
 	if statusErr := setTrainJobStatus(ctx, runtime, &trainJob); statusErr != nil {
+		// RHOAIENG-48867: When Build() deleted a stale suspended JobSet due to an
+		// immutable spec.replicatedJobs change (e.g., post-upgrade image update), the
+		// JobSet is transiently absent. Detect this by: reconcileObjects succeeded (err==nil),
+		// the TrainJob is not suspended, and the JobSet is NotFound. Record a Normal event
+		// so operators can observe the automatic recreation.
+		if err == nil && apierrors.IsNotFound(statusErr) && !ptr.Deref(trainJob.Spec.Suspend, false) {
+			r.recorder.Event(&trainJob, corev1.EventTypeNormal, "JobSetRecreating",
+				"Stale suspended JobSet deleted and will be recreated due to runtime spec changes post-upgrade")
+		}
 		err = errors.Join(err, statusErr)
 	}
 

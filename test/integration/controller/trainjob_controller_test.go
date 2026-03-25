@@ -1436,4 +1436,103 @@ alpha-node-0-1.alpha slots=8
 			})
 		})
 	})
+
+	// RHOAIENG-48867: Integration test for the upgrade scenario where a suspended
+	// TrainJob's ClusterTrainingRuntime image changes, requiring a delete-recreate
+	// of the immutable spec.replicatedJobs field in the JobSet.
+	ginkgo.When("Reconciling TrainJob after runtime image upgrade (RHOAIENG-48867)", func() {
+		var (
+			clTrainingRuntime *trainer.ClusterTrainingRuntime
+			trainJob          *trainer.TrainJob
+			trainJobKey       client.ObjectKey
+		)
+
+		const (
+			preUpgradeImage  = "registry.example.com/trainer:pre-upgrade"
+			postUpgradeImage = "registry.example.com/trainer:post-upgrade"
+		)
+
+		ginkgo.AfterEach(func() {
+			gomega.Expect(k8sClient.DeleteAllOf(ctx, &trainer.TrainJob{}, client.InNamespace(ns.Name))).Should(gomega.Succeed())
+			gomega.Expect(k8sClient.DeleteAllOf(ctx, &trainer.ClusterTrainingRuntime{})).Should(gomega.Succeed())
+		})
+
+		ginkgo.BeforeEach(func() {
+			clTrainingRuntime = testingutil.MakeClusterTrainingRuntimeWrapper("upgrade-runtime").
+				RuntimeSpec(
+					testingutil.MakeTrainingRuntimeSpecWrapper(
+						testingutil.MakeClusterTrainingRuntimeWrapper("upgrade-runtime").Spec,
+					).
+						Container(constants.Node, constants.Node, preUpgradeImage, nil, nil, nil).
+						Obj(),
+				).
+				Obj()
+
+			trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "upgrade-trainjob").
+				Suspend(true).
+				RuntimeRef(trainer.GroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), clTrainingRuntime.Name).
+				Obj()
+			trainJobKey = client.ObjectKeyFromObject(trainJob)
+		})
+
+		ginkgo.It("Should delete and recreate stale suspended JobSet when runtime image changes post-upgrade", func() {
+			ginkgo.By("Creating ClusterTrainingRuntime with pre-upgrade image")
+			gomega.Expect(k8sClient.Create(ctx, clTrainingRuntime)).Should(gomega.Succeed())
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(clTrainingRuntime), clTrainingRuntime)).Should(gomega.Succeed())
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+			ginkgo.By("Creating suspended TrainJob (simulating pre-upgrade state)")
+			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+			ginkgo.By("Waiting for suspended JobSet to be created with pre-upgrade image")
+			gomega.Eventually(func(g gomega.Gomega) {
+				jobSet := &jobsetv1alpha2.JobSet{}
+				g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+				g.Expect(ptr.Deref(jobSet.Spec.Suspend, false)).Should(gomega.BeTrue())
+				for _, rJob := range jobSet.Spec.ReplicatedJobs {
+					if rJob.Name == constants.Node {
+						for _, c := range rJob.Template.Spec.Template.Spec.Containers {
+							if c.Name == constants.Node {
+								g.Expect(c.Image).Should(gomega.Equal(preUpgradeImage))
+							}
+						}
+					}
+				}
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+			ginkgo.By("Simulating upgrade: updating ClusterTrainingRuntime with post-upgrade image")
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(clTrainingRuntime), clTrainingRuntime)).Should(gomega.Succeed())
+				clTrainingRuntime.Spec = testingutil.MakeTrainingRuntimeSpecWrapper(clTrainingRuntime.Spec).
+					Container(constants.Node, constants.Node, postUpgradeImage, nil, nil, nil).
+					Obj()
+				g.Expect(k8sClient.Update(ctx, clTrainingRuntime)).Should(gomega.Succeed())
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+			ginkgo.By("Resuming TrainJob post-upgrade (simulating Kueue admitting the workload)")
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(k8sClient.Get(ctx, trainJobKey, trainJob)).Should(gomega.Succeed())
+				trainJob.Spec.Suspend = ptr.To(false)
+				g.Expect(k8sClient.Update(ctx, trainJob)).Should(gomega.Succeed())
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+			ginkgo.By("Verifying the JobSet is recreated with the post-upgrade image and is not suspended")
+			gomega.Eventually(func(g gomega.Gomega) {
+				jobSet := &jobsetv1alpha2.JobSet{}
+				g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+				g.Expect(ptr.Deref(jobSet.Spec.Suspend, false)).Should(gomega.BeFalse())
+				for _, rJob := range jobSet.Spec.ReplicatedJobs {
+					if rJob.Name == constants.Node {
+						for _, c := range rJob.Template.Spec.Template.Spec.Containers {
+							if c.Name == constants.Node {
+								g.Expect(c.Image).Should(gomega.Equal(postUpgradeImage),
+									"JobSet should have post-upgrade image after delete-recreate")
+							}
+						}
+					}
+				}
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
+		})
+	})
 })
