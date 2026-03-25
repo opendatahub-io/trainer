@@ -280,6 +280,25 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 	}
 
+	// RHOAIENG-48867: If the existing JobSet is suspended and spec.replicatedJobs has
+	// changed (e.g., container images updated during a ClusterTrainingRuntime upgrade),
+	// delete the stale JobSet so it can be recreated with the new spec on the next
+	// reconcile cycle. This is required because spec.replicatedJobs is immutable in
+	// JobSet and cannot be updated in-place — the admission webhook rejects such updates.
+	if oldJobSet != nil && ptr.Deref(oldJobSet.Spec.Suspend, false) &&
+		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSetSpec.ReplicatedJobs) {
+		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
+			"jobSet", client.ObjectKeyFromObject(trainJob))
+		// Use foreground propagation so any owned child resources are cleaned up
+		// before the JobSet object itself is removed.
+		if err := j.client.Delete(ctx, oldJobSet,
+			client.PropagationPolicy(metav1.DeletePropagationForeground),
+		); client.IgnoreNotFound(err) != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
 	// Init the JobSet apply configuration from the runtime template spec
 	jobSetBuilder := NewBuilder(jobsetv1alpha2ac.JobSet(trainJob.Name, trainJob.Namespace).
 		WithLabels(maps.Clone(info.Labels)).
@@ -304,6 +323,51 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 			WithBlockOwnerDeletion(true))
 
 	return []apiruntime.ApplyConfiguration{jobSet}, nil
+}
+
+// replicatedJobsSpecChanged reports whether the desired ReplicatedJobs differ from
+// the existing JobSet's replicatedJobs in ways that would trigger the immutability
+// constraint (different count, names, or container images). This covers the upgrade
+// scenario where a ClusterTrainingRuntime change updates the runtime container image.
+// RHOAIENG-48867
+func replicatedJobsSpecChanged(
+	existing []jobsetv1alpha2.ReplicatedJob,
+	desired []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration,
+) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+	existingByName := make(map[string]*jobsetv1alpha2.ReplicatedJob, len(existing))
+	for i := range existing {
+		existingByName[existing[i].Name] = &existing[i]
+	}
+	for _, d := range desired {
+		if d.Name == nil {
+			continue
+		}
+		e, ok := existingByName[*d.Name]
+		if !ok {
+			// A replicated job with this name does not exist in the current JobSet.
+			return true
+		}
+		if d.Template == nil || d.Template.Spec == nil ||
+			d.Template.Spec.Template == nil || d.Template.Spec.Template.Spec == nil {
+			continue
+		}
+		existingImages := make(map[string]string, len(e.Template.Spec.Template.Spec.Containers))
+		for _, c := range e.Template.Spec.Template.Spec.Containers {
+			existingImages[c.Name] = c.Image
+		}
+		for _, c := range d.Template.Spec.Template.Spec.Containers {
+			if c.Name == nil || c.Image == nil {
+				continue
+			}
+			if img, found := existingImages[*c.Name]; !found || img != *c.Image {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (j *JobSet) Status(ctx context.Context, trainJob *trainer.TrainJob) (*trainer.TrainJobStatus, error) {

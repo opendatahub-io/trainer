@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,6 +47,173 @@ import (
 
 // TODO: Add tests for all Interfaces.
 // REF: https://github.com/kubeflow/trainer/issues/2468
+
+// TestBuild_ImmutableJobSetUpgrade validates the fix for RHOAIENG-48867:
+// when a suspended JobSet's spec.replicatedJobs has changed (e.g., after a
+// ClusterTrainingRuntime image upgrade), Build() must delete the stale JobSet
+// and return nil so the controller recreates it on the next reconcile cycle.
+func TestBuild_ImmutableJobSetUpgrade(t *testing.T) {
+	const (
+		oldImage = "registry.example.com/trainer:3.2"
+		newImage = "registry.example.com/trainer:3.3"
+	)
+
+	makeInfo := func(image string) *runtime.Info {
+		return &runtime.Info{
+			Scheduler: &runtime.Scheduler{},
+			TemplateSpec: runtime.TemplateSpec{
+				PodSets: []runtime.PodSet{
+					{
+						Name:       constants.Node,
+						Count:      ptr.To[int32](1),
+						Containers: make([]runtime.Container, 1),
+					},
+				},
+				ObjApply: jobsetv1alpha2ac.JobSetSpec().
+					WithReplicatedJobs(
+						jobsetv1alpha2ac.ReplicatedJob().
+							WithName(constants.Node).
+							WithTemplate(batchv1ac.JobTemplateSpec().
+								WithSpec(batchv1ac.JobSpec().
+									WithParallelism(1).
+									WithCompletions(1).
+									WithTemplate(corev1ac.PodTemplateSpec().
+										WithSpec(corev1ac.PodSpec().
+											WithContainers(
+												corev1ac.Container().
+													WithName(constants.Node).
+													WithImage(image),
+											),
+										),
+									),
+								),
+							),
+					),
+			},
+		}
+	}
+
+	makeSuspendedJobSet := func(image string) *jobsetv1alpha2.JobSet {
+		return &jobsetv1alpha2.JobSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test",
+				Namespace: metav1.NamespaceDefault,
+			},
+			Spec: jobsetv1alpha2.JobSetSpec{
+				Suspend: ptr.To(true),
+				ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
+					{
+						Name: constants.Node,
+						Template: batchv1.JobTemplateSpec{
+							Spec: batchv1.JobSpec{
+								Template: corev1.PodTemplateSpec{
+									Spec: corev1.PodSpec{
+										Containers: []corev1.Container{
+											{Name: constants.Node, Image: image},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	cases := map[string]struct {
+		trainJob          *trainer.TrainJob
+		existingJobSet    *jobsetv1alpha2.JobSet
+		info              *runtime.Info
+		wantNilResult     bool // true if Build() should return no apply configs
+		wantJobSetDeleted bool // true if the existing JobSet should be deleted
+		wantError         error
+	}{
+		"suspended JobSet with changed image is deleted on upgrade (RHOAIENG-48867)": {
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				Obj(),
+			existingJobSet:    makeSuspendedJobSet(oldImage),
+			info:              makeInfo(newImage),
+			wantNilResult:     true,
+			wantJobSetDeleted: true,
+		},
+		"suspended JobSet with unchanged image is not deleted": {
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				Obj(),
+			existingJobSet:    makeSuspendedJobSet(newImage),
+			info:              makeInfo(newImage),
+			wantNilResult:     false,
+			wantJobSetDeleted: false,
+		},
+		"running JobSet (not suspended) is not touched when TrainJob is also running": {
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				Obj(),
+			existingJobSet: func() *jobsetv1alpha2.JobSet {
+				js := makeSuspendedJobSet(oldImage)
+				js.Spec.Suspend = ptr.To(false)
+				return js
+			}(),
+			info:              makeInfo(newImage),
+			wantNilResult:     true, // existing guard skips update when both are running
+			wantJobSetDeleted: false,
+		},
+		"no existing JobSet results in a new apply config": {
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				Obj(),
+			existingJobSet:    nil,
+			info:              makeInfo(newImage),
+			wantNilResult:     false,
+			wantJobSetDeleted: false,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, ctx := ktesting.NewTestContext(t)
+			var cancel func()
+			ctx, cancel = context.WithCancel(ctx)
+			t.Cleanup(cancel)
+
+			clientBuilder := utiltesting.NewClientBuilder()
+			if tc.existingJobSet != nil {
+				clientBuilder = clientBuilder.WithObjects(tc.existingJobSet)
+			}
+			cli := clientBuilder.Build()
+
+			p, err := New(ctx, cli, nil)
+			if err != nil {
+				t.Fatalf("Failed to initialize JobSet plugin: %v", err)
+			}
+
+			objs, err := p.(framework.ComponentBuilderPlugin).Build(ctx, tc.info, tc.trainJob)
+			if diff := cmp.Diff(tc.wantError, err, cmpopts.EquateErrors()); diff != "" {
+				t.Errorf("Unexpected error (-want,+got):\n%s", diff)
+			}
+			if tc.wantNilResult && len(objs) != 0 {
+				t.Errorf("Expected Build() to return no apply configs, got %d", len(objs))
+			}
+			if !tc.wantNilResult && len(objs) == 0 {
+				t.Errorf("Expected Build() to return apply configs, got none")
+			}
+			// Verify whether the existing JobSet was deleted.
+			if tc.existingJobSet != nil {
+				js := &jobsetv1alpha2.JobSet{}
+				getErr := cli.Get(ctx, client.ObjectKeyFromObject(tc.existingJobSet), js)
+				wasDeleted := apierrors.IsNotFound(getErr)
+				if tc.wantJobSetDeleted && !wasDeleted {
+					t.Errorf("Expected existing JobSet to be deleted, but it still exists")
+				}
+				if !tc.wantJobSetDeleted && wasDeleted {
+					t.Errorf("Expected existing JobSet to remain, but it was deleted")
+				}
+			}
+		})
+	}
+}
 
 func TestJobSet(t *testing.T) {
 	cases := map[string]struct {
