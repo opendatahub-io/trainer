@@ -138,14 +138,11 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	setSuspendedCondition(&trainJob)
 
 	if statusErr := setTrainJobStatus(ctx, runtime, &trainJob); statusErr != nil {
-		// RHOAIENG-48867: When Build() deleted a stale suspended JobSet due to an
-		// immutable spec.replicatedJobs change (e.g., post-upgrade image update), the
-		// JobSet is transiently absent. Detect this by: reconcileObjects succeeded (err==nil),
-		// the TrainJob is not suspended, and the JobSet is NotFound. Record a Normal event
-		// so operators can observe the automatic recreation.
+		// The JobSet may be transiently absent while being recreated after a spec change.
+		// Emit an event so operators can observe the automatic recreation.
 		if err == nil && apierrors.IsNotFound(statusErr) && !ptr.Deref(trainJob.Spec.Suspend, false) {
 			r.recorder.Event(&trainJob, corev1.EventTypeNormal, "JobSetRecreating",
-				"Stale suspended JobSet deleted and will be recreated due to runtime spec changes post-upgrade")
+				"Stale suspended JobSet deleted and will be recreated due to runtime spec changes")
 		}
 		err = errors.Join(err, statusErr)
 	}

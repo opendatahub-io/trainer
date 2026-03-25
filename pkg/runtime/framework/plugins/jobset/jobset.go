@@ -280,10 +280,8 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 	}
 
-	// Init the JobSet apply configuration from the runtime template spec.
-	// The full build must happen before the spec comparison below (RHOAIENG-48867)
-	// so that all builder mutations (Initializer, Trainer, PodLabels, PodAnnotations)
-	// are reflected in the desired state used for the comparison.
+	// Build the full desired JobSet spec before the immutability check below,
+	// so the comparison reflects all builder mutations.
 	jobSetBuilder := NewBuilder(jobsetv1alpha2ac.JobSet(trainJob.Name, trainJob.Namespace).
 		WithLabels(maps.Clone(info.Labels)).
 		WithAnnotations(maps.Clone(info.Annotations)).
@@ -306,31 +304,17 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 			WithController(true).
 			WithBlockOwnerDeletion(true))
 
-	// RHOAIENG-48867: If the existing JobSet is suspended and the TrainJob has been
-	// resumed (Kueue admitted it, Suspend=false) but spec.replicatedJobs has changed
-	// (e.g., container images updated during a ClusterTrainingRuntime upgrade), delete
-	// the stale JobSet so it can be recreated with the new spec on the next reconcile
-	// cycle. This is required because spec.replicatedJobs is immutable in JobSet and
-	// cannot be updated in-place — the admission webhook rejects such updates.
-	//
-	// The !Suspend guard is critical: when both the TrainJob and JobSet are suspended,
-	// SSA can update spec.replicatedJobs normally (e.g., user changing trainer image
-	// while suspended). Delete-recreate is only needed when the TrainJob transitions
-	// from suspended to running and the runtime spec has changed.
-	//
-	// The comparison uses the fully-built desired JobSet spec so that all builder
-	// mutations (Initializer, Trainer, PodLabels, PodAnnotations) are accounted for,
-	// covering container and initContainer images, added and removed containers.
+	// spec.replicatedJobs is immutable in JobSet; SSA cannot update it in-place.
+	// When the TrainJob is resumed (Suspend=false) but the existing JobSet is still
+	// suspended with a stale spec (e.g., after a runtime image upgrade), delete the
+	// JobSet so it is recreated with the current spec on the next reconcile.
+	// Background propagation avoids adding a finalizer the controller won't remove.
 	if oldJobSet != nil &&
 		ptr.Deref(oldJobSet.Spec.Suspend, false) &&
 		!ptr.Deref(trainJob.Spec.Suspend, false) &&
 		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSet.Spec.ReplicatedJobs) {
-		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
+		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed, will recreate",
 			"jobSet", client.ObjectKeyFromObject(trainJob))
-		// Use background propagation: the JobSet is suspended so there are no
-		// running pods to clean up. Background deletion removes the object
-		// immediately without adding a foregroundDeletion finalizer, allowing
-		// the next reconcile to recreate the JobSet without delay.
 		if err := j.client.Delete(ctx, oldJobSet,
 			client.PropagationPolicy(metav1.DeletePropagationBackground),
 		); client.IgnoreNotFound(err) != nil {
@@ -342,15 +326,9 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 	return []apiruntime.ApplyConfiguration{jobSet}, nil
 }
 
-// replicatedJobsSpecChanged reports whether the desired ReplicatedJobs differ from
-// the existing JobSet's replicatedJobs in ways that would trigger the immutability
-// constraint (different count, names, or container images). This covers the upgrade
-// scenario where a ClusterTrainingRuntime change updates the runtime container image.
-// RHOAIENG-48867
-//
-// desired must be the fully-built desired spec — all builder mutations (Initializer,
-// Trainer, PodLabels, PodAnnotations) must be applied before calling this function
-// so that the comparison reflects the effective state that will be applied to the cluster.
+// replicatedJobsSpecChanged reports whether the container or initContainer images
+// differ between the existing and desired ReplicatedJobs, indicating the JobSet
+// would violate the spec.replicatedJobs immutability constraint if updated in-place.
 func replicatedJobsSpecChanged(
 	existing []jobsetv1alpha2.ReplicatedJob,
 	desired []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration,
@@ -368,7 +346,6 @@ func replicatedJobsSpecChanged(
 		}
 		e, ok := existingByName[*d.Name]
 		if !ok {
-			// A replicated job with this name does not exist in the current JobSet.
 			return true
 		}
 		if d.Template == nil || d.Template.Spec == nil ||
@@ -378,7 +355,6 @@ func replicatedJobsSpecChanged(
 		dSpec := d.Template.Spec.Template.Spec
 		eSpec := &e.Template.Spec.Template.Spec
 
-		// Check containers: detect changed/added images (desired → existing direction).
 		existingImages := make(map[string]string, len(eSpec.Containers))
 		for _, c := range eSpec.Containers {
 			existingImages[c.Name] = c.Image
@@ -393,14 +369,12 @@ func replicatedJobsSpecChanged(
 				return true
 			}
 		}
-		// Detect containers removed from desired (existing → desired direction).
 		for _, c := range eSpec.Containers {
 			if !desiredContainerNames.Has(c.Name) {
 				return true
 			}
 		}
 
-		// Repeat the same checks for initContainers.
 		existingInitImages := make(map[string]string, len(eSpec.InitContainers))
 		for _, c := range eSpec.InitContainers {
 			existingInitImages[c.Name] = c.Image
