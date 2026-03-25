@@ -1455,6 +1455,17 @@ alpha-node-0-1.alpha slots=8
 		ginkgo.AfterEach(func() {
 			gomega.Expect(k8sClient.DeleteAllOf(ctx, &trainer.TrainJob{}, client.InNamespace(ns.Name))).Should(gomega.Succeed())
 			gomega.Expect(k8sClient.DeleteAllOf(ctx, &trainer.ClusterTrainingRuntime{})).Should(gomega.Succeed())
+			// Wait for resources to be fully removed to avoid name collisions in subsequent tests.
+			gomega.Eventually(func(g gomega.Gomega) {
+				trainJobList := &trainer.TrainJobList{}
+				g.Expect(k8sClient.List(ctx, trainJobList, client.InNamespace(ns.Name))).Should(gomega.Succeed())
+				g.Expect(trainJobList.Items).Should(gomega.BeEmpty())
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			gomega.Eventually(func(g gomega.Gomega) {
+				runtimeList := &trainer.ClusterTrainingRuntimeList{}
+				g.Expect(k8sClient.List(ctx, runtimeList)).Should(gomega.Succeed())
+				g.Expect(runtimeList.Items).Should(gomega.BeEmpty())
+			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 		})
 
 		ginkgo.BeforeEach(func() {

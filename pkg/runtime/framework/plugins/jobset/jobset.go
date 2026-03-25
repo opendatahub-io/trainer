@@ -280,45 +280,10 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 	}
 
-	// RHOAIENG-48867: If the existing JobSet is suspended and the TrainJob has been
-	// resumed (Kueue admitted it, Suspend=false) but spec.replicatedJobs has changed
-	// (e.g., container images updated during a ClusterTrainingRuntime upgrade), delete
-	// the stale JobSet so it can be recreated with the new spec on the next reconcile
-	// cycle. This is required because spec.replicatedJobs is immutable in JobSet and
-	// cannot be updated in-place — the admission webhook rejects such updates.
-	//
-	// The !Suspend guard is critical: when both the TrainJob and JobSet are suspended,
-	// SSA can update spec.replicatedJobs normally (e.g., user changing trainer image
-	// while suspended). Delete-recreate is only needed when the TrainJob transitions
-	// from suspended to running and the runtime spec has changed.
-	//
-	// trainerImage corrects the node container comparison: jobSetSpec holds the raw
-	// runtime template image for the node container at this point (the builder applies
-	// TrainJob.Spec.Trainer.Image override later). Without this, every normal admission
-	// would incorrectly detect a node image change and trigger an unnecessary deletion.
-	var trainerImage *string
-	if trainJob.Spec.Trainer != nil {
-		trainerImage = trainJob.Spec.Trainer.Image
-	}
-	if oldJobSet != nil &&
-		ptr.Deref(oldJobSet.Spec.Suspend, false) &&
-		!ptr.Deref(trainJob.Spec.Suspend, false) &&
-		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSetSpec.ReplicatedJobs, trainerImage) {
-		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
-			"jobSet", client.ObjectKeyFromObject(trainJob))
-		// Use background propagation: the JobSet is suspended so there are no
-		// running pods to clean up. Background deletion removes the object
-		// immediately without adding a foregroundDeletion finalizer, allowing
-		// the next reconcile to recreate the JobSet without delay.
-		if err := j.client.Delete(ctx, oldJobSet,
-			client.PropagationPolicy(metav1.DeletePropagationBackground),
-		); client.IgnoreNotFound(err) != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-
-	// Init the JobSet apply configuration from the runtime template spec
+	// Init the JobSet apply configuration from the runtime template spec.
+	// The full build must happen before the spec comparison below (RHOAIENG-48867)
+	// so that all builder mutations (Initializer, Trainer, PodLabels, PodAnnotations)
+	// are reflected in the desired state used for the comparison.
 	jobSetBuilder := NewBuilder(jobsetv1alpha2ac.JobSet(trainJob.Name, trainJob.Namespace).
 		WithLabels(maps.Clone(info.Labels)).
 		WithAnnotations(maps.Clone(info.Annotations)).
@@ -341,6 +306,39 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 			WithController(true).
 			WithBlockOwnerDeletion(true))
 
+	// RHOAIENG-48867: If the existing JobSet is suspended and the TrainJob has been
+	// resumed (Kueue admitted it, Suspend=false) but spec.replicatedJobs has changed
+	// (e.g., container images updated during a ClusterTrainingRuntime upgrade), delete
+	// the stale JobSet so it can be recreated with the new spec on the next reconcile
+	// cycle. This is required because spec.replicatedJobs is immutable in JobSet and
+	// cannot be updated in-place — the admission webhook rejects such updates.
+	//
+	// The !Suspend guard is critical: when both the TrainJob and JobSet are suspended,
+	// SSA can update spec.replicatedJobs normally (e.g., user changing trainer image
+	// while suspended). Delete-recreate is only needed when the TrainJob transitions
+	// from suspended to running and the runtime spec has changed.
+	//
+	// The comparison uses the fully-built desired JobSet spec so that all builder
+	// mutations (Initializer, Trainer, PodLabels, PodAnnotations) are accounted for,
+	// covering container and initContainer images, added and removed containers.
+	if oldJobSet != nil &&
+		ptr.Deref(oldJobSet.Spec.Suspend, false) &&
+		!ptr.Deref(trainJob.Spec.Suspend, false) &&
+		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSet.Spec.ReplicatedJobs) {
+		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
+			"jobSet", client.ObjectKeyFromObject(trainJob))
+		// Use background propagation: the JobSet is suspended so there are no
+		// running pods to clean up. Background deletion removes the object
+		// immediately without adding a foregroundDeletion finalizer, allowing
+		// the next reconcile to recreate the JobSet without delay.
+		if err := j.client.Delete(ctx, oldJobSet,
+			client.PropagationPolicy(metav1.DeletePropagationBackground),
+		); client.IgnoreNotFound(err) != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
 	return []apiruntime.ApplyConfiguration{jobSet}, nil
 }
 
@@ -350,15 +348,12 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 // scenario where a ClusterTrainingRuntime change updates the runtime container image.
 // RHOAIENG-48867
 //
-// trainerImage is the TrainJob.Spec.Trainer.Image override (may be nil). The
-// builder applies this override to the node container after this function is
-// called, so the raw jobSetSpec still holds the runtime template image for that
-// container. Passing trainerImage here ensures we compare the effective image
-// that will end up in the JobSet, avoiding false-positive deletions.
+// desired must be the fully-built desired spec — all builder mutations (Initializer,
+// Trainer, PodLabels, PodAnnotations) must be applied before calling this function
+// so that the comparison reflects the effective state that will be applied to the cluster.
 func replicatedJobsSpecChanged(
 	existing []jobsetv1alpha2.ReplicatedJob,
 	desired []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration,
-	trainerImage *string,
 ) bool {
 	if len(existing) != len(desired) {
 		return true
@@ -380,23 +375,48 @@ func replicatedJobsSpecChanged(
 			d.Template.Spec.Template == nil || d.Template.Spec.Template.Spec == nil {
 			continue
 		}
-		existingImages := make(map[string]string, len(e.Template.Spec.Template.Spec.Containers))
-		for _, c := range e.Template.Spec.Template.Spec.Containers {
+		dSpec := d.Template.Spec.Template.Spec
+		eSpec := &e.Template.Spec.Template.Spec
+
+		// Check containers: detect changed/added images (desired → existing direction).
+		existingImages := make(map[string]string, len(eSpec.Containers))
+		for _, c := range eSpec.Containers {
 			existingImages[c.Name] = c.Image
 		}
-		for _, c := range d.Template.Spec.Template.Spec.Containers {
+		desiredContainerNames := sets.New[string]()
+		for _, c := range dSpec.Containers {
 			if c.Name == nil || c.Image == nil {
 				continue
 			}
-			// For the node (trainer) container, use the TrainJob's trainer image
-			// override as the effective desired image. The builder applies this
-			// override after replicatedJobsSpecChanged is called, so jobSetSpec
-			// still has the raw runtime template image at this point.
-			effectiveImage := c.Image
-			if *c.Name == constants.Node && trainerImage != nil {
-				effectiveImage = trainerImage
+			desiredContainerNames.Insert(*c.Name)
+			if img, found := existingImages[*c.Name]; !found || img != *c.Image {
+				return true
 			}
-			if img, found := existingImages[*c.Name]; !found || img != *effectiveImage {
+		}
+		// Detect containers removed from desired (existing → desired direction).
+		for _, c := range eSpec.Containers {
+			if !desiredContainerNames.Has(c.Name) {
+				return true
+			}
+		}
+
+		// Repeat the same checks for initContainers.
+		existingInitImages := make(map[string]string, len(eSpec.InitContainers))
+		for _, c := range eSpec.InitContainers {
+			existingInitImages[c.Name] = c.Image
+		}
+		desiredInitNames := sets.New[string]()
+		for _, c := range dSpec.InitContainers {
+			if c.Name == nil || c.Image == nil {
+				continue
+			}
+			desiredInitNames.Insert(*c.Name)
+			if img, found := existingInitImages[*c.Name]; !found || img != *c.Image {
+				return true
+			}
+		}
+		for _, c := range eSpec.InitContainers {
+			if !desiredInitNames.Has(c.Name) {
 				return true
 			}
 		}

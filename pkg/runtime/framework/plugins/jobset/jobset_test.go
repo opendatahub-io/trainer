@@ -122,21 +122,23 @@ func TestBuild_ImmutableJobSetUpgrade(t *testing.T) {
 	}
 
 	cases := map[string]struct {
-		trainJob          *trainer.TrainJob
-		existingJobSet    *jobsetv1alpha2.JobSet
-		info              *runtime.Info
-		wantNilResult     bool // true if Build() should return no apply configs
-		wantJobSetDeleted bool // true if the existing JobSet should be deleted
-		wantError         error
+		trainJob               *trainer.TrainJob
+		existingJobSet         *jobsetv1alpha2.JobSet
+		info                   *runtime.Info
+		wantNilResult          bool // true if Build() should return no apply configs
+		wantJobSetDeleted      bool // true if the existing JobSet should be deleted
+		wantBackgroundDeletion bool // true if the delete should use Background propagation
+		wantError              error
 	}{
 		"suspended JobSet with changed image is deleted on upgrade (RHOAIENG-48867)": {
 			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(false).
 				Obj(),
-			existingJobSet:    makeSuspendedJobSet(oldImage),
-			info:              makeInfo(newImage),
-			wantNilResult:     true,
-			wantJobSetDeleted: true,
+			existingJobSet:         makeSuspendedJobSet(oldImage),
+			info:                   makeInfo(newImage),
+			wantNilResult:          true,
+			wantJobSetDeleted:      true,
+			wantBackgroundDeletion: true,
 		},
 		"suspended JobSet with unchanged image is not deleted": {
 			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
@@ -191,10 +193,24 @@ func TestBuild_ImmutableJobSetUpgrade(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			t.Cleanup(cancel)
 
+			var capturedPropagation *metav1.DeletionPropagation
 			clientBuilder := utiltesting.NewClientBuilder()
 			if tc.existingJobSet != nil {
 				clientBuilder = clientBuilder.WithObjects(tc.existingJobSet)
 			}
+			// Intercept Delete calls to capture the deletion propagation policy.
+			clientBuilder = clientBuilder.WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(ctx context.Context, cli client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*jobsetv1alpha2.JobSet); ok {
+						deleteOpts := &client.DeleteOptions{}
+						for _, o := range opts {
+							o.ApplyToDelete(deleteOpts)
+						}
+						capturedPropagation = deleteOpts.PropagationPolicy
+					}
+					return cli.Delete(ctx, obj, opts...)
+				},
+			})
 			cli := clientBuilder.Build()
 
 			p, err := New(ctx, cli, nil)
@@ -222,6 +238,14 @@ func TestBuild_ImmutableJobSetUpgrade(t *testing.T) {
 				}
 				if !tc.wantJobSetDeleted && wasDeleted {
 					t.Errorf("Expected existing JobSet to remain, but it was deleted")
+				}
+			}
+			// Verify deletion propagation policy for cases that expect background deletion.
+			if tc.wantBackgroundDeletion {
+				if capturedPropagation == nil {
+					t.Errorf("Expected Delete to be called with Background propagation, but Delete was not called")
+				} else if *capturedPropagation != metav1.DeletePropagationBackground {
+					t.Errorf("Expected DeletePropagationBackground, got %v", *capturedPropagation)
 				}
 			}
 		})
