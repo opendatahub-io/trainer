@@ -306,10 +306,12 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSetSpec.ReplicatedJobs, trainerImage) {
 		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
 			"jobSet", client.ObjectKeyFromObject(trainJob))
-		// Use foreground propagation so any owned child resources are cleaned up
-		// before the JobSet object itself is removed.
+		// Use background propagation: the JobSet is suspended so there are no
+		// running pods to clean up. Background deletion removes the object
+		// immediately without adding a foregroundDeletion finalizer, allowing
+		// the next reconcile to recreate the JobSet without delay.
 		if err := j.client.Delete(ctx, oldJobSet,
-			client.PropagationPolicy(metav1.DeletePropagationForeground),
+			client.PropagationPolicy(metav1.DeletePropagationBackground),
 		); client.IgnoreNotFound(err) != nil {
 			return nil, err
 		}
