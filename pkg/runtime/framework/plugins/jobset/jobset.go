@@ -285,8 +285,17 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 	// delete the stale JobSet so it can be recreated with the new spec on the next
 	// reconcile cycle. This is required because spec.replicatedJobs is immutable in
 	// JobSet and cannot be updated in-place — the admission webhook rejects such updates.
+	//
+	// Pass the TrainJob's trainer image so the comparison uses the effective node
+	// container image (which the builder will apply later via Trainer()), not the
+	// raw runtime template image. Without this, every second reconcile would
+	// incorrectly detect an image change and delete the JobSet.
+	var trainerImage *string
+	if trainJob.Spec.Trainer != nil {
+		trainerImage = trainJob.Spec.Trainer.Image
+	}
 	if oldJobSet != nil && ptr.Deref(oldJobSet.Spec.Suspend, false) &&
-		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSetSpec.ReplicatedJobs) {
+		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSetSpec.ReplicatedJobs, trainerImage) {
 		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
 			"jobSet", client.ObjectKeyFromObject(trainJob))
 		// Use foreground propagation so any owned child resources are cleaned up
@@ -330,9 +339,16 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 // constraint (different count, names, or container images). This covers the upgrade
 // scenario where a ClusterTrainingRuntime change updates the runtime container image.
 // RHOAIENG-48867
+//
+// trainerImage is the TrainJob.Spec.Trainer.Image override (may be nil). The
+// builder applies this override to the node container after this function is
+// called, so the raw jobSetSpec still holds the runtime template image for that
+// container. Passing trainerImage here ensures we compare the effective image
+// that will end up in the JobSet, avoiding false-positive deletions.
 func replicatedJobsSpecChanged(
 	existing []jobsetv1alpha2.ReplicatedJob,
 	desired []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration,
+	trainerImage *string,
 ) bool {
 	if len(existing) != len(desired) {
 		return true
@@ -362,7 +378,15 @@ func replicatedJobsSpecChanged(
 			if c.Name == nil || c.Image == nil {
 				continue
 			}
-			if img, found := existingImages[*c.Name]; !found || img != *c.Image {
+			// For the node (trainer) container, use the TrainJob's trainer image
+			// override as the effective desired image. The builder applies this
+			// override after replicatedJobsSpecChanged is called, so jobSetSpec
+			// still has the raw runtime template image at this point.
+			effectiveImage := c.Image
+			if *c.Name == constants.Node && trainerImage != nil {
+				effectiveImage = trainerImage
+			}
+			if img, found := existingImages[*c.Name]; !found || img != *effectiveImage {
 				return true
 			}
 		}
