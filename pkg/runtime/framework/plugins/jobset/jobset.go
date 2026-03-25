@@ -280,21 +280,29 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 	}
 
-	// RHOAIENG-48867: If the existing JobSet is suspended and spec.replicatedJobs has
-	// changed (e.g., container images updated during a ClusterTrainingRuntime upgrade),
-	// delete the stale JobSet so it can be recreated with the new spec on the next
-	// reconcile cycle. This is required because spec.replicatedJobs is immutable in
-	// JobSet and cannot be updated in-place — the admission webhook rejects such updates.
+	// RHOAIENG-48867: If the existing JobSet is suspended and the TrainJob has been
+	// resumed (Kueue admitted it, Suspend=false) but spec.replicatedJobs has changed
+	// (e.g., container images updated during a ClusterTrainingRuntime upgrade), delete
+	// the stale JobSet so it can be recreated with the new spec on the next reconcile
+	// cycle. This is required because spec.replicatedJobs is immutable in JobSet and
+	// cannot be updated in-place — the admission webhook rejects such updates.
 	//
-	// Pass the TrainJob's trainer image so the comparison uses the effective node
-	// container image (which the builder will apply later via Trainer()), not the
-	// raw runtime template image. Without this, every second reconcile would
-	// incorrectly detect an image change and delete the JobSet.
+	// The !Suspend guard is critical: when both the TrainJob and JobSet are suspended,
+	// SSA can update spec.replicatedJobs normally (e.g., user changing trainer image
+	// while suspended). Delete-recreate is only needed when the TrainJob transitions
+	// from suspended to running and the runtime spec has changed.
+	//
+	// trainerImage corrects the node container comparison: jobSetSpec holds the raw
+	// runtime template image for the node container at this point (the builder applies
+	// TrainJob.Spec.Trainer.Image override later). Without this, every normal admission
+	// would incorrectly detect a node image change and trigger an unnecessary deletion.
 	var trainerImage *string
 	if trainJob.Spec.Trainer != nil {
 		trainerImage = trainJob.Spec.Trainer.Image
 	}
-	if oldJobSet != nil && ptr.Deref(oldJobSet.Spec.Suspend, false) &&
+	if oldJobSet != nil &&
+		ptr.Deref(oldJobSet.Spec.Suspend, false) &&
+		!ptr.Deref(trainJob.Spec.Suspend, false) &&
 		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSetSpec.ReplicatedJobs, trainerImage) {
 		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed post-upgrade, will recreate",
 			"jobSet", client.ObjectKeyFromObject(trainJob))

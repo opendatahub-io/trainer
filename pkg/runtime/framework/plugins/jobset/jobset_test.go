@@ -160,6 +160,19 @@ func TestBuild_ImmutableJobSetUpgrade(t *testing.T) {
 			wantNilResult:     true, // existing guard skips update when both are running
 			wantJobSetDeleted: false,
 		},
+		"suspended TrainJob with changed image is NOT deleted (SSA handles it)": {
+			// When the TrainJob is still suspended, both TrainJob and JobSet are
+			// suspended. SSA can update spec.replicatedJobs on a suspended JobSet
+			// normally (e.g., user changes trainer image while suspended). The
+			// delete-recreate path must not fire here.
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(true).
+				Obj(),
+			existingJobSet:    makeSuspendedJobSet(oldImage),
+			info:              makeInfo(newImage),
+			wantNilResult:     false,
+			wantJobSetDeleted: false,
+		},
 		"no existing JobSet results in a new apply config": {
 			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(false).
