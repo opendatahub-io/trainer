@@ -90,6 +90,55 @@ func (r *ClusterTrainingRuntimeReconciler) Reconcile(ctx context.Context, reques
 	return ctrl.Result{}, nil
 }
 
+// GracefulShutdown removes finalizers from ClusterTrainingRuntimes during operator shutdown.
+// This prevents resources from being stuck in Terminating state when the operator is terminated
+// before it can complete normal finalizer cleanup.
+// Fix for RHOAIENG-42316: Stuck Trainer CR when disabling Trainer component.
+func (r *ClusterTrainingRuntimeReconciler) GracefulShutdown(ctx context.Context) error {
+	log := r.log.WithName("graceful-shutdown")
+	log.Info("Starting graceful shutdown for ClusterTrainingRuntimes")
+
+	// List all ClusterTrainingRuntimes
+	var clRuntimeList trainer.ClusterTrainingRuntimeList
+	if err := r.client.List(ctx, &clRuntimeList); err != nil {
+		log.Error(err, "Failed to list ClusterTrainingRuntimes during graceful shutdown")
+		return err
+	}
+
+	// Process ClusterTrainingRuntimes that are being deleted
+	for i := range clRuntimeList.Items {
+		clRuntime := &clRuntimeList.Items[i]
+
+		// Skip if not being deleted
+		if clRuntime.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// Skip if finalizer not present
+		if !ctrlutil.ContainsFinalizer(clRuntime, constants.ResourceInUseFinalizer) {
+			continue
+		}
+
+		log.Info("Removing finalizer from terminating ClusterTrainingRuntime",
+			"name", clRuntime.Name)
+
+		// Remove the finalizer to allow deletion
+		ctrlutil.RemoveFinalizer(clRuntime, constants.ResourceInUseFinalizer)
+		if err := r.client.Update(ctx, clRuntime); err != nil {
+			log.Error(err, "Failed to remove finalizer during graceful shutdown",
+				"name", clRuntime.Name)
+			// Continue processing others even if one fails
+			continue
+		}
+
+		log.Info("Successfully removed finalizer during graceful shutdown",
+			"name", clRuntime.Name)
+	}
+
+	log.Info("Graceful shutdown completed for ClusterTrainingRuntimes")
+	return nil
+}
+
 func (r *ClusterTrainingRuntimeReconciler) NotifyTrainJobUpdate(oldJob, newJob *trainer.TrainJob) {
 	var clRuntimeNSName *types.NamespacedName
 	switch {

@@ -17,10 +17,12 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"net/http"
 	"os"
+	"time"
 
 	zaplog "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -135,25 +137,63 @@ func main() {
 		setupLog.Error(err, "Could not initialize runtimes")
 		os.Exit(1)
 	}
+
+	// Channel to receive reconcilers from setupControllers goroutine
+	reconcilersCh := make(chan *controller.Reconcilers, 1)
+
 	// Set up controllers using goroutines to start the manager quickly.
-	go setupControllers(mgr, runtimes, certsReady)
+	go setupControllers(mgr, runtimes, certsReady, reconcilersCh)
 
 	setupLog.Info("Starting manager")
 	if err = mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "Could not run manager")
 		os.Exit(1)
 	}
+
+	// Perform graceful shutdown: remove finalizers from terminating resources
+	// This prevents resources from being stuck in Terminating state when the operator exits
+	// Fix for RHOAIENG-42316: Stuck Trainer CR when disabling Trainer component
+	select {
+	case reconcilers := <-reconcilersCh:
+		if reconcilers != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			setupLog.Info("Performing graceful shutdown")
+
+			if reconcilers.ClusterTrainingRuntime != nil {
+				if err := reconcilers.ClusterTrainingRuntime.GracefulShutdown(shutdownCtx); err != nil {
+					setupLog.Error(err, "Error during ClusterTrainingRuntime graceful shutdown")
+				}
+			}
+
+			if reconcilers.TrainingRuntime != nil {
+				if err := reconcilers.TrainingRuntime.GracefulShutdown(shutdownCtx); err != nil {
+					setupLog.Error(err, "Error during TrainingRuntime graceful shutdown")
+				}
+			}
+
+			setupLog.Info("Graceful shutdown completed")
+		}
+	default:
+		setupLog.Info("Reconcilers not available for graceful shutdown")
+	}
 }
 
-func setupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, certsReady <-chan struct{}) {
+func setupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, certsReady <-chan struct{}, reconcilersCh chan<- *controller.Reconcilers) {
 	setupLog.Info("Waiting for certificate generation to complete")
 	<-certsReady
 	setupLog.Info("Certs ready")
 
-	if failedCtrlName, err := controller.SetupControllers(mgr, runtimes, ctrlpkg.Options{}); err != nil {
+	failedCtrlName, reconcilers, err := controller.SetupControllers(mgr, runtimes, ctrlpkg.Options{})
+	if err != nil {
 		setupLog.Error(err, "Could not create controller", "controller", failedCtrlName)
 		os.Exit(1)
 	}
+
+	// Send reconcilers to main for graceful shutdown handling
+	reconcilersCh <- reconcilers
+
 	if failedWebhook, err := webhooks.Setup(mgr, runtimes); err != nil {
 		setupLog.Error(err, "Could not create webhook", "webhook", failedWebhook)
 		os.Exit(1)

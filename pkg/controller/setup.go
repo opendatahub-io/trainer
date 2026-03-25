@@ -24,20 +24,26 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 )
 
-func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, options controller.Options) (string, error) {
+// Reconcilers holds reconciler instances for graceful shutdown handling.
+type Reconcilers struct {
+	TrainingRuntime        *TrainingRuntimeReconciler
+	ClusterTrainingRuntime *ClusterTrainingRuntimeReconciler
+}
+
+func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, options controller.Options) (string, *Reconcilers, error) {
 	runtimeRec := NewTrainingRuntimeReconciler(
 		mgr.GetClient(),
 		mgr.GetEventRecorderFor("trainer-trainingruntime-controller"),
 	)
 	if err := runtimeRec.SetupWithManager(mgr, options); err != nil {
-		return trainer.TrainingRuntimeKind, err
+		return trainer.TrainingRuntimeKind, nil, err
 	}
 	clRuntimeRec := NewClusterTrainingRuntimeReconciler(
 		mgr.GetClient(),
 		mgr.GetEventRecorderFor("trainer-clustertrainingruntime-controller"),
 	)
 	if err := clRuntimeRec.SetupWithManager(mgr, options); err != nil {
-		return trainer.ClusterTrainingRuntimeKind, err
+		return trainer.ClusterTrainingRuntimeKind, nil, err
 	}
 	if err := NewTrainJobReconciler(
 		mgr.GetClient(),
@@ -46,7 +52,13 @@ func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, opt
 		runtimes,
 		WithWatchers(runtimeRec, clRuntimeRec),
 	).SetupWithManager(mgr, options); err != nil {
-		return trainer.TrainJobKind, err
+		return trainer.TrainJobKind, nil, err
 	}
-	return "", nil
+
+	// Return reconciler instances for graceful shutdown handling
+	reconcilers := &Reconcilers{
+		TrainingRuntime:        runtimeRec,
+		ClusterTrainingRuntime: clRuntimeRec,
+	}
+	return "", reconcilers, nil
 }

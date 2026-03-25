@@ -222,3 +222,110 @@ func TestNotifyTrainJobUpdate_ClusterTrainingRuntimeReconciler(t *testing.T) {
 		})
 	}
 }
+
+// TestGracefulShutdown_ClusterTrainingRuntimeReconciler tests the graceful shutdown behavior
+// for RHOAIENG-42316: Stuck Trainer CR when disabling Trainer component
+func TestGracefulShutdown_ClusterTrainingRuntimeReconciler(t *testing.T) {
+	cases := map[string]struct {
+		clRuntimes              []trainer.ClusterTrainingRuntime
+		wantRemainingFinalizers map[string][]string // runtime name -> finalizers
+		wantDeleted             []string            // runtime names that should be deleted
+	}{
+		"removes finalizer from terminating ClusterTrainingRuntime": {
+			clRuntimes: []trainer.ClusterTrainingRuntime{
+				*utiltesting.MakeClusterTrainingRuntimeWrapper("runtime-terminating").
+					Finalizers(constants.ResourceInUseFinalizer).
+					DeletionTimestamp(metav1.Now()).
+					Obj(),
+			},
+			wantDeleted: []string{"runtime-terminating"}, // Deleted after finalizer removed
+		},
+		"keeps finalizer on non-terminating ClusterTrainingRuntime": {
+			clRuntimes: []trainer.ClusterTrainingRuntime{
+				*utiltesting.MakeClusterTrainingRuntimeWrapper("runtime-active").
+					Finalizers(constants.ResourceInUseFinalizer).
+					Obj(),
+			},
+			wantRemainingFinalizers: map[string][]string{
+				"runtime-active": {constants.ResourceInUseFinalizer}, // Finalizer should remain
+			},
+		},
+		"handles multiple runtimes with mixed states": {
+			clRuntimes: []trainer.ClusterTrainingRuntime{
+				*utiltesting.MakeClusterTrainingRuntimeWrapper("runtime-terminating-1").
+					Finalizers(constants.ResourceInUseFinalizer).
+					DeletionTimestamp(metav1.Now()).
+					Obj(),
+				*utiltesting.MakeClusterTrainingRuntimeWrapper("runtime-active").
+					Finalizers(constants.ResourceInUseFinalizer).
+					Obj(),
+				*utiltesting.MakeClusterTrainingRuntimeWrapper("runtime-terminating-2").
+					Finalizers(constants.ResourceInUseFinalizer, "another-finalizer").
+					DeletionTimestamp(metav1.Now()).
+					Obj(),
+			},
+			wantDeleted: []string{"runtime-terminating-1"}, // Deleted after last finalizer removed
+			wantRemainingFinalizers: map[string][]string{
+				"runtime-active":        {constants.ResourceInUseFinalizer}, // Kept (not terminating)
+				"runtime-terminating-2": {"another-finalizer"},              // Only ResourceInUseFinalizer removed
+			},
+		},
+		"does not fail on runtime without finalizer": {
+			clRuntimes: []trainer.ClusterTrainingRuntime{
+				*utiltesting.MakeClusterTrainingRuntimeWrapper("runtime-active-no-finalizer").
+					Obj(),
+			},
+			wantRemainingFinalizers: map[string][]string{
+				"runtime-active-no-finalizer": nil, // No finalizer to remove, not terminating
+			},
+		},
+		"handles empty list": {
+			clRuntimes:              []trainer.ClusterTrainingRuntime{},
+			wantRemainingFinalizers: map[string][]string{},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Build client with test resources
+			builder := utiltesting.NewClientBuilder()
+			for i := range tc.clRuntimes {
+				builder = builder.WithObjects(&tc.clRuntimes[i])
+			}
+			cli := builder.Build()
+
+			r := NewClusterTrainingRuntimeReconciler(cli, nil)
+
+			// Call GracefulShutdown
+			err := r.GracefulShutdown(ctx)
+			if err != nil {
+				t.Errorf("GracefulShutdown returned unexpected error: %v", err)
+			}
+
+			// Verify resources that should be deleted
+			for _, runtimeName := range tc.wantDeleted {
+				var gotRuntime trainer.ClusterTrainingRuntime
+				err := cli.Get(ctx, client.ObjectKey{Name: runtimeName}, &gotRuntime)
+				if err == nil {
+					t.Errorf("Expected ClusterTrainingRuntime %s to be deleted, but it still exists", runtimeName)
+				}
+			}
+
+			// Verify finalizers on resources that should remain
+			for runtimeName, wantFinalizers := range tc.wantRemainingFinalizers {
+				var gotRuntime trainer.ClusterTrainingRuntime
+				err := cli.Get(ctx, client.ObjectKey{Name: runtimeName}, &gotRuntime)
+				if err != nil {
+					t.Errorf("Failed to get ClusterTrainingRuntime %s: %v", runtimeName, err)
+					continue
+				}
+
+				if diff := cmp.Diff(wantFinalizers, gotRuntime.Finalizers); len(diff) != 0 {
+					t.Errorf("Unexpected finalizers for %s (-want, +got):\n%s", runtimeName, diff)
+				}
+			}
+		})
+	}
+}

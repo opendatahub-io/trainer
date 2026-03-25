@@ -222,3 +222,122 @@ func TestNotifyTrainJobUpdate_TrainingRuntimeReconciler(t *testing.T) {
 		})
 	}
 }
+
+// TestGracefulShutdown_TrainingRuntimeReconciler tests the graceful shutdown behavior
+// for RHOAIENG-42316: Stuck Trainer CR when disabling Trainer component
+func TestGracefulShutdown_TrainingRuntimeReconciler(t *testing.T) {
+	cases := map[string]struct {
+		runtimes                []trainer.TrainingRuntime
+		wantRemainingFinalizers map[string][]string // runtime namespace/name -> finalizers
+		wantDeleted             []string            // runtime namespace/name that should be deleted
+	}{
+		"removes finalizer from terminating TrainingRuntime": {
+			runtimes: []trainer.TrainingRuntime{
+				*utiltesting.MakeTrainingRuntimeWrapper("default", "runtime-terminating").
+					Finalizers(constants.ResourceInUseFinalizer).
+					DeletionTimestamp(metav1.Now()).
+					Obj(),
+			},
+			wantDeleted: []string{"default/runtime-terminating"}, // Deleted after finalizer removed
+		},
+		"keeps finalizer on non-terminating TrainingRuntime": {
+			runtimes: []trainer.TrainingRuntime{
+				*utiltesting.MakeTrainingRuntimeWrapper("default", "runtime-active").
+					Finalizers(constants.ResourceInUseFinalizer).
+					Obj(),
+			},
+			wantRemainingFinalizers: map[string][]string{
+				"default/runtime-active": {constants.ResourceInUseFinalizer}, // Finalizer should remain
+			},
+		},
+		"handles multiple runtimes across namespaces": {
+			runtimes: []trainer.TrainingRuntime{
+				*utiltesting.MakeTrainingRuntimeWrapper("ns1", "runtime-terminating").
+					Finalizers(constants.ResourceInUseFinalizer).
+					DeletionTimestamp(metav1.Now()).
+					Obj(),
+				*utiltesting.MakeTrainingRuntimeWrapper("ns2", "runtime-active").
+					Finalizers(constants.ResourceInUseFinalizer).
+					Obj(),
+				*utiltesting.MakeTrainingRuntimeWrapper("ns3", "runtime-terminating-multi").
+					Finalizers(constants.ResourceInUseFinalizer, "another-finalizer").
+					DeletionTimestamp(metav1.Now()).
+					Obj(),
+			},
+			wantDeleted: []string{"ns1/runtime-terminating"}, // Deleted after last finalizer removed
+			wantRemainingFinalizers: map[string][]string{
+				"ns2/runtime-active":            {constants.ResourceInUseFinalizer}, // Kept (not terminating)
+				"ns3/runtime-terminating-multi": {"another-finalizer"},              // Only ResourceInUseFinalizer removed
+			},
+		},
+		"does not fail on runtime without finalizer": {
+			runtimes: []trainer.TrainingRuntime{
+				*utiltesting.MakeTrainingRuntimeWrapper("default", "runtime-active-no-finalizer").
+					Obj(),
+			},
+			wantRemainingFinalizers: map[string][]string{
+				"default/runtime-active-no-finalizer": nil, // No finalizer to remove, not terminating
+			},
+		},
+		"handles empty list": {
+			runtimes:                []trainer.TrainingRuntime{},
+			wantRemainingFinalizers: map[string][]string{},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Build client with test resources
+			builder := utiltesting.NewClientBuilder()
+			for i := range tc.runtimes {
+				builder = builder.WithObjects(&tc.runtimes[i])
+			}
+			cli := builder.Build()
+
+			r := NewTrainingRuntimeReconciler(cli, nil)
+
+			// Call GracefulShutdown
+			err := r.GracefulShutdown(ctx)
+			if err != nil {
+				t.Errorf("GracefulShutdown returned unexpected error: %v", err)
+			}
+
+			// Helper to parse namespace/name from key
+			parseKey := func(runtimeKey string) (string, string) {
+				for i, ch := range runtimeKey {
+					if ch == '/' {
+						return runtimeKey[:i], runtimeKey[i+1:]
+					}
+				}
+				return "", ""
+			}
+
+			// Verify resources that should be deleted
+			for _, runtimeKey := range tc.wantDeleted {
+				namespace, name := parseKey(runtimeKey)
+				var gotRuntime trainer.TrainingRuntime
+				err := cli.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &gotRuntime)
+				if err == nil {
+					t.Errorf("Expected TrainingRuntime %s to be deleted, but it still exists", runtimeKey)
+				}
+			}
+
+			// Verify finalizers on resources that should remain
+			for runtimeKey, wantFinalizers := range tc.wantRemainingFinalizers {
+				namespace, name := parseKey(runtimeKey)
+				var gotRuntime trainer.TrainingRuntime
+				err := cli.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &gotRuntime)
+				if err != nil {
+					t.Errorf("Failed to get TrainingRuntime %s: %v", runtimeKey, err)
+					continue
+				}
+
+				if diff := cmp.Diff(wantFinalizers, gotRuntime.Finalizers); len(diff) != 0 {
+					t.Errorf("Unexpected finalizers for %s (-want, +got):\n%s", runtimeKey, diff)
+				}
+			}
+		})
+	}
+}

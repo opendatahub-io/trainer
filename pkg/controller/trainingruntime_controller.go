@@ -94,6 +94,55 @@ func (r *TrainingRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
+// GracefulShutdown removes finalizers from TrainingRuntimes during operator shutdown.
+// This prevents resources from being stuck in Terminating state when the operator is terminated
+// before it can complete normal finalizer cleanup.
+// Fix for RHOAIENG-42316: Stuck Trainer CR when disabling Trainer component.
+func (r *TrainingRuntimeReconciler) GracefulShutdown(ctx context.Context) error {
+	log := r.log.WithName("graceful-shutdown")
+	log.Info("Starting graceful shutdown for TrainingRuntimes")
+
+	// List all TrainingRuntimes across all namespaces
+	var runtimeList trainer.TrainingRuntimeList
+	if err := r.client.List(ctx, &runtimeList); err != nil {
+		log.Error(err, "Failed to list TrainingRuntimes during graceful shutdown")
+		return err
+	}
+
+	// Process TrainingRuntimes that are being deleted
+	for i := range runtimeList.Items {
+		runtime := &runtimeList.Items[i]
+
+		// Skip if not being deleted
+		if runtime.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// Skip if finalizer not present
+		if !ctrlutil.ContainsFinalizer(runtime, constants.ResourceInUseFinalizer) {
+			continue
+		}
+
+		log.Info("Removing finalizer from terminating TrainingRuntime",
+			"namespace", runtime.Namespace, "name", runtime.Name)
+
+		// Remove the finalizer to allow deletion
+		ctrlutil.RemoveFinalizer(runtime, constants.ResourceInUseFinalizer)
+		if err := r.client.Update(ctx, runtime); err != nil {
+			log.Error(err, "Failed to remove finalizer during graceful shutdown",
+				"namespace", runtime.Namespace, "name", runtime.Name)
+			// Continue processing others even if one fails
+			continue
+		}
+
+		log.Info("Successfully removed finalizer during graceful shutdown",
+			"namespace", runtime.Namespace, "name", runtime.Name)
+	}
+
+	log.Info("Graceful shutdown completed for TrainingRuntimes")
+	return nil
+}
+
 func (r *TrainingRuntimeReconciler) NotifyTrainJobUpdate(oldJob, newJob *trainer.TrainJob) {
 	var runtimeNSName *types.NamespacedName
 	switch {
