@@ -23,6 +23,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1454,7 +1455,9 @@ alpha-node-0-1.alpha slots=8
 
 		ginkgo.AfterEach(func() {
 			gomega.Expect(k8sClient.DeleteAllOf(ctx, &trainer.TrainJob{}, client.InNamespace(ns.Name))).Should(gomega.Succeed())
-			gomega.Expect(k8sClient.DeleteAllOf(ctx, &trainer.ClusterTrainingRuntime{})).Should(gomega.Succeed())
+			// Delete only the runtime created by this test, not all ClusterTrainingRuntimes,
+			// to avoid interfering with runtimes created by other tests in the suite.
+			gomega.Expect(k8sClient.Delete(ctx, clTrainingRuntime)).Should(gomega.Succeed())
 			// Wait for resources to be fully removed to avoid name collisions in subsequent tests.
 			gomega.Eventually(func(g gomega.Gomega) {
 				trainJobList := &trainer.TrainJobList{}
@@ -1462,9 +1465,8 @@ alpha-node-0-1.alpha slots=8
 				g.Expect(trainJobList.Items).Should(gomega.BeEmpty())
 			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 			gomega.Eventually(func(g gomega.Gomega) {
-				runtimeList := &trainer.ClusterTrainingRuntimeList{}
-				g.Expect(k8sClient.List(ctx, runtimeList)).Should(gomega.Succeed())
-				g.Expect(runtimeList.Items).Should(gomega.BeEmpty())
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(clTrainingRuntime), &trainer.ClusterTrainingRuntime{})
+				g.Expect(apierrors.IsNotFound(err)).Should(gomega.BeTrue())
 			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 		})
 
@@ -1497,19 +1499,25 @@ alpha-node-0-1.alpha slots=8
 			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 
 			ginkgo.By("Waiting for suspended JobSet to be created with pre-upgrade image")
+			// Capture the original UID so we can later prove the JobSet was deleted and recreated.
+			var originalJobSetUID string
 			gomega.Eventually(func(g gomega.Gomega) {
 				jobSet := &jobsetv1alpha2.JobSet{}
 				g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
 				g.Expect(ptr.Deref(jobSet.Spec.Suspend, false)).Should(gomega.BeTrue())
+				originalJobSetUID = string(jobSet.UID)
+				foundNode := false
 				for _, rJob := range jobSet.Spec.ReplicatedJobs {
 					if rJob.Name == constants.Node {
 						for _, c := range rJob.Template.Spec.Template.Spec.Containers {
 							if c.Name == constants.Node {
+								foundNode = true
 								g.Expect(c.Image).Should(gomega.Equal(preUpgradeImage))
 							}
 						}
 					}
 				}
+				g.Expect(foundNode).Should(gomega.BeTrue(), "node container not found in pre-upgrade JobSet")
 			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 
 			ginkgo.By("Simulating upgrade: updating ClusterTrainingRuntime with post-upgrade image")
@@ -1533,16 +1541,23 @@ alpha-node-0-1.alpha slots=8
 				jobSet := &jobsetv1alpha2.JobSet{}
 				g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
 				g.Expect(ptr.Deref(jobSet.Spec.Suspend, false)).Should(gomega.BeFalse())
+				// The UID must differ from the original — proving the JobSet was deleted and
+				// recreated, not merely updated in place.
+				g.Expect(string(jobSet.UID)).ShouldNot(gomega.Equal(originalJobSetUID),
+					"JobSet UID must differ: object was not deleted and recreated")
+				foundNode := false
 				for _, rJob := range jobSet.Spec.ReplicatedJobs {
 					if rJob.Name == constants.Node {
 						for _, c := range rJob.Template.Spec.Template.Spec.Containers {
 							if c.Name == constants.Node {
+								foundNode = true
 								g.Expect(c.Image).Should(gomega.Equal(postUpgradeImage),
 									"JobSet should have post-upgrade image after delete-recreate")
 							}
 						}
 					}
 				}
+				g.Expect(foundNode).Should(gomega.BeTrue(), "node container not found in post-upgrade JobSet")
 			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 		})
 	})
