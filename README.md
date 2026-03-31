@@ -79,7 +79,7 @@ If you are using Kubeflow Training Operator V1, please refer [to this migration 
 Kubeflow Community will maintain the Training Operator V1 source code at
 [the `release-1.9` branch](https://github.com/kubeflow/trainer/tree/release-1.9).
 
-You can find the documentation for Kubeflow Training Operator V1 in [these guides](https://www.kubeflow.org/docs/components/trainer/legacy-v1).
+You can find the documentation for Kubeflow Training Operator V1 in [these guides](https://www.kubeflow.org/docs/components/trainer/legacy-v1).X
 
 ## Acknowledgement
 
