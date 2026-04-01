@@ -8,6 +8,9 @@ pull_request_rules:
       - author=github-actions[bot]
       - check-success~=^Red Hat Konflux.*
     actions:
+      request_reviews:
+        users:
+          - mergify-bot
       review:
         type: APPROVE
 
