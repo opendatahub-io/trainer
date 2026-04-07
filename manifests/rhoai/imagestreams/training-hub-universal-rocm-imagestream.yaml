@@ -31,13 +31,13 @@ spec:
             {"name": "accelerate", "version": "1.12.0"},
             {"name": "peft", "version": "0.18.1"},
             {"name": "trl", "version": "0.24.0"},
-            {"name": "deepspeed", "version": "0.18.4"},
+            {"name": "deepspeed", "version": "0.18.9"},
             {"name": "flash-attn", "version": "2.8.3"},
             {"name": "triton", "version": "3.5.1"}
           ]
         openshift.io/imported-from: quay.io/opendatahub/odh-th06-rocm64-torch291-py312
       from:
         kind: DockerImage
-        name: quay.io/opendatahub/odh-th06-rocm64-torch291-py312:odh-3.4-ea2
+        name: <ROCm TEMP PLACEHOLDER>
       referencePolicy:
         type: Source
