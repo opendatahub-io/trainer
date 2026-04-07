@@ -271,6 +271,53 @@ func TestPollTrainingProgress(t *testing.T) {
 			wantStatus:     nil,
 			wantErr:        true,
 		},
+		{
+			name: "NaN and Infinity values are sanitized to null",
+			responseBody: `{
+				"progressPercentage": 100,
+				"estimatedRemainingSeconds": 0,
+				"currentStep": 50,
+				"totalSteps": 50,
+				"currentEpoch": 5,
+				"totalEpochs": 5,
+				"trainMetrics": {"loss": 0.0, "grad_norm": NaN, "learning_rate": 1e-06},
+				"evalMetrics": {"eval_loss": NaN, "eval_runtime": 0.04}
+			}`,
+			responseStatus: http.StatusOK,
+			wantStatus: &TrainerStatus{
+				ProgressPercentage:        ptrInt(100),
+				EstimatedRemainingSeconds: ptrInt(0),
+				CurrentStep:               ptrInt(50),
+				TotalSteps:                ptrInt(50),
+				CurrentEpoch:              ptrFloat64(5),
+				TotalEpochs:               ptrInt(5),
+				TrainMetrics: map[string]interface{}{
+					"loss":          0.0,
+					"grad_norm":     nil,
+					"learning_rate": 1e-06,
+				},
+				EvalMetrics: map[string]interface{}{
+					"eval_loss":    nil,
+					"eval_runtime": 0.04,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "negative Infinity is sanitized to null",
+			responseBody: `{
+				"progressPercentage": 50,
+				"trainMetrics": {"loss": -Infinity}
+			}`,
+			responseStatus: http.StatusOK,
+			wantStatus: &TrainerStatus{
+				ProgressPercentage: ptrInt(50),
+				TrainMetrics: map[string]interface{}{
+					"loss": nil,
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -532,6 +579,74 @@ func TestGetPrimaryPod(t *testing.T) {
 
 			if !tt.wantErr && pod == nil {
 				t.Error("GetPrimaryPod() returned nil pod")
+			}
+		})
+	}
+}
+
+func TestSanitizeJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "NaN replaced with null",
+			input: `{"grad_norm": NaN, "loss": 0.5}`,
+			want:  `{"grad_norm": null, "loss": 0.5}`,
+		},
+		{
+			name:  "Infinity replaced with null",
+			input: `{"loss": Infinity}`,
+			want:  `{"loss": null}`,
+		},
+		{
+			name:  "negative Infinity replaced with null",
+			input: `{"loss": -Infinity}`,
+			want:  `{"loss": null}`,
+		},
+		{
+			name:  "multiple NaN values",
+			input: `{"grad_norm": NaN, "eval_loss": NaN, "loss": 0.1}`,
+			want:  `{"grad_norm": null, "eval_loss": null, "loss": 0.1}`,
+		},
+		{
+			name:  "no special values unchanged",
+			input: `{"loss": 0.5, "step": 100}`,
+			want:  `{"loss": 0.5, "step": 100}`,
+		},
+		{
+			name:  "NaN in string value not replaced",
+			input: `{"message": "Error: NaN detected", "grad_norm": NaN}`,
+			want:  `{"message": "Error: NaN detected", "grad_norm": null}`,
+		},
+		{
+			name:  "NaN inside string with colon prefix not replaced",
+			input: `{"message": "grad_norm: NaN, skipping", "grad_norm": NaN}`,
+			want:  `{"message": "grad_norm: NaN, skipping", "grad_norm": null}`,
+		},
+		{
+			name:  "NaN in nested object",
+			input: `{"metrics": {"grad_norm": NaN, "loss": 0.5}}`,
+			want:  `{"metrics": {"grad_norm": null, "loss": 0.5}}`,
+		},
+		{
+			name:  "NaN in array",
+			input: `{"values": [NaN, 1.0, -Infinity]}`,
+			want:  `{"values": [null, 1.0, null]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(sanitizeJSON([]byte(tt.input)))
+			if got != tt.want {
+				t.Errorf("sanitizeJSON() = %q, want %q", got, tt.want)
+			}
+			// Verify result is valid JSON
+			var m map[string]interface{}
+			if err := json.Unmarshal([]byte(got), &m); err != nil {
+				t.Errorf("sanitizeJSON() produced invalid JSON: %v", err)
 			}
 		})
 	}
@@ -1266,6 +1381,39 @@ func TestCaptureMetricsFromTerminationMessage(t *testing.T) {
 			},
 			wantErr: true,
 			wantNil: true,
+		},
+		{
+			name: "NaN and Infinity in termination message are sanitized",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "node",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									Message: `{"progressPercentage": 100, "estimatedRemainingSeconds": 0, "currentStep": 50, "totalSteps": 50, "trainMetrics": {"loss": 0.0, "grad_norm": NaN}, "evalMetrics": {"eval_loss": NaN, "eval_runtime": 0.04}}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			wantNil: false,
+			checkFunc: func(t *testing.T, status *AnnotationStatus) {
+				if status.ProgressPercentage == nil || *status.ProgressPercentage != 100 {
+					t.Errorf("ProgressPercentage = %v, want 100", status.ProgressPercentage)
+				}
+				if status.TrainMetrics == nil {
+					t.Fatal("TrainMetrics is nil")
+				}
+				if status.TrainMetrics["grad_norm"] != nil {
+					t.Errorf("grad_norm should be nil (sanitized from NaN), got %v", status.TrainMetrics["grad_norm"])
+				}
+				if status.EvalMetrics["eval_loss"] != nil {
+					t.Errorf("eval_loss should be nil (sanitized from NaN), got %v", status.EvalMetrics["eval_loss"])
+				}
+			},
 		},
 		{
 			name: "invalid JSON in termination message",

@@ -17,11 +17,13 @@ limitations under the License.
 package progression
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -282,14 +284,34 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	sanitized := sanitizeJSON(body)
+	if !bytes.Equal(body, sanitized) {
+		ctrl.Log.V(1).Info("Metrics JSON contained NaN/Infinity values, replaced with null", "pod", pod.Name)
+	}
 	var status TrainerStatus
-	if err := json.Unmarshal(body, &status); err != nil {
+	if err := json.Unmarshal(sanitized, &status); err != nil {
 		return nil, fmt.Errorf("failed to parse metrics JSON: %w", err)
 	}
 
 	cleanInvalidMetrics(&status)
 
 	return &status, nil
+}
+
+// sanitizeJSON replaces NaN and Infinity values with null in JSON strings.
+// Python's json.dumps() allows these by default, but they are not valid JSON,
+// causing Go's json.Unmarshal to fail.
+// jsonSanitizer matches quoted strings (to skip them) or bare NaN/Infinity tokens (to replace).
+// By matching strings first, NaN/Infinity inside string values are preserved unchanged.
+var jsonSanitizer = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|-?Infinity|NaN`)
+
+func sanitizeJSON(data []byte) []byte {
+	return jsonSanitizer.ReplaceAllFunc(data, func(match []byte) []byte {
+		if match[0] == '"' {
+			return match // preserve quoted strings
+		}
+		return []byte("null")
+	})
 }
 
 // cleanInvalidMetrics removes invalid values while keeping valid fields.
@@ -494,8 +516,13 @@ func CaptureMetricsFromTerminationMessage(ctx context.Context, pod *corev1.Pod) 
 		}
 
 		// Parse JSON from termination message
+		raw := []byte(message)
+		sanitized := sanitizeJSON(raw)
+		if !bytes.Equal(raw, sanitized) {
+			ctrl.Log.V(1).Info("Termination message JSON contained NaN/Infinity values, replaced with null", "pod", pod.Name)
+		}
 		var status AnnotationStatus
-		if err := json.Unmarshal([]byte(message), &status); err != nil {
+		if err := json.Unmarshal(sanitized, &status); err != nil {
 			return nil, fmt.Errorf("failed to parse termination message JSON: %w", err)
 		}
 
