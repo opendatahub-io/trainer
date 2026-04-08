@@ -280,7 +280,8 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 		}
 	}
 
-	// Init the JobSet apply configuration from the runtime template spec
+	// Build the full desired JobSet spec before the immutability check below,
+	// so the comparison reflects all builder mutations.
 	jobSetBuilder := NewBuilder(jobsetv1alpha2ac.JobSet(trainJob.Name, trainJob.Namespace).
 		WithLabels(maps.Clone(info.Labels)).
 		WithAnnotations(maps.Clone(info.Annotations)).
@@ -303,7 +304,98 @@ func (j *JobSet) Build(ctx context.Context, info *runtime.Info, trainJob *traine
 			WithController(true).
 			WithBlockOwnerDeletion(true))
 
+	// spec.replicatedJobs is immutable in JobSet; SSA cannot update it in-place.
+	// When the TrainJob is resumed (Suspend=false) but the existing JobSet is still
+	// suspended with a stale spec (e.g., after a runtime image upgrade), delete the
+	// JobSet so it is recreated with the current spec on the next reconcile.
+	// Background propagation avoids adding a finalizer the controller won't remove.
+	if oldJobSet != nil &&
+		ptr.Deref(oldJobSet.Spec.Suspend, false) &&
+		!ptr.Deref(trainJob.Spec.Suspend, false) &&
+		replicatedJobsSpecChanged(oldJobSet.Spec.ReplicatedJobs, jobSet.Spec.ReplicatedJobs) {
+		j.logger.Info("Deleting stale suspended JobSet: spec.replicatedJobs changed, will recreate",
+			"jobSet", client.ObjectKeyFromObject(trainJob))
+		if err := j.client.Delete(ctx, oldJobSet,
+			client.PropagationPolicy(metav1.DeletePropagationBackground),
+		); client.IgnoreNotFound(err) != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
 	return []apiruntime.ApplyConfiguration{jobSet}, nil
+}
+
+// replicatedJobsSpecChanged reports whether the container or initContainer images
+// differ between the existing and desired ReplicatedJobs, indicating the JobSet
+// would violate the spec.replicatedJobs immutability constraint if updated in-place.
+func replicatedJobsSpecChanged(
+	existing []jobsetv1alpha2.ReplicatedJob,
+	desired []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration,
+) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+	existingByName := make(map[string]*jobsetv1alpha2.ReplicatedJob, len(existing))
+	for i := range existing {
+		existingByName[existing[i].Name] = &existing[i]
+	}
+	for _, d := range desired {
+		if d.Name == nil {
+			continue
+		}
+		e, ok := existingByName[*d.Name]
+		if !ok {
+			return true
+		}
+		if d.Template == nil || d.Template.Spec == nil ||
+			d.Template.Spec.Template == nil || d.Template.Spec.Template.Spec == nil {
+			continue
+		}
+		dSpec := d.Template.Spec.Template.Spec
+		eSpec := &e.Template.Spec.Template.Spec
+
+		existingImages := make(map[string]string, len(eSpec.Containers))
+		for _, c := range eSpec.Containers {
+			existingImages[c.Name] = c.Image
+		}
+		desiredContainerNames := sets.New[string]()
+		for _, c := range dSpec.Containers {
+			if c.Name == nil || c.Image == nil {
+				continue
+			}
+			desiredContainerNames.Insert(*c.Name)
+			if img, found := existingImages[*c.Name]; !found || img != *c.Image {
+				return true
+			}
+		}
+		for _, c := range eSpec.Containers {
+			if !desiredContainerNames.Has(c.Name) {
+				return true
+			}
+		}
+
+		existingInitImages := make(map[string]string, len(eSpec.InitContainers))
+		for _, c := range eSpec.InitContainers {
+			existingInitImages[c.Name] = c.Image
+		}
+		desiredInitNames := sets.New[string]()
+		for _, c := range dSpec.InitContainers {
+			if c.Name == nil || c.Image == nil {
+				continue
+			}
+			desiredInitNames.Insert(*c.Name)
+			if img, found := existingInitImages[*c.Name]; !found || img != *c.Image {
+				return true
+			}
+		}
+		for _, c := range eSpec.InitContainers {
+			if !desiredInitNames.Has(c.Name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (j *JobSet) Status(ctx context.Context, trainJob *trainer.TrainJob) (*trainer.TrainJobStatus, error) {
