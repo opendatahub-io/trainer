@@ -38,6 +38,6 @@ spec:
         openshift.io/imported-from: quay.io/opendatahub/odh-th06-rocm64-torch291-py312
       from:
         kind: DockerImage
-        name: <ROCm TEMP PLACEHOLDER>
+        name: quay.io/opendatahub/odh-th06-rocm64-torch291-py312:odh-3.4
       referencePolicy:
         type: Source
