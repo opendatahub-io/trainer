@@ -88,7 +88,7 @@ spec:
                                   print(f"Step {step}/{total_steps}, Progress {progress}%")
 
                           print("Training completed!")
-                          time.sleep(3)  # Keep pod alive briefly for final metrics poll
+                          time.sleep(10)  # Keep pod alive for final metrics poll (must exceed poll interval)
                       readinessProbe:
                         httpGet:
                           path: /metrics

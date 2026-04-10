@@ -39,10 +39,8 @@ import (
 )
 
 const (
-	timeout            = 5 * time.Minute
-	interval           = 2 * time.Second
-	consistentDuration = 8 * time.Second
-	wrapperTestRuntime = "wrapper-test-runtime"
+	timeout  = 5 * time.Minute
+	interval = 2 * time.Second
 )
 
 // loadRuntimeFromFile loads TrainingRuntime from YAML file and sets namespace
@@ -152,8 +150,10 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				g.Expect(err).ShouldNot(gomega.HaveOccurred(), "trainerStatus should be valid JSON")
 
 				// Verify essential fields
-				g.Expect(status.CurrentStep).Should(gomega.BeNumerically(">=", 0))
-				g.Expect(status.CurrentEpoch).Should(gomega.BeNumerically(">=", 0))
+				g.Expect(status.CurrentStep).ShouldNot(gomega.BeNil(), "currentStep should be set")
+				g.Expect(*status.CurrentStep).Should(gomega.BeNumerically(">=", 0))
+				g.Expect(status.CurrentEpoch).ShouldNot(gomega.BeNil(), "currentEpoch should be set")
+				g.Expect(*status.CurrentEpoch).Should(gomega.BeNumerically(">=", 0))
 				g.Expect(status.LastUpdatedTime).ShouldNot(gomega.BeEmpty())
 
 				// If progress percentage is set, verify it's valid
@@ -206,6 +206,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 					g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100))
 					g.Expect(status.EstimatedRemainingSeconds).ShouldNot(gomega.BeNil())
 					g.Expect(*status.EstimatedRemainingSeconds).Should(gomega.Equal(0))
+					g.Expect(status.LastUpdatedTime).ShouldNot(gomega.BeEmpty())
 				}
 
 				g.Expect(completed).Should(gomega.BeTrue(), "TrainJob should complete")
@@ -471,7 +472,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				var status progression.AnnotationStatus
 				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
 				g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil())
-				g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100), "Final progress should be 100% even on failure")
+				g.Expect(*status.ProgressPercentage).Should(gomega.BeNumerically(">", 0), "progress should preserve last polled value")
 				g.Expect(status.LastUpdatedTime).NotTo(gomega.BeEmpty(), "LastUpdatedTime should be set")
 			}, timeout, interval).Should(gomega.Succeed())
 		})
@@ -571,249 +572,12 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				g.Expect(completed).Should(gomega.BeTrue(), "TrainJob should complete even without metrics")
 			}, timeout, interval).Should(gomega.Succeed())
 
-			ginkgo.By("Verifying final status is synthesized for completed job")
-			gomega.Eventually(func(g gomega.Gomega) {
-				gotTrainJob := &trainer.TrainJob{}
-				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
-
-				statusJSON, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
-				g.Expect(exists).Should(gomega.BeTrue(), "Final status should be synthesized on completion")
-
-				var status progression.AnnotationStatus
-				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
-				g.Expect(status.ProgressPercentage).NotTo(gomega.BeNil())
-				g.Expect(*status.ProgressPercentage).Should(gomega.Equal(100), "Final progress should be 100%")
-				g.Expect(status.EstimatedRemainingTimeSummary).Should(gomega.Equal("complete"))
-			}, timeout, interval).Should(gomega.Succeed())
+			ginkgo.By("Verifying no trainerStatus annotation is created when metrics were never reachable")
+			gotTrainJob := &trainer.TrainJob{}
+			gomega.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+			_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+			gomega.Expect(exists).Should(gomega.BeFalse(), "trainerStatus should not be synthesized when metrics were never reachable")
 		})
 	})
 
-	ginkgo.Context("PreStop Hook Injection", func() {
-		ginkgo.It("should inject preStop hook with correct sleep duration into trainer pods", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-prestop-hook").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Annotation(constants.AnnotationProgressionTracking, "true").
-				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "10s"). // 10s poll → 30s preStop (SDK range: 5-300s)
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
-					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
-					ResourcesPerNode(corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
-						},
-					}).
-					Obj()).
-				Obj()
-
-			ginkgo.By("Creating TrainJob with progression tracking enabled")
-			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
-
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
-			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
-
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
-				pod = &podList.Items[0]
-			}, timeout, interval).Should(gomega.Succeed())
-
-			ginkgo.By("Verifying preStop hook is injected into the trainer container")
-			var trainerContainer *corev1.Container
-			for i := range pod.Spec.Containers {
-				if pod.Spec.Containers[i].Name == "node" {
-					trainerContainer = &pod.Spec.Containers[i]
-					break
-				}
-			}
-			gomega.Expect(trainerContainer).NotTo(gomega.BeNil(), "trainer container 'node' should exist")
-			gomega.Expect(trainerContainer.Lifecycle).NotTo(gomega.BeNil(), "lifecycle should be set")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop).NotTo(gomega.BeNil(), "preStop hook should be set")
-
-			ginkgo.By("Verifying preStop hook uses sleep command")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec).NotTo(gomega.BeNil(), "exec action should be set")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command).Should(gomega.HaveLen(2), "command should have 2 elements")
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[0]).Should(gomega.Equal("sleep"))
-
-			ginkgo.By("Verifying preStop sleep duration is calculated correctly")
-			// Poll interval: 10s → preStop: (2*10 + 10) = 30s
-			expectedPreStopDuration := "30"
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[1]).Should(gomega.Equal(expectedPreStopDuration),
-				"preStop sleep should be 2 × poll_interval + 10s buffer")
-
-			ginkgo.By("Verifying termination grace period is set")
-			gomega.Expect(pod.Spec.TerminationGracePeriodSeconds).NotTo(gomega.BeNil(), "termination grace period should be set")
-			// Termination grace: preStop (30s) + shutdown buffer (30s) = 60s
-			expectedTerminationGrace := int64(60)
-			gomega.Expect(*pod.Spec.TerminationGracePeriodSeconds).Should(gomega.BeNumerically(">=", expectedTerminationGrace),
-				"termination grace should be >= preStop + 30s")
-		})
-
-		ginkgo.It("should NOT inject preStop hook when progression tracking is disabled", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "no-prestop-hook").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
-					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
-					ResourcesPerNode(corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
-						},
-					}).
-					Obj()).
-				Obj()
-
-			ginkgo.By("Creating TrainJob without progression tracking annotation")
-			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
-
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
-			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
-
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
-				pod = &podList.Items[0]
-			}, timeout, interval).Should(gomega.Succeed())
-
-			ginkgo.By("Verifying preStop hook is NOT injected")
-			var trainerContainer *corev1.Container
-			for i := range pod.Spec.Containers {
-				if pod.Spec.Containers[i].Name == "node" {
-					trainerContainer = &pod.Spec.Containers[i]
-					break
-				}
-			}
-			gomega.Expect(trainerContainer).NotTo(gomega.BeNil(), "trainer container 'node' should exist")
-
-			// PreStop hook should not be set, or if lifecycle exists, preStop should be nil
-			if trainerContainer.Lifecycle != nil {
-				gomega.Expect(trainerContainer.Lifecycle.PreStop).Should(gomega.BeNil(),
-					"preStop hook should not be set when progression tracking is disabled")
-			}
-		})
-
-		ginkgo.It("should adapt preStop duration based on custom poll interval", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-custom-prestop").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Annotation(constants.AnnotationProgressionTracking, "true").
-				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "60s"). // 60s poll → 130s preStop (SDK range: 5-300s)
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
-					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
-					ResourcesPerNode(corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
-						},
-					}).
-					Obj()).
-				Obj()
-
-			ginkgo.By("Creating TrainJob with custom poll interval")
-			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
-
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
-			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
-
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()), "at least one pod should exist")
-				pod = &podList.Items[0]
-			}, timeout, interval).Should(gomega.Succeed())
-
-			ginkgo.By("Verifying preStop duration reflects custom poll interval")
-			var trainerContainer *corev1.Container
-			for i := range pod.Spec.Containers {
-				if pod.Spec.Containers[i].Name == "node" {
-					trainerContainer = &pod.Spec.Containers[i]
-					break
-				}
-			}
-			gomega.Expect(trainerContainer).NotTo(gomega.BeNil())
-			gomega.Expect(trainerContainer.Lifecycle).NotTo(gomega.BeNil())
-			gomega.Expect(trainerContainer.Lifecycle.PreStop).NotTo(gomega.BeNil())
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec).NotTo(gomega.BeNil())
-
-			// Poll interval: 60s → preStop: (2*60 + 10) = 130s
-			expectedPreStopDuration := "130"
-			gomega.Expect(trainerContainer.Lifecycle.PreStop.Exec.Command[1]).Should(gomega.Equal(expectedPreStopDuration),
-				"preStop sleep should adapt to custom poll interval")
-
-			// Termination grace: 130 + 30 = 160s
-			expectedTerminationGrace := int64(160)
-			gomega.Expect(*pod.Spec.TerminationGracePeriodSeconds).Should(gomega.BeNumerically(">=", expectedTerminationGrace))
-		})
-
-		ginkgo.It("should inject preStop hook into correct container when multiple containers exist", func() {
-			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-multi-container").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Annotation(constants.AnnotationProgressionTracking, "true").
-				Annotation(constants.AnnotationMetricsPort, "28080").
-				Annotation(constants.AnnotationMetricsPollInterval, "5s").
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
-					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
-					ResourcesPerNode(corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
-						},
-					}).
-					Obj()).
-				Obj()
-
-			ginkgo.By("Creating TrainJob with progression tracking")
-			gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
-
-			ginkgo.By("Waiting for pod to be created")
-			var pod *corev1.Pod
-			gomega.Eventually(func(g gomega.Gomega) {
-				podList := &corev1.PodList{}
-				g.Expect(k8sClient.List(ctx, podList,
-					client.InNamespace(testNs.Name),
-					client.MatchingLabels{"jobset.sigs.k8s.io/jobset-name": trainJob.Name})).
-					Should(gomega.Succeed())
-
-				g.Expect(podList.Items).Should(gomega.Not(gomega.BeEmpty()))
-				pod = &podList.Items[0]
-			}, timeout, interval).Should(gomega.Succeed())
-
-			ginkgo.By("Verifying preStop hook is injected specifically into 'node' container")
-			var nodeContainer *corev1.Container
-			var otherContainersWithPreStop int
-
-			for i := range pod.Spec.Containers {
-				container := &pod.Spec.Containers[i]
-				if container.Name == "node" {
-					nodeContainer = container
-					gomega.Expect(nodeContainer.Lifecycle).NotTo(gomega.BeNil(), "node container should have lifecycle")
-					gomega.Expect(nodeContainer.Lifecycle.PreStop).NotTo(gomega.BeNil(), "node container should have preStop hook")
-				} else {
-					// Other containers should not have preStop hook injected by progression tracking
-					if container.Lifecycle != nil && container.Lifecycle.PreStop != nil {
-						otherContainersWithPreStop++
-					}
-				}
-			}
-
-			gomega.Expect(nodeContainer).NotTo(gomega.BeNil(), "node container should exist")
-			ginkgo.By("Verifying only the node container has the progression tracking preStop hook")
-			// Note: We expect 0 here because only node container should get the preStop from progression tracking
-		})
-	})
 })
