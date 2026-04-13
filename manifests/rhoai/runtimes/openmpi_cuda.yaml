@@ -34,11 +34,6 @@ spec:
                   containers:
                     - name: node
                       image: quay.io/ksuta/odh-mpi-cuda:0.0.14
-                      env:
-                        - name: OMPI_MCA_mtl
-                          value: ^ofi
-                        - name: OMPI_MCA_btl
-                          value: tcp,self
                       resources:
                         limits:
                           nvidia.com/gpu: "1"
@@ -61,11 +56,6 @@ spec:
                         - -De
                         - -f
                         - /home/mpiuser/.sshd_config
-                      env:
-                        - name: OMPI_MCA_mtl
-                          value: ^ofi
-                        - name: OMPI_MCA_btl
-                          value: tcp,self
                       readinessProbe:
                         initialDelaySeconds: 3
                         tcpSocket:
