@@ -66,15 +66,17 @@ spec:
                           # Wait briefly for server to be ready
                           time.sleep(1)
 
-                          # Fast training that will fail at 50% (3 seconds total)
+                          # Training that will fail at 50% (~8 seconds total)
+                          # Must run long enough for controller to poll progress > 0
+                          # with a 2s poll interval (at least 3-4 poll cycles).
                           print("Starting training that will fail...")
                           total_steps = 30
                           fail_at_step = 15  # Fail at 50%
 
                           for step in range(fail_at_step):
-                              time.sleep(0.2)  # 0.2s per step
+                              time.sleep(0.5)  # 0.5s per step
                               progress = int((step / total_steps) * 100)
-                              remaining = int((total_steps - step) * 0.2)
+                              remaining = int((total_steps - step) * 0.5)
 
                               MetricsHandler.progress_data = {
                                   "progressPercentage": progress,
