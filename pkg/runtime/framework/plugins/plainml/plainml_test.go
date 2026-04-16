@@ -24,7 +24,6 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/klog/v2/ktesting"
 	"k8s.io/utils/ptr"
@@ -49,7 +48,7 @@ func TestPlainML(t *testing.T) {
 				Labels: map[string]string{"key": "value"},
 				RuntimePolicy: runtime.RuntimePolicy{
 					MLPolicySource: utiltesting.MakeMLPolicySourceWrapper().
-						TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+						TorchPolicy().
 						Obj(),
 				},
 			},
@@ -57,7 +56,7 @@ func TestPlainML(t *testing.T) {
 				Labels: map[string]string{"key": "value"},
 				RuntimePolicy: runtime.RuntimePolicy{
 					MLPolicySource: utiltesting.MakeMLPolicySourceWrapper().
-						TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+						TorchPolicy().
 						Obj(),
 				},
 			},
@@ -80,6 +79,25 @@ func TestPlainML(t *testing.T) {
 				},
 			},
 		},
+		"no action when mlPolicySource jax is not null": {
+			info: &runtime.Info{
+				Labels: map[string]string{"key": "value"},
+				RuntimePolicy: runtime.RuntimePolicy{
+					MLPolicySource: utiltesting.MakeMLPolicySourceWrapper().
+						JAXPolicy().
+						Obj(),
+				},
+			},
+			wantInfo: &runtime.Info{
+				Labels: map[string]string{"key": "value"},
+				RuntimePolicy: runtime.RuntimePolicy{
+					MLPolicySource: utiltesting.MakeMLPolicySourceWrapper().
+						JAXPolicy().
+						Obj(),
+				},
+			},
+		},
+
 		"trainJob trainer numNodes are respected rather than runtimeInfo": {
 			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Trainer(
@@ -172,7 +190,7 @@ func TestPlainML(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			t.Cleanup(cancel)
 			cliBuilder := utiltesting.NewClientBuilder()
-			p, err := New(ctx, cliBuilder.Build(), nil)
+			p, err := New(ctx, cliBuilder.Build(), nil, nil)
 			if err != nil {
 				t.Fatalf("Failed to initialize PlainML plugin: %v", err)
 			}

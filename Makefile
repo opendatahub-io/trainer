@@ -18,7 +18,7 @@ TRAINER_CHART_DIR := $(PROJECT_DIR)/charts/kubeflow-trainer
 LOCALBIN ?= $(PROJECT_DIR)/bin
 
 # Tool versions
-K8S_VERSION ?= 1.34.0
+K8S_VERSION ?= 1.35.0
 GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
 ENVTEST_VERSION ?= release-0.22
 CONTROLLER_GEN_VERSION ?= v0.18.0
@@ -28,6 +28,7 @@ HELM_UNITTEST_VERSION ?= 0.5.1
 HELM_CHART_TESTING_VERSION ?= v3.12.0
 HELM_DOCS_VERSION ?= v1.14.2
 YQ_VERSION ?= v4.45.1
+KUBE_LINTER_VERSION ?= v0.7.1
 
 # Container runtime (docker or podman)
 CONTAINER_RUNTIME ?=
@@ -40,7 +41,9 @@ KIND ?= $(LOCALBIN)/kind
 HELM ?= $(LOCALBIN)/helm
 HELM_DOCS ?= $(LOCALBIN)/helm-docs
 YQ ?= $(LOCALBIN)/yq
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 GOLANGCI_LINT_KAL ?= $(LOCALBIN)/golangci-lint-kube-api-linter
+KUBE_LINTER ?= $(LOCALBIN)/kube-linter
 
 ##@ General
 
@@ -82,13 +85,9 @@ kind: ## Download Kind binary if required.
 helm: ## Download helm locally if required.
 	GOBIN=$(LOCALBIN) go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION)
 
-GOLANGCI_LINT=$(shell which golangci-lint)
-.PHONY: golangci-lint
-golangci-lint-install: ## Run golangci-lint to verify Go files.
-ifeq ($(GOLANGCI_LINT),)
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v1.64.8
-	$(info golangci-lint has been installed)
-endif
+.PHONY: golangci-lint-install
+golangci-lint-install: ## Download golangci-lint locally if required.
+	@GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.1
 
 .PHONY: golangci-lint-kal
 golangci-lint-kal: ## Build golangci-lint-kal from custom configuration.
@@ -108,6 +107,15 @@ helm-docs-plugin: ## Download helm-docs plugin locally if required.
 .PHONY: yq
 yq: # Download yq locally if required.
 	GOBIN=$(LOCALBIN) go install github.com/mikefarah/yq/v4@$(YQ_VERSION)
+
+.PHONY: kube-linter
+kube-linter: ## Download kube-linter locally if required.
+	GOBIN=$(LOCALBIN) go install golang.stackrox.io/kube-linter/cmd/kube-linter@$(KUBE_LINTER_VERSION)
+
+.PHONY: lint-manifests
+lint-manifests: kube-linter ## Run kube-linter on manifests and helm charts.
+	$(KUBE_LINTER) lint manifests/base --config .kube-linter.yaml
+	$(KUBE_LINTER) lint charts/kubeflow-trainer --config .kube-linter.yaml
 
 # Download external CRDs for Go integration testings.
 EXTERNAL_CRDS_DIR ?= $(PROJECT_DIR)/manifests/external-crds
@@ -144,7 +152,7 @@ manifests: controller-gen ## Generate manifests.
 	cp -f manifests/base/crds/trainer.kubeflow.org_*.yaml $(TRAINER_CHART_DIR)/crds/
 
 .PHONY: generate
-generate: go-mod-download manifests ## Generate APIs.
+generate: go-mod-download manifests helm-docs ## Generate APIs.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate/boilerplate.go.txt" paths="./pkg/apis/..."
 	hack/update-codegen.sh
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate/boilerplate.go.txt" paths="./pkg/apis/config/v1alpha1/..."
@@ -164,11 +172,9 @@ vet: ## Run go vet against the code.
 	go vet ./...
 
 .PHONY: golangci-lint
-# TODO(robell): re-enable golangci-lint-kal once we've pulled in upstream v2.2.
-# golangci-lint: golangci-lint-install golangci-lint-kal ## Run golangci-lint to verify Go files.
-golangci-lint: golangci-lint-install
-	golangci-lint run --timeout 5m --go 1.24 ./...
-	#$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml #
+golangci-lint: golangci-lint-install golangci-lint-kal ## Run golangci-lint to verify Go files.
+	$(GOLANGCI_LINT) run --timeout 5m ./...
+	$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml
 
 # Instructions to run tests.
 .PHONY: test
@@ -214,12 +220,15 @@ test-e2e: ginkgo ## Run Go e2e test.
 # Input and output location for Notebooks executed with Papermill.
 NOTEBOOK_INPUT=$(PROJECT_DIR)/examples/pytorch/image-classification/mnist.ipynb
 NOTEBOOK_OUTPUT=$(PROJECT_DIR)/artifacts/notebooks/trainer_output.ipynb
+PAPERMILL_PARAMS=
 PAPERMILL_TIMEOUT=900
 .PHONY: test-e2e-notebook
 test-e2e-notebook: ## Run Jupyter Notebook with Papermill.
-	NOTEBOOK_INPUT=$(NOTEBOOK_INPUT) NOTEBOOK_OUTPUT=$(NOTEBOOK_OUTPUT) PAPERMILL_TIMEOUT=$(PAPERMILL_TIMEOUT) ./hack/e2e-run-notebook.sh
+	NOTEBOOK_INPUT=$(NOTEBOOK_INPUT) NOTEBOOK_OUTPUT=$(NOTEBOOK_OUTPUT) PAPERMILL_PARAMS="$(PAPERMILL_PARAMS)" PAPERMILL_TIMEOUT=$(PAPERMILL_TIMEOUT) ./hack/e2e-run-notebook.sh
 
 ##@ Helm
+
+TARGET_BRANCH ?= master
 
 .PHONY: helm-unittest
 helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
@@ -227,7 +236,7 @@ helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
 
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint test.
-	docker run --rm --workdir /workspace --volume "$$(pwd):/workspace" quay.io/helmpack/chart-testing:$(HELM_CHART_TESTING_VERSION) ct lint --target-branch master --validate-maintainers=false
+	docker run --rm --workdir /workspace --user "$(shell id -u):$(shell id -g)" --volume "$$(pwd):/workspace" quay.io/helmpack/chart-testing:$(HELM_CHART_TESTING_VERSION) ct lint --target-branch $(TARGET_BRANCH) --validate-maintainers=false --check-version-increment=false
 
 .PHONY: helm-docs
 helm-docs: helm-docs-plugin ## Generates markdown documentation for helm charts from requirements and values files.

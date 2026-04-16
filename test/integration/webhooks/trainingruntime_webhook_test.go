@@ -21,7 +21,6 @@ import (
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -131,15 +130,75 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 					return runtime
 				},
 				testingutil.BeInvalidError()),
-			ginkgo.Entry("Should fail to create trainingRuntime with minNodes and torch.elasticPolicy",
+			ginkgo.Entry("Should fail to create trainingRuntime with both JAX and Torch runtimes",
 				func() *trainer.TrainingRuntime {
 					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
 					runtime.Spec.MLPolicy = &trainer.MLPolicy{
-						NumNodes: ptr.To[int32](2),
 						MLPolicySource: trainer.MLPolicySource{
-							Torch: &trainer.TorchMLPolicySource{
-								ElasticPolicy: &trainer.TorchElasticPolicy{},
-							},
+							Torch: &trainer.TorchMLPolicySource{},
+							JAX:   &trainer.JAXMLPolicySource{},
+						},
+					}
+					return runtime
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create trainingRuntime with both Torch and Flux runtimes",
+				func() *trainer.TrainingRuntime {
+					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
+					runtime.Spec.MLPolicy = &trainer.MLPolicy{
+						MLPolicySource: trainer.MLPolicySource{
+							Torch: &trainer.TorchMLPolicySource{},
+							Flux:  &trainer.FluxMLPolicySource{},
+						},
+					}
+					return runtime
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create trainingRuntime with both MPI and Flux runtimes",
+				func() *trainer.TrainingRuntime {
+					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
+					runtime.Spec.MLPolicy = &trainer.MLPolicy{
+						MLPolicySource: trainer.MLPolicySource{
+							MPI:  &trainer.MPIMLPolicySource{},
+							Flux: &trainer.FluxMLPolicySource{},
+						},
+					}
+					return runtime
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create trainingRuntime with both JAX and Flux runtimes",
+				func() *trainer.TrainingRuntime {
+					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
+					runtime.Spec.MLPolicy = &trainer.MLPolicy{
+						MLPolicySource: trainer.MLPolicySource{
+							Flux: &trainer.FluxMLPolicySource{},
+							JAX:  &trainer.JAXMLPolicySource{},
+						},
+					}
+					return runtime
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create trainingRuntime with both JAX and MPI runtimes",
+				func() *trainer.TrainingRuntime {
+					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
+					runtime.Spec.MLPolicy = &trainer.MLPolicy{
+						MLPolicySource: trainer.MLPolicySource{
+							MPI: &trainer.MPIMLPolicySource{},
+							JAX: &trainer.JAXMLPolicySource{},
+						},
+					}
+					return runtime
+				},
+				testingutil.BeInvalidError()),
+			ginkgo.Entry("Should fail to create trainingRuntime with all four runtimes configured",
+				func() *trainer.TrainingRuntime {
+					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
+					runtime.Spec.MLPolicy = &trainer.MLPolicy{
+						MLPolicySource: trainer.MLPolicySource{
+							Torch: &trainer.TorchMLPolicySource{},
+							MPI:   &trainer.MPIMLPolicySource{},
+							JAX:   &trainer.JAXMLPolicySource{},
+							Flux:  &trainer.FluxMLPolicySource{},
 						},
 					}
 					return runtime
@@ -169,31 +228,7 @@ var _ = ginkgo.Describe("TrainingRuntime marker validations and defaulting", gin
 			gomega.Expect(k8sClient.Create(ctx, created)).Should(gomega.Succeed())
 			gomega.Expect(created).Should(gomega.BeComparableTo(wantTrainingRuntime(), util.IgnoreObjectMetadata))
 		},
-			ginkgo.Entry("Should succeed to default torch.NumProcPerNode=auto",
-				func() *trainer.TrainingRuntime {
-					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
-					runtime.Spec.MLPolicy = &trainer.MLPolicy{
-						MLPolicySource: trainer.MLPolicySource{
-							Torch: &trainer.TorchMLPolicySource{},
-						},
-					}
-					return runtime
-				},
-				func() *trainer.TrainingRuntime {
-					runtime := testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").Obj()
-					runtime.Spec.MLPolicy = &trainer.MLPolicy{
-						MLPolicySource: trainer.MLPolicySource{
-							Torch: &trainer.TorchMLPolicySource{
-								NumProcPerNode: ptr.To(intstr.FromString("auto")),
-							},
-						},
-					}
-					runtime.Spec.Template.Spec = testingutil.MakeJobSetWrapper(ns.Name, "runtime").
-						Replicas(1, constants.Node, constants.DatasetInitializer, constants.ModelInitializer).
-						Obj().
-						Spec
-					return runtime
-				}),
+
 			ginkgo.Entry("Should succeed to default mpi.mpiImplementation=OpenMPI",
 				func() *trainer.TrainingRuntime {
 					return testingutil.MakeTrainingRuntimeWrapper(ns.Name, "runtime").

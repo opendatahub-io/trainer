@@ -1,4 +1,4 @@
-// Copyright 2024 The Kubeflow Authors
+// Copyright The Kubeflow Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,10 +18,19 @@ package v1alpha1
 
 // RuntimeRefApplyConfiguration represents a declarative configuration of the RuntimeRef type for use
 // with apply.
+//
+// RuntimeRef represents the reference to the existing training runtime.
 type RuntimeRefApplyConfiguration struct {
-	Name     *string `json:"name,omitempty"`
+	// name of the runtime being referenced.
+	// When namespaced-scoped TrainingRuntime is used, the TrainJob must have
+	// the same namespace as the deployed runtime.
+	Name *string `json:"name,omitempty"`
+	// apiGroup of the runtime being referenced.
+	// Defaults to `trainer.kubeflow.org`.
 	APIGroup *string `json:"apiGroup,omitempty"`
-	Kind     *string `json:"kind,omitempty"`
+	// kind of the runtime being referenced.
+	// Defaults to ClusterTrainingRuntime.
+	Kind *string `json:"kind,omitempty"`
 }
 
 // RuntimeRefApplyConfiguration constructs a declarative configuration of the RuntimeRef type for use with

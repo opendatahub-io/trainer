@@ -36,11 +36,13 @@ KIND_NODE_VERSION=kindest/node:v${K8S_VERSION}
 NAMESPACE="kubeflow-system"
 TIMEOUT="5m"
 
+# Tag used for all locally-built CI images.
+CI_IMAGE_TAG="test"
+
 # Kubeflow Trainer images.
 # TODO (andreyvelich): Support initializers images.
 CONTROLLER_MANAGER_CI_IMAGE_NAME="ghcr.io/kubeflow/trainer/trainer-controller-manager"
-CONTROLLER_MANAGER_CI_IMAGE_TAG="test"
-CONTROLLER_MANAGER_CI_IMAGE="${CONTROLLER_MANAGER_CI_IMAGE_NAME}:${CONTROLLER_MANAGER_CI_IMAGE_TAG}"
+CONTROLLER_MANAGER_CI_IMAGE="${CONTROLLER_MANAGER_CI_IMAGE_NAME}:${CI_IMAGE_TAG}"
 echo "Build Kubeflow Trainer images"
 ${CONTAINER_RUNTIME} build . -f cmd/trainer-controller-manager/Dockerfile -t ${CONTROLLER_MANAGER_CI_IMAGE}
 
@@ -60,7 +62,16 @@ cat <<EOF >"${E2E_MANIFESTS_DIR}/kustomization.yaml"
   - ../../../manifests/overlays/manager
   images:
   - name: "${CONTROLLER_MANAGER_CI_IMAGE_NAME}"
-    newTag: "${CONTROLLER_MANAGER_CI_IMAGE_TAG}"
+    newTag: "${CI_IMAGE_TAG}"
+  patches:
+  - patch: |-
+      # enable feature flags
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --feature-gates=TrainJobStatus=true
+    target:
+      kind: Deployment
+      name: kubeflow-trainer-controller-manager
 EOF
 
 kubectl apply --server-side -k "${E2E_MANIFESTS_DIR}"
@@ -86,22 +97,47 @@ print_cluster_info() {
 
 # TODO (andreyvelich): Currently, we print manager logs due to flaky test.
 echo "Deploy Kubeflow Trainer runtimes"
-kubectl apply --server-side -k manifests/overlays/runtimes || (
+E2E_RUNTIMES_DIR="artifacts/e2e/runtimes"
+mkdir -p "${E2E_RUNTIMES_DIR}"
+XGBOOST_RUNTIME_CI_IMAGE_NAME="ghcr.io/kubeflow/trainer/xgboost-runtime"
+cat <<EOF >"${E2E_RUNTIMES_DIR}/kustomization.yaml"
+  apiVersion: kustomize.config.k8s.io/v1beta1
+  kind: Kustomization
+  resources:
+  - ../../../manifests/overlays/runtimes
+  images:
+  - name: "${XGBOOST_RUNTIME_CI_IMAGE_NAME}"
+    newTag: "${CI_IMAGE_TAG}"
+EOF
+
+kubectl apply --server-side -k "${E2E_RUNTIMES_DIR}" || (
   kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=trainer &&
     print_cluster_info &&
     exit 1
 )
 
-# TODO (andreyvelich): We should build runtime images before adding them.
-TORCH_RUNTIME_IMAGE=pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
-DEEPSPEED_RUNTIME_IMAGE=ghcr.io/kubeflow/trainer/deepspeed-runtime:latest
+# hotfix(jaiakash) - skip pre-load due to kind failure
+# # TODO (andreyvelich): We should build runtime images before adding them.
+# TORCH_RUNTIME_IMAGE=pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
+# DEEPSPEED_RUNTIME_IMAGE=ghcr.io/kubeflow/trainer/deepspeed-runtime:latest
+# JAX_RUNTIME_IMAGE=nvcr.io/nvidia/jax:25.10-py3
 
-# Load Torch runtime image in KinD
-${CONTAINER_RUNTIME} pull ${TORCH_RUNTIME_IMAGE}
-load_image_to_kind ${TORCH_RUNTIME_IMAGE}
+# # Load Torch runtime image in KinD
+# ${CONTAINER_RUNTIME} pull ${TORCH_RUNTIME_IMAGE}
+# load_image_to_kind ${TORCH_RUNTIME_IMAGE}
 
-# Load DeepSpeed runtime image in KinD
-${CONTAINER_RUNTIME} pull ${DEEPSPEED_RUNTIME_IMAGE}
-load_image_to_kind ${DEEPSPEED_RUNTIME_IMAGE}
+# # Load DeepSpeed runtime image in KinD
+# ${CONTAINER_RUNTIME} pull ${DEEPSPEED_RUNTIME_IMAGE}
+# load_image_to_kind ${DEEPSPEED_RUNTIME_IMAGE}
+
+# # Load JAX runtime image in KinD
+# ${CONTAINER_RUNTIME} pull ${JAX_RUNTIME_IMAGE}
+# load_image_to_kind ${JAX_RUNTIME_IMAGE}
+
+# Build and load custom runtime images that are not available in public registries.
+XGBOOST_RUNTIME_CI_IMAGE="${XGBOOST_RUNTIME_CI_IMAGE_NAME}:${CI_IMAGE_TAG}"
+echo "Build XGBoost runtime image"
+${CONTAINER_RUNTIME} build . -f cmd/runtimes/xgboost/Dockerfile -t ${XGBOOST_RUNTIME_CI_IMAGE}
+load_image_to_kind ${XGBOOST_RUNTIME_CI_IMAGE}
 
 print_cluster_info

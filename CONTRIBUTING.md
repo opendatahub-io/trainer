@@ -5,11 +5,11 @@ For the Kubeflow Trainer documentation, please check [the official Kubeflow docu
 
 ## Requirements
 
-- [Go](https://golang.org/) (1.24 or later)
+- [Go](https://golang.org/) (1.25 or later)
 - [Docker](https://docs.docker.com/) (23 or later)
 - [Lima](https://github.com/lima-vm/lima?tab=readme-ov-file#adopters) (an alternative to DockerDesktop) (0.21.0 or later)
   - [Colima](https://github.com/abiosoft/colima) (Lima specifically for MacOS) (0.6.8 or later)
-- [Python](https://www.python.org/) (3.11 or later)
+- [Python](https://www.python.org/) (3.12 or later)
 - [kustomize](https://kustomize.io/) (4.0.5 or later)
 - [Kind](https://kind.sigs.k8s.io/) (0.27.0 or later)
 - [pre-commit](https://pre-commit.com/)

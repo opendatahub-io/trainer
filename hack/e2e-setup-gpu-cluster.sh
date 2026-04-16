@@ -58,36 +58,60 @@ TRAINER_CI_IMAGE_NAME="ghcr.io/kubeflow/trainer/torchtune-trainer"
 TRAINER_CI_IMAGE="${TRAINER_CI_IMAGE_NAME}:${CI_IMAGE_TAG}"
 ${CONTAINER_RUNTIME} build . -f cmd/trainers/torchtune/Dockerfile -t ${TRAINER_CI_IMAGE}
 
-# Set up Docker to use NVIDIA runtime.
-sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled
+# Configure NVIDIA runtime.
 sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
 sudo systemctl restart docker
 
 # Create a Kind cluster with GPU support.
-nvkind cluster create --name ${GPU_CLUSTER_NAME} --image "${KIND_NODE_VERSION}"
-nvkind cluster print-gpus
+NVKIND_BIN="/root/go/bin/nvkind"
+sudo "$NVKIND_BIN" cluster create --name "${GPU_CLUSTER_NAME}" --image "${KIND_NODE_VERSION}"
+sudo "$NVKIND_BIN" cluster print-gpus
+
+# Make kubeconfig available to non-root user
+mkdir -p "$HOME/.kube"
+sudo cp /root/.kube/config "$HOME/.kube/config"
+sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
+export KUBECONFIG="$HOME/.kube/config"
 
 # Install gpu-operator to make sure we can run GPU workloads.
-echo "Install NVIDIA GPU Operator"
+echo "Installing NVIDIA GPU Operator"
 kubectl create ns gpu-operator
 kubectl label --overwrite ns gpu-operator pod-security.kubernetes.io/enforce=privileged
 
+# Helm home dirs for non-root user
+export HELM_CONFIG_HOME="$HOME/.config/helm"
+export HELM_CACHE_HOME="$HOME/.cache/helm"
+export HELM_DATA_HOME="$HOME/.local/share/helm"
+
+mkdir -p "$HELM_CONFIG_HOME" "$HELM_CACHE_HOME" "$HELM_DATA_HOME"
+
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
+
+# Configure GPU time slicing for GPU.
+kubectl create -n gpu-operator -f ./hack/gpu-time-slicing.yml
 
 helm install --wait --generate-name \
   -n gpu-operator --create-namespace \
   nvidia/gpu-operator \
-  --version="${GPU_OPERATOR_VERSION}"
+  --version="${GPU_OPERATOR_VERSION}" \
+  --set driver.enabled=false \
+  --set devicePlugin.config.name=gpu-time-slicing-config
+
+# Patch cluster to use the time slicing configuration.
+kubectl patch clusterpolicies.nvidia.com/cluster-policy \
+  -n gpu-operator --type merge \
+  -p '{"spec": {"devicePlugin": {"config": {"name": "gpu-time-slicing-config", "default": "any"}}}}'
 
 # Validation steps for GPU operator installation
 kubectl get ns gpu-operator
 kubectl get ns gpu-operator --show-labels | grep pod-security.kubernetes.io/enforce=privileged
 helm list -n gpu-operator
 kubectl get pods -n gpu-operator -o name | while read pod; do
-  kubectl wait --for=condition=Ready --timeout=300s "$pod" -n gpu-operator || echo "$pod failed to become Ready"
+  kubectl wait --for=condition=Ready --timeout=180s "$pod" -n gpu-operator || echo "$pod failed to become Ready"
 done
 kubectl get pods -n gpu-operator
-kubectl get nodes -o=custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu
+kubectl get nodes -o=custom-columns=NAME:.metadata.name,GPU:'.status.allocatable.nvidia\.com/gpu'
 
 # Load Kubeflow Trainer images
 echo "Load Kubeflow Trainer images"
@@ -110,6 +134,15 @@ cat <<EOF >"${E2E_MANIFESTS_DIR}/kustomization.yaml"
   images:
   - name: "${CONTROLLER_MANAGER_CI_IMAGE_NAME}"
     newTag: "${CI_IMAGE_TAG}"
+  patches:
+  - patch: |-
+      # enable feature flags
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --feature-gates=TrainJobStatus=true
+    target:
+      kind: Deployment
+      name: kubeflow-trainer-controller-manager
 EOF
 
 kubectl apply --server-side -k "${E2E_MANIFESTS_DIR}"
@@ -159,9 +192,34 @@ kubectl apply --server-side -k "${E2E_RUNTIMES_DIR}" || (
     exit 1
 )
 
-# TODO (andreyvelich): Discuss how we want to pre-load runtime images to the Kind cluster.
-TORCH_RUNTIME_IMAGE=pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
-${CONTAINER_RUNTIME} pull ${TORCH_RUNTIME_IMAGE}
-load_image_to_kind ${TORCH_RUNTIME_IMAGE} ${GPU_CLUSTER_NAME}
+# hotfix: patch CRDs to run on GPU nodes (Check #3067)
+echo "Patch CRDs to run on GPU nodes"
+kubectl get clustertrainingruntimes -o json | jq '
+  .items[].spec.template.spec.replicatedJobs[].template.spec.template.spec.runtimeClassName = "nvidia"
+' | kubectl apply -f -
+
+# hotfix: mount /dev/shm as emptyDir for NCCL shared memory requirements.
+# NCCL proxy service allocates ~33MB per communicator in /dev/shm. The default
+# Kubernetes /dev/shm is 64MB (Docker default), which is insufficient for
+# workloads that create multiple NCCL communicators (e.g. Megatron-Core TP + DP).
+# See: https://github.com/NVIDIA/nccl/issues/525
+echo "Patch CRDs to mount /dev/shm as emptyDir"
+kubectl get clustertrainingruntimes -o json | jq '
+  .items[].spec.template.spec.replicatedJobs[].template.spec.template.spec |= (
+    .volumes = ((.volumes // []) + [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]) |
+    .containers = [.containers[] | .volumeMounts = ((.volumeMounts // []) + [{"name": "dshm", "mountPath": "/dev/shm"}])]
+  )
+' | kubectl apply -f -
+
+# hotfix(jaiakash) - skip pre-load due to kind failure
+# # TODO (andreyvelich): Discuss how we want to pre-load runtime images to the Kind cluster.
+# TORCH_RUNTIME_IMAGE=pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
+# ${CONTAINER_RUNTIME} pull ${TORCH_RUNTIME_IMAGE}
+# load_image_to_kind ${TORCH_RUNTIME_IMAGE} ${GPU_CLUSTER_NAME}
+
+# # Pre-pull NVIDIA JAX image for JAX runtime.
+# JAX_RUNTIME_IMAGE=nvcr.io/nvidia/jax:25.10-py3
+# ${CONTAINER_RUNTIME} pull ${JAX_RUNTIME_IMAGE}
+# load_image_to_kind ${JAX_RUNTIME_IMAGE} ${GPU_CLUSTER_NAME}
 
 print_cluster_info

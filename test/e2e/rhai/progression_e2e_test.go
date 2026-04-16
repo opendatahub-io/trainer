@@ -28,7 +28,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -99,7 +98,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // minimum poll interval: 5s
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -220,7 +219,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -255,7 +254,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -291,7 +290,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPollInterval, "15s"). // Custom interval (valid range: 5-300s)
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -320,7 +319,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // SDK minimum
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -347,7 +346,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPollInterval, "300s"). // SDK maximum (5 minutes)
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -374,7 +373,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				// No poll interval annotation - should use default (30s)
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -426,7 +425,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPollInterval, "2s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),
@@ -510,7 +509,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationMetricsPollInterval, "2s").
 				Trainer(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
-					NumProcPerNode(intstr.FromInt(1)).
+					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:    resource.MustParse("2"),

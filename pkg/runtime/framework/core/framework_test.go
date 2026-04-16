@@ -42,6 +42,7 @@ import (
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 
+	configapi "github.com/kubeflow/trainer/v2/pkg/apis/config/v1alpha1"
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/apply"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
@@ -49,12 +50,15 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework"
 	fwkplugins "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/coscheduling"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/flux"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jax"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset"
 	jobsetplgconsts "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset/constants"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/mpi"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/plainml"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/torch"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/volcano"
+	"github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/xgboost"
 	index "github.com/kubeflow/trainer/v2/pkg/runtime/indexer"
 	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
@@ -77,28 +81,38 @@ func TestNew(t *testing.T) {
 				registry: fwkplugins.NewRegistry(),
 				plugins: map[string]framework.Plugin{
 					coscheduling.Name: &coscheduling.CoScheduling{},
+					flux.Name:         &flux.Flux{},
 					volcano.Name:      &volcano.Volcano{},
 					mpi.Name:          &mpi.MPI{},
 					plainml.Name:      &plainml.PlainML{},
 					torch.Name:        &torch.Torch{},
 					jobset.Name:       &jobset.JobSet{},
+					jax.Name:          &jax.Jax{},
+					xgboost.Name:      &xgboost.XGBoost{},
 				},
 				enforceMLPlugins: []framework.EnforceMLPolicyPlugin{
+					&flux.Flux{},
 					&mpi.MPI{},
 					&plainml.PlainML{},
 					&torch.Torch{},
+					&jax.Jax{},
+					&xgboost.XGBoost{},
 				},
 				enforcePodGroupPolicyPlugins: []framework.EnforcePodGroupPolicyPlugin{
 					&coscheduling.CoScheduling{},
 					&volcano.Volcano{},
 				},
 				customValidationPlugins: []framework.CustomValidationPlugin{
+					&flux.Flux{},
 					&mpi.MPI{},
 					&torch.Torch{},
 					&jobset.JobSet{},
 					&volcano.Volcano{},
+					&jax.Jax{},
+					&xgboost.XGBoost{},
 				},
 				watchExtensionPlugins: []framework.WatchExtensionPlugin{
+					&flux.Flux{},
 					&coscheduling.CoScheduling{},
 					&volcano.Volcano{},
 					&jobset.JobSet{},
@@ -108,6 +122,7 @@ func TestNew(t *testing.T) {
 					&jobset.JobSet{},
 				},
 				componentBuilderPlugins: []framework.ComponentBuilderPlugin{
+					&flux.Flux{},
 					&coscheduling.CoScheduling{},
 					&volcano.Volcano{},
 					&jobset.JobSet{},
@@ -133,7 +148,8 @@ func TestNew(t *testing.T) {
 	}
 	cmpOpts := []cmp.Option{
 		cmp.AllowUnexported(Framework{}),
-		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, volcano.Volcano{}, mpi.MPI{}, plainml.PlainML{}, torch.Torch{}, jobset.JobSet{}),
+		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, flux.Flux{}, volcano.Volcano{}, mpi.MPI{}, plainml.PlainML{}, torch.Torch{}, jobset.JobSet{}, xgboost.XGBoost{}),
+		cmpopts.IgnoreFields(flux.Flux{}, "client", "scheme"),
 		cmpopts.IgnoreFields(coscheduling.CoScheduling{}, "client"),
 		cmpopts.IgnoreFields(volcano.Volcano{}, "client"),
 		cmpopts.IgnoreFields(jobset.JobSet{}, "client", "restMapper", "scheme", "logger"),
@@ -161,7 +177,7 @@ func TestNew(t *testing.T) {
 				})
 			}
 			clientBuilder := testingutil.NewClientBuilder()
-			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder))
+			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder), nil)
 			if diff := cmp.Diff(tc.wantError, err, cmpopts.EquateErrors()); len(diff) != 0 {
 				t.Errorf("Unexpected errors (-want,+got):\n%s", diff)
 			}
@@ -321,7 +337,7 @@ func TestRunEnforceMLPolicyPlugins(t *testing.T) {
 			t.Cleanup(cancel)
 			clientBuilder := testingutil.NewClientBuilder()
 
-			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder))
+			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -416,7 +432,7 @@ func TestRunEnforcePodGroupPolicyPlugins(t *testing.T) {
 			t.Cleanup(cancel)
 			clientBuilder := testingutil.NewClientBuilder()
 
-			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder))
+			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -456,7 +472,7 @@ func TestRunCustomValidationPlugins(t *testing.T) {
 			t.Cleanup(cancel)
 			clientBuildr := testingutil.NewClientBuilder()
 
-			fwk, err := New(ctx, clientBuildr.Build(), tc.registry, testingutil.AsIndex(clientBuildr))
+			fwk, err := New(ctx, clientBuildr.Build(), tc.registry, testingutil.AsIndex(clientBuildr), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -552,6 +568,10 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 							Endpoints: func(yield func(string) bool) {
 								yield("test-job-launcher-0-0.test-job")
 							},
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
 							Containers: []runtime.Container{{
 								Name: constants.Node,
 								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
@@ -574,6 +594,10 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 							Endpoints: func(yield func(string) bool) {
 								yield("test-job-node-0-0.test-job")
 								yield("test-job-node-0-1.test-job")
+							},
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
 							},
 							Containers: []runtime.Container{{
 								Name: constants.Node,
@@ -1019,6 +1043,10 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 							Endpoints: func(yield func(string) bool) {
 								yield("test-job-launcher-0-0.test-job")
 							},
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
 							Containers: []runtime.Container{{
 								Name: constants.Node,
 								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
@@ -1088,6 +1116,10 @@ func TestRunComponentBuilderPlugins(t *testing.T) {
 							Endpoints: func(yield func(string) bool) {
 								yield("test-job-node-0-0.test-job")
 								yield("test-job-node-0-1.test-job")
+							},
+							SinglePodRequests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
 							},
 							Containers: []runtime.Container{{
 								Name: constants.Node,
@@ -1355,8 +1387,8 @@ test-job-node-0-1.test-job slots=1
 							Ancestor: ptr.To(constants.AncestorTrainer),
 							Count:    ptr.To[int32](1),
 							SinglePodRequests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("1"),
-								corev1.ResourceMemory: resource.MustParse("4Gi"),
+								corev1.ResourceCPU:    resource.MustParse("2"),
+								corev1.ResourceMemory: resource.MustParse("8Gi"),
 							},
 							Containers: []runtime.Container{{
 								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
@@ -1473,8 +1505,8 @@ test-job-node-0-1.test-job slots=1
 					testingutil.MakeTrainJobTrainerWrapper().
 						NumNodes(100).
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("1"),
-							corev1.ResourceMemory: resource.MustParse("4Gi"),
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("8Gi"),
 						}).
 						Obj(),
 				).
@@ -1586,8 +1618,8 @@ test-job-node-0-1.test-job slots=1
 														WithArgs("trainjob").
 														WithResources(corev1ac.ResourceRequirements().
 															WithRequests(corev1.ResourceList{
-																corev1.ResourceCPU:    resource.MustParse("1"),
-																corev1.ResourceMemory: resource.MustParse("4Gi"),
+																corev1.ResourceCPU:    resource.MustParse("2"),
+																corev1.ResourceMemory: resource.MustParse("8Gi"),
 															})).
 														WithVolumeMounts(
 															corev1ac.VolumeMount().
@@ -1665,8 +1697,8 @@ test-job-node-0-1.test-job slots=1
 							Ancestor: ptr.To(constants.AncestorTrainer),
 							Count:    ptr.To[int32](100),
 							SinglePodRequests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("1"),
-								corev1.ResourceMemory: resource.MustParse("4Gi"),
+								corev1.ResourceCPU:    resource.MustParse("2"),
+								corev1.ResourceMemory: resource.MustParse("8Gi"),
 							},
 							Containers: []runtime.Container{{
 								VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
@@ -1689,8 +1721,8 @@ test-job-node-0-1.test-job slots=1
 					SchedulingTimeout(300).
 					MinMember(102). // 102 replicas = 100 Trainer nodes + 2 Initializer.
 					MinResources(corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("102"), // 1 CPU and 4Gi per replica.
-						corev1.ResourceMemory: resource.MustParse("408Gi"),
+						corev1.ResourceCPU:    resource.MustParse("202"), // 2 CPU and 8Gi per trainer replica, 1 CPU and 4Gi per initializer.
+						corev1.ResourceMemory: resource.MustParse("808Gi"),
 					}).
 					ControllerReference(trainer.SchemeGroupVersion.WithKind("TrainJob"), "test-job", "uid").
 					Obj(),
@@ -1702,8 +1734,8 @@ test-job-node-0-1.test-job slots=1
 					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
 					NumNodes(100).
 					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("1"),
-						corev1.ResourceMemory: resource.MustParse("4Gi"),
+						corev1.ResourceCPU:    resource.MustParse("2"),
+						corev1.ResourceMemory: resource.MustParse("8Gi"),
 					}).
 					Obj(),
 			},
@@ -2172,7 +2204,7 @@ test-job-node-0-1.test-job slots=1
 			clientBuilder := testingutil.NewClientBuilder()
 			c := clientBuilder.Build()
 
-			fwk, err := New(ctx, c, tc.registry, testingutil.AsIndex(clientBuilder))
+			fwk, err := New(ctx, c, tc.registry, testingutil.AsIndex(clientBuilder), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2239,6 +2271,7 @@ func TestWatchExtensionPlugins(t *testing.T) {
 		"coscheduling, jobset, and mpi are performed": {
 			registry: fwkplugins.NewRegistry(),
 			wantPlugins: []framework.WatchExtensionPlugin{
+				&flux.Flux{},
 				&coscheduling.CoScheduling{},
 				&volcano.Volcano{},
 				&jobset.JobSet{},
@@ -2251,7 +2284,8 @@ func TestWatchExtensionPlugins(t *testing.T) {
 	}
 	cmpOpts := []cmp.Option{
 		cmpopts.SortSlices(func(a, b framework.Plugin) bool { return a.Name() < b.Name() }),
-		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, volcano.Volcano{}, jobset.JobSet{}, mpi.MPI{}),
+		cmpopts.IgnoreUnexported(coscheduling.CoScheduling{}, volcano.Volcano{}, jobset.JobSet{}, mpi.MPI{}, flux.Flux{}),
+		cmpopts.IgnoreFields(flux.Flux{}, "client", "scheme"),
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -2259,7 +2293,7 @@ func TestWatchExtensionPlugins(t *testing.T) {
 			t.Cleanup(cancel)
 			clientBuilder := testingutil.NewClientBuilder()
 
-			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder))
+			fwk, err := New(ctx, clientBuilder.Build(), tc.registry, testingutil.AsIndex(clientBuilder), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2275,7 +2309,7 @@ type fakeTrainJobStatusPlugin struct{}
 
 var _ framework.TrainJobStatusPlugin = (*fakeTrainJobStatusPlugin)(nil)
 
-func newFakeJobsStatusPlugin(context.Context, client.Client, client.FieldIndexer) (framework.Plugin, error) {
+func newFakeJobsStatusPlugin(context.Context, client.Client, client.FieldIndexer, *configapi.Configuration) (framework.Plugin, error) {
 	return &fakeTrainJobStatusPlugin{}, nil
 }
 
@@ -2493,7 +2527,7 @@ func TestTrainJobStatusPlugins(t *testing.T) {
 			}
 			c := clientBuilder.Build()
 
-			fwk, err := New(ctx, c, tc.registry, testingutil.AsIndex(clientBuilder))
+			fwk, err := New(ctx, c, tc.registry, testingutil.AsIndex(clientBuilder), nil)
 			if err != nil {
 				if diff := cmp.Diff(tc.wantError, err, cmpopts.EquateErrors()); len(diff) != 0 {
 					t.Errorf("Unexpected error (-want,+got):\n%s", diff)
@@ -2609,7 +2643,7 @@ func TestPodNetworkPlugins(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			t.Cleanup(cancel)
 			cliBuilder := testingutil.NewClientBuilder()
-			fwk, err := New(ctx, cliBuilder.Build(), tc.registry, testingutil.AsIndex(cliBuilder))
+			fwk, err := New(ctx, cliBuilder.Build(), tc.registry, testingutil.AsIndex(cliBuilder), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
