@@ -30,6 +30,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -273,7 +274,7 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metrics from %s: %w", metricsURL, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code %d from metrics endpoint", resp.StatusCode)
@@ -467,7 +468,7 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 
 	hasZeroRemaining := status.EstimatedRemainingSeconds != nil && *status.EstimatedRemainingSeconds == 0
 	hasCompleteSummary := status.EstimatedRemainingTimeSummary == "complete" ||
-		status.EstimatedRemainingTimeSummary == "0 seconds"
+		status.EstimatedRemainingTimeSummary == "complete (early stopped)"
 
 	if hasZeroRemaining || hasCompleteSummary {
 		return true
@@ -663,6 +664,13 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader cli
 	if err := updateFinalStatus(trainJob, completed); err != nil {
 		return false, fmt.Errorf("failed to update final status: %w", err)
 	}
+	// updateFinalStatus is a no-op when no prior annotation exists (metrics were never polled).
+	// Skip the patch and signal "captured" to prevent an infinite requeue loop.
+	oldAnnotation, _ := oldTrainJob.Annotations[constants.AnnotationTrainerStatus]
+	newAnnotation, _ := trainJob.Annotations[constants.AnnotationTrainerStatus]
+	if oldAnnotation == newAnnotation {
+		return true, nil
+	}
 	patch := client.MergeFrom(oldTrainJob)
 	if err := c.Patch(ctx, trainJob, patch); err != nil {
 		return false, fmt.Errorf("failed to patch TrainJob annotations: %w", err)
@@ -672,23 +680,22 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader cli
 }
 
 func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
-	if trainJob.Annotations == nil {
-		return nil // No existing status to update
-	}
+	var status AnnotationStatus
 
+	// Only update an annotation that was already populated by live metric polling.
+	// If the metrics endpoint was never reachable, no annotation should be created.
+	if trainJob.Annotations == nil {
+		return nil
+	}
 	statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]
 	if !exists || statusJSON == "" {
-		return nil // No existing status to update
+		return nil
 	}
-
-	var status AnnotationStatus
 	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
 		return err
 	}
 
-	// Only update summary - don't modify actual metrics (progress %, remaining time, etc.)
 	if completed {
-		// Detect early stop: currentStep < totalSteps
 		earlyStop := false
 		if status.CurrentStep != nil && status.TotalSteps != nil && *status.TotalSteps > 0 {
 			if *status.CurrentStep < *status.TotalSteps {
@@ -696,12 +703,11 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 			}
 		}
 		if earlyStop {
-			status.EstimatedRemainingTimeSummary = "early stopped"
+			status.EstimatedRemainingTimeSummary = "complete (early stopped)"
 		} else {
 			status.EstimatedRemainingTimeSummary = "complete"
 		}
 	} else {
-		// For failed jobs: show progress context in summary
 		progressPct := 0
 		if status.ProgressPercentage != nil {
 			progressPct = *status.ProgressPercentage
@@ -745,6 +751,12 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 		// Capture final metrics (termination message + HTTP polling fallback)
 		captured, pollErr := PollAndUpdateFinalProgress(ctx, c, reader, trainJob, isCompleted)
 		if pollErr != nil {
+			// If the API server rejects the patch (e.g. admission webhook rejects because
+			// the TrainingRuntime was already deleted), there is no point retrying.
+			if apierrors.IsInvalid(pollErr) || apierrors.IsForbidden(pollErr) {
+				log.V(1).Info("Cannot capture final training progress - unrecoverable API error, skipping retry", "error", pollErr)
+				return ctrl.Result{}, nil
+			}
 			log.V(1).Info("Failed to capture final training progress, will retry", "error", pollErr, "completed", isCompleted)
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
@@ -752,7 +764,7 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 			log.V(1).Info("Pod not available for final metrics poll, will retry", "completed", isCompleted)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
-		log.Info("Captured final training progress from HTTP poll", "completed", isCompleted)
+		log.Info("Captured final training progress", "completed", isCompleted)
 	}
 
 	return ctrl.Result{}, nil

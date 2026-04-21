@@ -144,7 +144,28 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		err = errors.Join(err, statusErr)
 	}
 
+	// Save the reconciled status before calling ReconcileProgression. When
+	// ReconcileProgression patches the TrainJob's annotations the Kubernetes API
+	// server responds with the current persisted object, which overwrites
+	// trainJob.Status in memory and loses the status changes set above.
+	reconciledStatus := trainJob.Status.DeepCopy()
+
+	// RHAI progression tracking (use APIReader to avoid pod watches)
+	progressionResult, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
+	if progressionErr != nil {
+		log.Error(progressionErr, "failed to update progression annotation")
+		err = errors.Join(err, progressionErr)
+	}
+
+	// Restore status that may have been overwritten by the annotation patch response.
+	trainJob.Status = *reconciledStatus
+
 	if deadlineResult, deadlineErr := r.reconcileDeadline(ctx, &trainJob); deadlineErr != nil || deadlineResult.RequeueAfter > 0 {
+		if progressionResult.RequeueAfter > 0 {
+			// if progress tracking is enabled, make sure we requeue after the minimum time
+			deadlineResult.RequeueAfter = min(progressionResult.RequeueAfter, deadlineResult.RequeueAfter)
+		}
+
 		if !equality.Semantic.DeepEqual(&trainJob.Status, &prevTrainJob.Status) {
 			return deadlineResult, errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
 		}
@@ -154,12 +175,10 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !equality.Semantic.DeepEqual(&trainJob.Status, prevTrainJob.Status) {
 		// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
 		// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
+		return progressionResult, errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
 	}
 
-	// RHAI progression tracking (use APIReader to avoid pod watches)
-	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	return result, errors.Join(err, progressionErr)
+	return progressionResult, err
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {
