@@ -274,7 +274,7 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metrics from %s: %w", metricsURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code %d from metrics endpoint", resp.StatusCode)
@@ -666,8 +666,8 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader cli
 	}
 	// updateFinalStatus is a no-op when no prior annotation exists (metrics were never polled).
 	// Skip the patch and signal "captured" to prevent an infinite requeue loop.
-	oldAnnotation, _ := oldTrainJob.Annotations[constants.AnnotationTrainerStatus]
-	newAnnotation, _ := trainJob.Annotations[constants.AnnotationTrainerStatus]
+	oldAnnotation := oldTrainJob.Annotations[constants.AnnotationTrainerStatus]
+	newAnnotation := trainJob.Annotations[constants.AnnotationTrainerStatus]
 	if oldAnnotation == newAnnotation {
 		return true, nil
 	}
