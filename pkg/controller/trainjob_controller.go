@@ -140,13 +140,24 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		err = errors.Join(err, statusErr)
 	}
 
-	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
-	}
+	// Save the reconciled status before calling ReconcileProgression. When
+	// ReconcileProgression patches the TrainJob's annotations the Kubernetes API
+	// server responds with the current persisted object, which overwrites
+	// trainJob.Status in memory and loses the status changes set above.
+	reconciledStatus := trainJob.Status.DeepCopy()
 
 	// RHAI progression tracking (use APIReader to avoid pod watches)
 	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	return result, errors.Join(err, progressionErr)
+	err = errors.Join(err, progressionErr)
+
+	// Restore status that may have been overwritten by the annotation patch response.
+	trainJob.Status = *reconciledStatus
+
+	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
+		return result, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
+	}
+
+	return result, err
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {
