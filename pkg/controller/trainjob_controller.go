@@ -149,8 +149,6 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	deadlineResult, deadlineErr := r.reconcileDeadline(ctx, &trainJob)
 	err = errors.Join(err, deadlineErr)
 
-	// Commit upstream status first before RHAI runs, so ReconcileProgression
-	// re-fetches the latest committed state from the API server.
 	// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
 	// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
 	if !equality.Semantic.DeepEqual(&trainJob.Status, prevTrainJob.Status) {
@@ -159,13 +157,8 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
-	// RHAI progression tracking runs after upstream status is committed.
-	// ReconcileProgression re-fetches the TrainJob from the API server to get the
-	// latest committed state before patching annotations.
+	// RHAI progression tracking (fetches fresh state from API server, logs errors without joining)
 	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	// Don't join progression errors with upstream errors - progression errors during pod startup
-	// are expected (pod not ready, no IP yet) and shouldn't block requeueing.
-	// If progression error exists, log it but don't prevent the requeue.
 	if progressionErr != nil {
 		log.V(1).Info("Progression tracking encountered an error (will retry on next reconcile)", "error", progressionErr)
 	}
