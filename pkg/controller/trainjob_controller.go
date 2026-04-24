@@ -144,8 +144,9 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		err = errors.Join(err, statusErr)
 	}
 
-	deadlineResult, deadlineErr := r.reconcileDeadline(ctx, &trainJob)
-	err = errors.Join(err, deadlineErr)
+	if _, deadlineErr := r.reconcileDeadline(ctx, &trainJob); deadlineErr != nil {
+		err = errors.Join(err, deadlineErr)
+	}
 
 	if !equality.Semantic.DeepEqual(&trainJob.Status, prevTrainJob.Status) {
 		// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
@@ -157,9 +158,6 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// RHAI progression tracking
 	result, _ := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	if deadlineResult.RequeueAfter > 0 && (result.RequeueAfter == 0 || deadlineResult.RequeueAfter < result.RequeueAfter) {
-		return deadlineResult, err
-	}
 	return result, err
 }
 
