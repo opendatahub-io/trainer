@@ -144,22 +144,37 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		err = errors.Join(err, statusErr)
 	}
 
-	if deadlineResult, deadlineErr := r.reconcileDeadline(ctx, &trainJob); deadlineErr != nil || deadlineResult.RequeueAfter > 0 {
-		if !equality.Semantic.DeepEqual(&trainJob.Status, &prevTrainJob.Status) {
-			return deadlineResult, errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
-		}
-		return deadlineResult, errors.Join(err, deadlineErr)
-	}
+	// reconcileDeadline may schedule a requeue to check the deadline later. Save the result
+	// but do NOT return early — RHAI progression tracking must always run.
+	deadlineResult, deadlineErr := r.reconcileDeadline(ctx, &trainJob)
+	err = errors.Join(err, deadlineErr)
 
+	// Commit upstream status first before RHAI runs, so ReconcileProgression
+	// re-fetches the latest committed state from the API server.
+	// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
+	// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
 	if !equality.Semantic.DeepEqual(&trainJob.Status, prevTrainJob.Status) {
-		// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
-		// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
+		if statusErr := r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)); statusErr != nil {
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
 	}
 
-	// RHAI progression tracking (use APIReader to avoid pod watches)
+	// RHAI progression tracking runs after upstream status is committed.
+	// ReconcileProgression re-fetches the TrainJob from the API server to get the
+	// latest committed state before patching annotations.
 	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	return result, errors.Join(err, progressionErr)
+	// Don't join progression errors with upstream errors - progression errors during pod startup
+	// are expected (pod not ready, no IP yet) and shouldn't block requeueing.
+	// If progression error exists, log it but don't prevent the requeue.
+	if progressionErr != nil {
+		log.V(1).Info("Progression tracking encountered an error (will retry on next reconcile)", "error", progressionErr)
+	}
+
+	// Use the deadline requeue if it is sooner than the progression requeue.
+	if deadlineResult.RequeueAfter > 0 && (result.RequeueAfter == 0 || deadlineResult.RequeueAfter < result.RequeueAfter) {
+		return deadlineResult, err
+	}
+	return result, err
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {
