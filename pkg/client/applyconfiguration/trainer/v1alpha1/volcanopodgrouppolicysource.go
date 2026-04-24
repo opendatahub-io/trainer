@@ -1,4 +1,4 @@
-// Copyright 2024 The Kubeflow Authors
+// Copyright The Kubeflow Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,10 @@ import (
 
 // VolcanoPodGroupPolicySourceApplyConfiguration represents a declarative configuration of the VolcanoPodGroupPolicySource type for use
 // with apply.
+//
+// VolcanoPodGroupPolicySource represents configuration for the Volcano gang-scheduler.
 type VolcanoPodGroupPolicySourceApplyConfiguration struct {
+	// networkTopology defines the NetworkTopology config, this field works in conjunction with network topology feature and hyperNode CRD.
 	NetworkTopology *v1beta1.NetworkTopologySpecApplyConfiguration `json:"networkTopology,omitempty"`
 }
 

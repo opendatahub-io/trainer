@@ -1,4 +1,4 @@
-// Copyright 2024 The Kubeflow Authors
+// Copyright The Kubeflow Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,10 @@ package v1alpha1
 
 // PodGroupPolicyApplyConfiguration represents a declarative configuration of the PodGroupPolicy type for use
 // with apply.
+//
+// PodGroupPolicy represents a PodGroup configuration for gang-scheduling.
 type PodGroupPolicyApplyConfiguration struct {
+	// Configuration for gang-scheduling using various plugins.
 	PodGroupPolicySourceApplyConfiguration `json:",inline"`
 }
 

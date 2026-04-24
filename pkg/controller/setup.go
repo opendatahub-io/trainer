@@ -27,14 +27,14 @@ import (
 func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, options controller.Options) (string, error) {
 	runtimeRec := NewTrainingRuntimeReconciler(
 		mgr.GetClient(),
-		mgr.GetEventRecorderFor("trainer-trainingruntime-controller"),
+		mgr.GetEventRecorder("trainer-trainingruntime-controller"),
 	)
 	if err := runtimeRec.SetupWithManager(mgr, options); err != nil {
 		return trainer.TrainingRuntimeKind, err
 	}
 	clRuntimeRec := NewClusterTrainingRuntimeReconciler(
 		mgr.GetClient(),
-		mgr.GetEventRecorderFor("trainer-clustertrainingruntime-controller"),
+		mgr.GetEventRecorder("trainer-clustertrainingruntime-controller"),
 	)
 	if err := clRuntimeRec.SetupWithManager(mgr, options); err != nil {
 		return trainer.ClusterTrainingRuntimeKind, err
@@ -42,7 +42,7 @@ func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, opt
 	if err := NewTrainJobReconciler(
 		mgr.GetClient(),
 		mgr.GetAPIReader(),
-		mgr.GetEventRecorderFor("trainer-trainjob-controller"),
+		mgr.GetEventRecorder("trainer-trainjob-controller"),
 		runtimes,
 		WithWatchers(runtimeRec, clRuntimeRec),
 	).SetupWithManager(mgr, options); err != nil {

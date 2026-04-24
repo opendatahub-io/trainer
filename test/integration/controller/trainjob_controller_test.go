@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
@@ -86,8 +85,17 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 			trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "alpha").
 				Suspend(true).
 				RuntimeRef(trainer.GroupVersion.WithKind(trainer.TrainingRuntimeKind), "alpha").
-				SpecLabel("testingKey", "testingVal").
-				SpecAnnotation("testingKey", "testingVal").
+				RuntimePatches([]trainer.RuntimePatch{{
+					Manager: "test.io/manager",
+					TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+						Template: &trainer.JobSetTemplatePatch{
+							Metadata: &metav1.ObjectMeta{
+								Labels:      map[string]string{"testingKey": "testingVal"},
+								Annotations: map[string]string{"testingKey": "testingVal"},
+							},
+						},
+					},
+				}}).
 				Trainer(
 					testingutil.MakeTrainJobTrainerWrapper().
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
@@ -186,7 +194,7 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 			})
 
-			ginkgo.It("Should succeeded to update JobSet only when TrainJob is suspended", func() {
+			ginkgo.It("Should succeeded to update JobSet when TrainJob is suspended", func() {
 				ginkgo.By("Creating TrainingRuntime and suspended TrainJob")
 				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
 				gomega.Eventually(func(g gomega.Gomega) {
@@ -200,16 +208,41 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 					g.Expect(k8sClient.Get(ctx, trainJobKey, &schedulerpluginsv1alpha1.PodGroup{})).Should(gomega.Succeed())
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 
-				ginkgo.By("Updating suspended TrainJob Trainer image")
-				updatedImageName := "updated-trainer-image"
-				originImageName := *trainJob.Spec.Trainer.Image
+				ginkgo.By("Updating suspended TrainJob node selector")
+				updatedSelector := map[string]string{"updated": "selector"}
+				runtimePatches := []trainer.RuntimePatch{{
+					Manager: "test.io/manager",
+					TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+						Template: &trainer.JobSetTemplatePatch{
+							Metadata: &metav1.ObjectMeta{
+								Labels:      map[string]string{"testingKey": "testingVal"},
+								Annotations: map[string]string{"testingKey": "testingVal"},
+							},
+							Spec: &trainer.JobSetSpecPatch{
+								ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+									Name: "node",
+									Template: &trainer.JobTemplatePatch{
+										Spec: &trainer.JobSpecPatch{
+											Template: &trainer.PodTemplatePatch{
+												Spec: &trainer.PodSpecPatch{
+													NodeSelector: updatedSelector,
+												},
+											},
+										},
+									},
+								}},
+							},
+						},
+					},
+				}}
+
 				gomega.Eventually(func(g gomega.Gomega) {
 					g.Expect(k8sClient.Get(ctx, trainJobKey, trainJob)).Should(gomega.Succeed())
-					trainJob.Spec.Trainer.Image = &updatedImageName
+					trainJob.Spec.RuntimePatches = runtimePatches
 					g.Expect(k8sClient.Update(ctx, trainJob)).Should(gomega.Succeed())
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 
-				ginkgo.By("Trainer image should be updated")
+				ginkgo.By("Trainer node selector should be updated")
 				gomega.Eventually(func(g gomega.Gomega) {
 					jobSet := &jobsetv1alpha2.JobSet{}
 					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
@@ -242,7 +275,8 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 									},
 								}...,
 							).
-							Container(constants.Node, constants.Node, updatedImageName, []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							NodeSelector(constants.Node, updatedSelector).
 							Obj(),
 						util.IgnoreObjectMetadata))
 					pg := &schedulerpluginsv1alpha1.PodGroup{}
@@ -260,55 +294,11 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 						util.IgnoreObjectMetadata))
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 
-				ginkgo.By("Unsuspending TrainJob")
+				ginkgo.By("Should fail to update TrainJob image")
 				gomega.Eventually(func(g gomega.Gomega) {
 					g.Expect(k8sClient.Get(ctx, trainJobKey, trainJob)).Should(gomega.Succeed())
-					trainJob.Spec.Suspend = ptr.To(false)
-					g.Expect(k8sClient.Update(ctx, trainJob)).Should(gomega.Succeed())
-				}, util.Timeout, util.Interval).Should(gomega.Succeed())
-				gomega.Eventually(func(g gomega.Gomega) {
-					jobSet := &jobsetv1alpha2.JobSet{}
-					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
-					g.Expect(ptr.Deref(jobSet.Spec.Suspend, false)).Should(gomega.BeFalse())
-				}, util.Timeout, util.Interval).Should(gomega.Succeed())
-
-				ginkgo.By("Trying to restore Trainer image")
-				gomega.Eventually(func(g gomega.Gomega) {
-					g.Expect(k8sClient.Get(ctx, trainJobKey, trainJob)).Should(gomega.Succeed())
-					trainJob.Spec.Trainer.Image = &originImageName
-					g.Expect(k8sClient.Update(ctx, trainJob)).Should(gomega.Succeed())
-				}, util.Timeout, util.Interval).Should(gomega.Succeed())
-
-				ginkgo.By("Checking if JobSet keep having updated Trainer image")
-				gomega.Consistently(func(g gomega.Gomega) {
-					jobSet := &jobsetv1alpha2.JobSet{}
-					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
-					for _, rJob := range jobSet.Spec.ReplicatedJobs {
-						if rJob.Name == constants.Node {
-							g.Expect(rJob.Template.Spec.Template.Spec.Containers[0].Image).Should(gomega.Equal(updatedImageName))
-						}
-					}
-				}, util.ConsistentDuration, util.Interval).Should(gomega.Succeed())
-
-				ginkgo.By("Trying to re-suspend TrainJob and restore Trainer image")
-				gomega.Eventually(func(g gomega.Gomega) {
-					g.Expect(k8sClient.Get(ctx, trainJobKey, trainJob))
-					trainJob.Spec.Suspend = ptr.To(true)
-					trainJob.Spec.Trainer.Image = &originImageName
-					g.Expect(k8sClient.Update(ctx, trainJob)).Should(gomega.Succeed())
-				}, util.Timeout, util.Interval).Should(gomega.Succeed())
-
-				ginkgo.By("Checking if JobSet image is restored")
-				gomega.Eventually(func(g gomega.Gomega) {
-					jobSet := &jobsetv1alpha2.JobSet{}
-					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
-					g.Expect(jobSet.Spec.Suspend).ShouldNot(gomega.BeNil())
-					g.Expect(*jobSet.Spec.Suspend).Should(gomega.BeTrue())
-					for _, rJob := range jobSet.Spec.ReplicatedJobs {
-						if rJob.Name == constants.Node {
-							g.Expect(rJob.Template.Spec.Template.Spec.Containers[0].Image).Should(gomega.Equal(originImageName))
-						}
-					}
+					trainJob.Spec.Trainer.Image = ptr.To("new-image")
+					g.Expect(k8sClient.Update(ctx, trainJob)).Should(testingutil.BeInvalidError())
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 			})
 		})
@@ -333,7 +323,7 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 								testingutil.MakeMLPolicyWrapper().
 									WithNumNodes(100).
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+										TorchPolicy().
 										Obj(),
 									).
 									Obj(),
@@ -805,7 +795,7 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 			})
 
-			ginkgo.It("Should succeed to create TrainJob with PodTemplateOverrides", func() {
+			ginkgo.It("Should succeed to create TrainJob with RuntimePatches", func() {
 				ginkgo.By("Creating Torch TrainingRuntime and TrainJob")
 				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "alpha").
 					RuntimeRef(trainer.GroupVersion.WithKind(trainer.TrainingRuntimeKind), "alpha").
@@ -814,34 +804,49 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 							Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 							Env([]corev1.EnvVar{{Name: "TRAIN_JOB", Value: "value"}}...).
 							Obj()).
-					PodTemplateOverrides([]trainer.PodTemplateOverride{
+					RuntimePatches([]trainer.RuntimePatch{
 						{
-							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-							Metadata: &metav1.ObjectMeta{
-								Labels: map[string]string{
-									"override-label-key": "override-label-value",
-									"custom-label":       "custom-value",
-								},
-								Annotations: map[string]string{
-									"override-annotation-key": "override-annotation-value",
-									"custom-annotation":       "custom-annotation-value",
-								},
-							},
-							Spec: &trainer.PodTemplateSpecOverride{
-								ServiceAccountName: ptr.To("override-sa"),
-								InitContainers: []trainer.ContainerOverride{
-									{
-										Name: "override-init-container",
-										Env: []corev1.EnvVar{
-											{
-												Name:  "INIT_ENV",
-												Value: "override_init",
+							Manager: "test.io/manager",
+							TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+								Template: &trainer.JobSetTemplatePatch{
+									Spec: &trainer.JobSetSpecPatch{
+										ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Metadata: &metav1.ObjectMeta{
+															Labels: map[string]string{
+																"override-label-key": "override-label-value",
+																"custom-label":       "custom-value",
+															},
+															Annotations: map[string]string{
+																"override-annotation-key": "override-annotation-value",
+																"custom-annotation":       "custom-annotation-value",
+															},
+														},
+														Spec: &trainer.PodSpecPatch{
+															ServiceAccountName: ptr.To("override-sa"),
+															InitContainers: []trainer.ContainerPatch{
+																{
+																	Name: "override-init-container",
+																	Env: []corev1.EnvVar{
+																		{
+																			Name:  "INIT_ENV",
+																			Value: "override_init",
+																		},
+																		{
+																			Name:  "NEW_VALUE",
+																			Value: "from_overrides",
+																		},
+																	},
+																},
+															},
+														},
+													},
+												},
 											},
-											{
-												Name:  "NEW_VALUE",
-												Value: "from_overrides",
-											},
-										},
+										}},
 									},
 								},
 							},
@@ -857,7 +862,7 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 								testingutil.MakeMLPolicyWrapper().
 									WithNumNodes(100).
 									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-										TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+										TorchPolicy().
 										Obj(),
 									).
 									Obj(),
@@ -1420,6 +1425,768 @@ alpha-node-0-1.alpha slots=8
 							Ready:     ptr.To(int32(0)),
 							Succeeded: ptr.To(int32(0)),
 							Failed:    ptr.To(int32(1)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+		})
+
+		ginkgo.Context("Integration tests for the TrainJob Timeouts", func() {
+
+			ginkgo.It("Should fail TrainJob with DeadlineExceeded when ActiveDeadlineSeconds expires", func() {
+				// We must create the referenced ClusterTrainingRuntime so the webhook passes
+				runtime := testingutil.MakeClusterTrainingRuntimeWrapper("mock-mpi").Obj()
+				gomega.Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, runtime))).Should(gomega.Succeed())
+
+				deadline := int64(1)
+				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "deadline-job").
+					RuntimeRef(trainer.GroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "mock-mpi").
+					ActiveDeadlineSeconds(deadline).
+					Obj()
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				trainJobKey = client.ObjectKeyFromObject(trainJob)
+
+				ginkgo.By("Waiting for TrainJob to fail due to deadline")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.ContainElement(gomega.HaveField("Reason", trainer.TrainJobDeadlineExceededReason)))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Ensuring the underlying JobSet is deleted")
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, trainJobKey, &jobsetv1alpha2.JobSet{})).Should(testingutil.BeNotFoundError())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should not fail TrainJob if ActiveDeadlineSeconds is not exceeded", func() {
+				// We must create the referenced ClusterTrainingRuntime so the webhook passes
+				runtime := testingutil.MakeClusterTrainingRuntimeWrapper("mock-mpi").Obj()
+				gomega.Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, runtime))).Should(gomega.Succeed())
+
+				deadline := int64(3600)
+				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "deadline-not-exceeded-job").
+					RuntimeRef(trainer.GroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "mock-mpi").
+					ActiveDeadlineSeconds(deadline).
+					Obj()
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				trainJobKey = client.ObjectKeyFromObject(trainJob)
+
+				ginkgo.By("Ensuring TrainJob does not fail immediately")
+				gomega.Consistently(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).ShouldNot(gomega.ContainElement(gomega.HaveField("Reason", trainer.TrainJobDeadlineExceededReason)))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should not start deadline timer if TrainJob is suspended", func() {
+				// We must create the referenced ClusterTrainingRuntime so the webhook passes
+				runtime := testingutil.MakeClusterTrainingRuntimeWrapper("mock-mpi").Obj()
+				gomega.Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, runtime))).Should(gomega.Succeed())
+
+				deadline := int64(1)
+				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "deadline-suspended-job").
+					RuntimeRef(trainer.GroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "mock-mpi").
+					ActiveDeadlineSeconds(deadline).
+					Suspend(true).
+					Obj()
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				trainJobKey = client.ObjectKeyFromObject(trainJob)
+
+				ginkgo.By("Ensuring TrainJob does not fail while suspended")
+				gomega.Consistently(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).ShouldNot(gomega.ContainElement(gomega.HaveField("Reason", trainer.TrainJobDeadlineExceededReason)))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should reset deadline timer upon resume", func() {
+				// We must create the referenced ClusterTrainingRuntime so the webhook passes
+				runtime := testingutil.MakeClusterTrainingRuntimeWrapper("mock-mpi").Obj()
+				gomega.Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, runtime))).Should(gomega.Succeed())
+
+				deadline := int64(2)
+				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "deadline-resume-job").
+					RuntimeRef(trainer.GroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), "mock-mpi").
+					ActiveDeadlineSeconds(deadline).
+					Suspend(true).
+					Obj()
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				trainJobKey = client.ObjectKeyFromObject(trainJob)
+
+				ginkgo.By("Resuming TrainJob")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					gotTrainJob.Spec.Suspend = ptr.To(false)
+					g.Expect(k8sClient.Update(ctx, gotTrainJob)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Waiting for TrainJob to fail after resumed duration")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.ContainElement(gomega.HaveField("Reason", trainer.TrainJobDeadlineExceededReason)))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Ensuring the underlying JobSet is deleted")
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, trainJobKey, &jobsetv1alpha2.JobSet{})).Should(testingutil.BeNotFoundError())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+		})
+
+		ginkgo.Context("Integration Tests for the Jax Runtime", func() {
+			ginkgo.It("Should succeed to create TrainJob with Jax TrainingRuntime", func() {
+				ginkgo.By("Creating Jax TrainingRuntime and TrainJob")
+				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "alpha").
+					RuntimeRef(trainer.GroupVersion.WithKind(trainer.TrainingRuntimeKind), "alpha").
+					Trainer(
+						testingutil.MakeTrainJobTrainerWrapper().
+							NumNodes(2).
+							Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Obj()).
+					Obj()
+				trainJobKey = client.ObjectKeyFromObject(trainJob)
+
+				trainingRuntime = testingutil.MakeTrainingRuntimeWrapper(ns.Name, "alpha").
+					RuntimeSpec(
+						testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(ns.Name, "alpha").Spec).
+							Replicas(1, constants.Launcher).
+							WithMLPolicy(
+								testingutil.MakeMLPolicyWrapper().
+									WithNumNodes(1).
+									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
+										JAXPolicy().
+										Obj(),
+									).
+									Obj(),
+							).
+							Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Obj()).
+					Obj()
+				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainingRuntime), trainingRuntime)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the appropriate JobSet is created")
+				gomega.Eventually(func(g gomega.Gomega) {
+					jobSet := &jobsetv1alpha2.JobSet{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+					g.Expect(jobSet).Should(gomega.BeComparableTo(
+						testingutil.MakeJobSetWrapper(ns.Name, trainJobKey.Name).
+							ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), trainJobKey.Name, string(trainJob.UID)).
+							Suspend(false).
+							Replicas(1, constants.Node, constants.DatasetInitializer, constants.ModelInitializer, constants.Launcher).
+							Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Launcher).
+							Completions(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Launcher).
+							NumNodes(2).
+							Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Env(constants.Node, constants.Node,
+								corev1.EnvVar{
+									Name:  "JAX_NUM_PROCESSES",
+									Value: "2",
+								},
+								corev1.EnvVar{
+									Name: "JAX_PROCESS_ID",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: constants.JobCompletionIndexFieldPath,
+										},
+									},
+								},
+								corev1.EnvVar{
+									Name:  "JAX_COORDINATOR_ADDRESS",
+									Value: fmt.Sprintf("%s-%s-0-0.%s:%d", trainJob.Name, constants.Node, trainJob.Name, constants.ContainerTrainerPort),
+								},
+							).
+							ContainerTrainerPorts([]corev1.ContainerPort{{Protocol: corev1.ProtocolTCP, ContainerPort: constants.ContainerTrainerPort}}).
+							Obj(),
+						util.IgnoreObjectMetadata))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should succeed to reconcile TrainJob conditions with Complete condition", func() {
+				ginkgo.By("Creating TrainingRuntime and suspended TrainJob")
+				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainingRuntime), trainingRuntime)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the JobSet was created")
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, trainJobKey, &jobsetv1alpha2.JobSet{})).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if TrainJob has Suspended=True condition")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionTrue,
+							Reason:  trainer.TrainJobSuspendedReason,
+							Message: constants.TrainJobSuspendedMessage,
+						},
+					}, util.IgnoreConditions))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the TrainJob has Suspended=False [Resumed] condition after unsuspended")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					gotTrainJob.Spec.Suspend = ptr.To(false)
+					g.Expect(k8sClient.Update(ctx, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+					}, util.IgnoreConditions))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Updating the JobSet conditions and ReplicatedJobsStatus with successful completion")
+				gomega.Eventually(func(g gomega.Gomega) {
+					jobSet := &jobsetv1alpha2.JobSet{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+					meta.SetStatusCondition(&jobSet.Status.Conditions, metav1.Condition{
+						Type:    string(jobsetv1alpha2.JobSetCompleted),
+						Reason:  jobsetconsts.AllJobsCompletedReason,
+						Message: jobsetconsts.AllJobsCompletedMessage,
+						Status:  metav1.ConditionTrue,
+					})
+					jobSet.Status.ReplicatedJobsStatus = []jobsetv1alpha2.ReplicatedJobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.Node,
+							Ready:     0,
+							Succeeded: 0,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+					}
+					g.Expect(k8sClient.Status().Update(ctx, jobSet)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the TrainJob has Suspended=False and Complete=True conditions as well as succeeded JobsStatus")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+						{
+							Type:    trainer.TrainJobComplete,
+							Status:  metav1.ConditionTrue,
+							Reason:  jobsetconsts.AllJobsCompletedReason,
+							Message: jobsetconsts.AllJobsCompletedMessage,
+						},
+					}, util.IgnoreConditions))
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should succeed to reconcile TrainJob conditions with Failed condition", func() {
+				ginkgo.By("Creating TrainingRuntime and suspended TrainJob")
+				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainingRuntime), trainingRuntime)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if JobSet, ConfigMap, and Secret are created")
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, trainJobKey, &jobsetv1alpha2.JobSet{})).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Unsuspending the TrainJob")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					gotTrainJob.Spec.Suspend = ptr.To(false)
+					g.Expect(k8sClient.Update(ctx, gotTrainJob)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Waiting for TrainJob Suspended=False condition")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+					}, util.IgnoreConditions))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Updating the JobSet Failed=True condition and ReplicatedJobsStatus with failed jobs")
+				gomega.Eventually(func(g gomega.Gomega) {
+					jobSet := &jobsetv1alpha2.JobSet{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+					meta.SetStatusCondition(&jobSet.Status.Conditions, metav1.Condition{
+						Type:    string(jobsetv1alpha2.JobSetFailed),
+						Reason:  jobsetconsts.FailedJobsReason,
+						Message: jobsetconsts.FailedJobsMessage,
+						Status:  metav1.ConditionTrue,
+					})
+					jobSet.Status.ReplicatedJobsStatus = []jobsetv1alpha2.ReplicatedJobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.Node,
+							Ready:     0,
+							Succeeded: 0,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+					}
+					g.Expect(k8sClient.Status().Update(ctx, jobSet)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the TrainJob has Suspended=False [Resumed] and Failed=True conditions as well as failed JobsStatus")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+						{
+							Type:    trainer.TrainJobFailed,
+							Status:  metav1.ConditionTrue,
+							Reason:  jobsetconsts.FailedJobsReason,
+							Message: jobsetconsts.FailedJobsMessage,
+						},
+					}, util.IgnoreConditions))
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+		})
+
+		ginkgo.Context("Integration Tests for the XGBoost Runtime", func() {
+			ginkgo.It("Should succeed to create TrainJob with XGBoost TrainingRuntime", func() {
+				ginkgo.By("Creating XGBoost TrainingRuntime and TrainJob")
+				trainJob = testingutil.MakeTrainJobWrapper(ns.Name, "alpha").
+					RuntimeRef(trainer.GroupVersion.WithKind(trainer.TrainingRuntimeKind), "alpha").
+					Trainer(
+						testingutil.MakeTrainJobTrainerWrapper().
+							NumNodes(2).
+							Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Obj()).
+					Obj()
+				trainJobKey = client.ObjectKeyFromObject(trainJob)
+
+				trainingRuntime = testingutil.MakeTrainingRuntimeWrapper(ns.Name, "alpha").
+					RuntimeSpec(
+						testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(ns.Name, "alpha").Spec).
+							WithMLPolicy(
+								testingutil.MakeMLPolicyWrapper().
+									WithNumNodes(1).
+									WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
+										XGBoostPolicy().
+										Obj(),
+									).
+									Obj(),
+							).
+							Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Obj()).
+					Obj()
+				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainingRuntime), trainingRuntime)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the appropriate JobSet is created")
+				gomega.Eventually(func(g gomega.Gomega) {
+					jobSet := &jobsetv1alpha2.JobSet{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+					g.Expect(jobSet).Should(gomega.BeComparableTo(
+						testingutil.MakeJobSetWrapper(ns.Name, trainJobKey.Name).
+							ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), trainJobKey.Name, string(trainJob.UID)).
+							Suspend(false).
+							Replicas(1, constants.Node, constants.DatasetInitializer, constants.ModelInitializer).
+							Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+							Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+							NumNodes(2).
+							Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+							Env(constants.Node, constants.Node,
+								corev1.EnvVar{
+									Name:  constants.XGBoostEnvTrackerURI,
+									Value: fmt.Sprintf("%s-%s-0-0.%s", trainJob.Name, constants.Node, trainJob.Name),
+								},
+								corev1.EnvVar{
+									Name:  constants.XGBoostEnvTrackerPort,
+									Value: fmt.Sprintf("%d", constants.ContainerTrainerPort),
+								},
+								corev1.EnvVar{
+									Name: constants.XGBoostEnvTaskID,
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: constants.JobCompletionIndexFieldPath,
+										},
+									},
+								},
+								corev1.EnvVar{
+									Name:  constants.XGBoostEnvNumWorker,
+									Value: fmt.Sprintf("%d", 2),
+								},
+							).
+							ContainerTrainerPorts([]corev1.ContainerPort{{Protocol: corev1.ProtocolTCP, ContainerPort: constants.ContainerTrainerPort}}).
+							Obj(),
+						util.IgnoreObjectMetadata))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should succeed to reconcile TrainJob conditions with Complete condition", func() {
+				ginkgo.By("Creating TrainingRuntime and suspended TrainJob")
+				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainingRuntime), trainingRuntime)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the JobSet was created")
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, trainJobKey, &jobsetv1alpha2.JobSet{})).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if TrainJob has Suspended=True condition")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionTrue,
+							Reason:  trainer.TrainJobSuspendedReason,
+							Message: constants.TrainJobSuspendedMessage,
+						},
+					}, util.IgnoreConditions))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the TrainJob has Suspended=False [Resumed] condition after unsuspended")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					gotTrainJob.Spec.Suspend = ptr.To(false)
+					g.Expect(k8sClient.Update(ctx, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+					}, util.IgnoreConditions))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Updating the JobSet conditions and ReplicatedJobsStatus with successful completion")
+				gomega.Eventually(func(g gomega.Gomega) {
+					jobSet := &jobsetv1alpha2.JobSet{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+					meta.SetStatusCondition(&jobSet.Status.Conditions, metav1.Condition{
+						Type:    string(jobsetv1alpha2.JobSetCompleted),
+						Reason:  jobsetconsts.AllJobsCompletedReason,
+						Message: jobsetconsts.AllJobsCompletedMessage,
+						Status:  metav1.ConditionTrue,
+					})
+					jobSet.Status.ReplicatedJobsStatus = []jobsetv1alpha2.ReplicatedJobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.Node,
+							Ready:     0,
+							Succeeded: 0,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+					}
+					g.Expect(k8sClient.Status().Update(ctx, jobSet)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the TrainJob has Suspended=False and Complete=True conditions as well as succeeded JobsStatus")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+						{
+							Type:    trainer.TrainJobComplete,
+							Status:  metav1.ConditionTrue,
+							Reason:  jobsetconsts.AllJobsCompletedReason,
+							Message: jobsetconsts.AllJobsCompletedMessage,
+						},
+					}, util.IgnoreConditions))
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.Node,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(0)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+					}))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+			})
+
+			ginkgo.It("Should succeed to reconcile TrainJob conditions with Failed condition", func() {
+				ginkgo.By("Creating TrainingRuntime and suspended TrainJob")
+				gomega.Expect(k8sClient.Create(ctx, trainingRuntime)).Should(gomega.Succeed())
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainingRuntime), trainingRuntime)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if JobSet is created")
+				gomega.Eventually(func(g gomega.Gomega) {
+					g.Expect(k8sClient.Get(ctx, trainJobKey, &jobsetv1alpha2.JobSet{})).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Unsuspending the TrainJob")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					gotTrainJob.Spec.Suspend = ptr.To(false)
+					g.Expect(k8sClient.Update(ctx, gotTrainJob)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Waiting for TrainJob Suspended=False condition")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+					}, util.IgnoreConditions))
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Updating the JobSet Failed=True condition and ReplicatedJobsStatus with failed jobs")
+				gomega.Eventually(func(g gomega.Gomega) {
+					jobSet := &jobsetv1alpha2.JobSet{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, jobSet)).Should(gomega.Succeed())
+					meta.SetStatusCondition(&jobSet.Status.Conditions, metav1.Condition{
+						Type:    string(jobsetv1alpha2.JobSetFailed),
+						Reason:  jobsetconsts.FailedJobsReason,
+						Message: jobsetconsts.FailedJobsMessage,
+						Status:  metav1.ConditionTrue,
+					})
+					jobSet.Status.ReplicatedJobsStatus = []jobsetv1alpha2.ReplicatedJobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     0,
+							Succeeded: 1,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+						{
+							Name:      constants.Node,
+							Ready:     0,
+							Succeeded: 0,
+							Failed:    0,
+							Active:    0,
+							Suspended: 0,
+						},
+					}
+					g.Expect(k8sClient.Status().Update(ctx, jobSet)).Should(gomega.Succeed())
+				}, util.Timeout, util.Interval).Should(gomega.Succeed())
+
+				ginkgo.By("Checking if the TrainJob has Suspended=False [Resumed] and Failed=True conditions as well as failed JobsStatus")
+				gomega.Eventually(func(g gomega.Gomega) {
+					gotTrainJob := &trainer.TrainJob{}
+					g.Expect(k8sClient.Get(ctx, trainJobKey, gotTrainJob)).Should(gomega.Succeed())
+					g.Expect(gotTrainJob.Status.Conditions).Should(gomega.BeComparableTo([]metav1.Condition{
+						{
+							Type:    trainer.TrainJobSuspended,
+							Status:  metav1.ConditionFalse,
+							Reason:  trainer.TrainJobResumedReason,
+							Message: constants.TrainJobResumedMessage,
+						},
+						{
+							Type:    trainer.TrainJobFailed,
+							Status:  metav1.ConditionTrue,
+							Reason:  jobsetconsts.FailedJobsReason,
+							Message: jobsetconsts.FailedJobsMessage,
+						},
+					}, util.IgnoreConditions))
+					g.Expect(gotTrainJob.Status.JobsStatus).Should(gomega.BeComparableTo([]trainer.JobStatus{
+						{
+							Name:      constants.DatasetInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
+							Active:    ptr.To(int32(0)),
+							Suspended: ptr.To(int32(0)),
+						},
+						{
+							Name:      constants.ModelInitializer,
+							Ready:     ptr.To(int32(0)),
+							Succeeded: ptr.To(int32(1)),
+							Failed:    ptr.To(int32(0)),
 							Active:    ptr.To(int32(0)),
 							Suspended: ptr.To(int32(0)),
 						},

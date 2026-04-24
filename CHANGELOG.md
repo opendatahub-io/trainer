@@ -1,5 +1,593 @@
 # Changelog
 
+# [v2.2.0](https://github.com/kubeflow/trainer/tree/v2.2.0) (2026-03-19)
+
+This is Kubeflow Trainer v2.2.0 release.
+
+You can now deploy control plane and runtimes with the single Helm install command 🚀
+
+```bash
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
+    --namespace kubeflow-system \
+    --create-namespace \
+    --version 2.2.0 \
+    --set runtimes.defaultEnabled=true
+```
+
+## Breaking Changes
+
+- feat(api): BREAKING CHANGE: Replace PodTemplateOverrides with RuntimePatches API  ([#3309](https://github.com/kubeflow/trainer/pull/3309) by @astefanutti)
+- feat(api): BREAKING CHANGE: Remove numProcPerNode from Torch API ([#3239](https://github.com/kubeflow/trainer/pull/3239) by @andreyvelich)
+- feat(api): BREAKING CHANGE: Remove ElasticPolicy API ([#3235](https://github.com/kubeflow/trainer/pull/3235) by @andreyvelich)
+- feat(api): Fix immutability of the TrainJob APIs ([#3157](https://github.com/kubeflow/trainer/pull/3157) by @andreyvelich)
+
+## New Features
+
+### XGBoost & JAX Runtimes
+
+- feat(runtimes): Add XGBoost runtime(KEP-2598) ([#3200](https://github.com/kubeflow/trainer/pull/3200) by @Krishna-kg732)
+- feat(docs): KEP-2598 XGBoost Runtime for Trainer V2 ([#3118](https://github.com/kubeflow/trainer/pull/3118) by @Krishna-kg732)
+- feat(runtimes): Add JAX training runtime ([#3151](https://github.com/kubeflow/trainer/pull/3151) by @kaisoz)
+- feat(cache): KEP-2655: Adding default runtime with cache and example ([#2923](https://github.com/kubeflow/trainer/pull/2923) by @akshaychitneni)
+
+
+### Flux Runtime for MPI and HPC Workloads
+
+- feat: support for flux framework as hpc manager ([#3188](https://github.com/kubeflow/trainer/pull/3188) by @vsoch)
+- feat: KEP 2841 Flux Policy to support Flux Framework ([#2909](https://github.com/kubeflow/trainer/pull/2909) by @vsoch)
+
+### TrainJob Lifecycle
+
+- feat(api): Set RuntimePatch.Time field automatically during admission ([#3363](https://github.com/kubeflow/trainer/pull/3363) by @astefanutti)
+- feat: add support for tracking TrainJob progress and training metrics ([#3227](https://github.com/kubeflow/trainer/pull/3227) by @robert-bell)
+- feat(docs): KEP-2779: Track TrainJob progress and expose training metrics ([#2905](https://github.com/kubeflow/trainer/pull/2905) by @robert-bell)
+- feat: add activeDeadlineSeconds ([#3258](https://github.com/kubeflow/trainer/pull/3258) by @XploY04)
+- feat(docs): proposal for adding TTLSecondsAfterFinished and ActiveDeadlineSeconds fields to TrainJob CRD ([#3068](https://github.com/kubeflow/trainer/pull/3068) by @XploY04)
+- chore: upstream istio support - superseding 3189 ([#3259](https://github.com/kubeflow/trainer/pull/3259) by @sameerdattav)
+- feat(runtimes): Use JobSet VolumeClaimPolicies APIs for LLM Runtimes ([#3150](https://github.com/kubeflow/trainer/pull/3150) by @andreyvelich)
+- feat(cache): KEP-2655 - Supporting readiness probes on cache nodes ([#2904](https://github.com/kubeflow/trainer/pull/2904) by @akshaychitneni)
+- feat(initializer): add s3 model and dataset initializers ([#2728](https://github.com/kubeflow/trainer/pull/2728) by @rudeigerc)
+- feat(api): Add securityContext support to PodTemplateSpecOverride in TrainJob ([#3066](https://github.com/kubeflow/trainer/pull/3066) by @Sanskarzz)
+
+## Bug Fixes
+
+- fix(initializer): add missing glob wildcard to .pt and .pth ignore p… ([#3364](https://github.com/kubeflow/trainer/pull/3364) by @ghazariann)
+- fix(ci): re-enable XGBoost E2E test ([#3348](https://github.com/kubeflow/trainer/pull/3348) by @Krishna-kg732)
+- fix(examples): Verify TrainJob Completion ([#3344](https://github.com/kubeflow/trainer/pull/3344) by @andreyvelich)
+- fix(docs): Update steps in release document ([#3342](https://github.com/kubeflow/trainer/pull/3342) by @andreyvelich)
+- fix: back to a10-1 for gpu e2e and time slicing ([#3340](https://github.com/kubeflow/trainer/pull/3340) by @jaiakash)
+- fix(ci): Generate valid release version for Python package ([#3334](https://github.com/kubeflow/trainer/pull/3334) by @andreyvelich)
+- fix(test): Fix Data Cache runtime in Helm Charts ([#3241](https://github.com/kubeflow/trainer/pull/3241) by @andreyvelich)
+- fix: failing e2e and gpu e2e tests ([#3234](https://github.com/kubeflow/trainer/pull/3234) by @jaiakash)
+- fix: align torch-distributed-with-cache runtime logic with unit tests ([#3226](https://github.com/kubeflow/trainer/pull/3226) by @Goku2099)
+- fix(ci): correct duplicate step name in `test-go.yaml` ([#3202](https://github.com/kubeflow/trainer/pull/3202) by @puwun)
+- fix: align torchao with torch 2.9.1 to fix GPU e2e failure ([#3203](https://github.com/kubeflow/trainer/pull/3203) by @Goku2099)
+- fix: Defer kubernetes imports to method level for use with local mode ([#3167](https://github.com/kubeflow/trainer/pull/3167) by @Fiona-Waters)
+- fix: service account test filename ([#3153](https://github.com/kubeflow/trainer/pull/3153) by @aniketpati1121)
+- fix(manifests): Remove jobset and lws patches from kustomize deployment ([#3141](https://github.com/kubeflow/trainer/pull/3141) by @yosri-brh)
+- fix: enable read-only root filesystem for trainer manager ([#3119](https://github.com/kubeflow/trainer/pull/3119) by @Goku2099)
+- fix: resourcePerNode override not applied with Volcano scheduler ([#2982](https://github.com/kubeflow/trainer/pull/2982) by @sksingh2005)
+- fix(operator): Prevent JobSet recreation when its TTL has expired ([#3013](https://github.com/kubeflow/trainer/pull/3013) by @astefanutti)
+- fix(operator): Use Patch to update TrainJob status ([#3009](https://github.com/kubeflow/trainer/pull/3009) by @astefanutti)
+- fix(manifests): Fix RBAC for ClusterTrainingRuntime Access ([#3022](https://github.com/kubeflow/trainer/pull/3022) by @andreyvelich)
+- fix(manifests): fix Prometheus metrics port mismatch ([#3056](https://github.com/kubeflow/trainer/pull/3056) by @ChughShilpa)
+- fix(manifests): Fix boolean values defaulting in Helm charts ([#2913](https://github.com/kubeflow/trainer/pull/2913) by @astefanutti)
+- fix(manifests): Fix Helm charts image name ([#2915](https://github.com/kubeflow/trainer/pull/2915) by @andreyvelich)
+- fix(manifests): Remove the default tag from the controller image ([#2916](https://github.com/kubeflow/trainer/pull/2916) by @andreyvelich)
+- fix: add `appVersion` field to Helm chart for Kubeflow Trainer ([#3044](https://github.com/kubeflow/trainer/pull/3044) by @milinddethe15)
+- fix(runtimes): Update pip version in the MLX runtime ([#2908](https://github.com/kubeflow/trainer/pull/2908) by @andreyvelich)
+- fix(examples): Fix SSL certificate error for local MNIST example ([#2971](https://github.com/kubeflow/trainer/pull/2971) by @astefanutti)
+- fix(ci): Fix kube-api-linter install ([#3023](https://github.com/kubeflow/trainer/pull/3023) by @astefanutti)
+- fix(ci): Fix new contributors GH actions workflow lint errors ([#3024](https://github.com/kubeflow/trainer/pull/3024) by @astefanutti)
+- fix(ci): Fix the Kubeflow SDK installation with Docker ([#2926](https://github.com/kubeflow/trainer/pull/2926) by @andreyvelich)
+
+## Misc
+
+- chore(runtimes): persist runtimes map and expose Runtimes function ([#3367](https://github.com/kubeflow/trainer/pull/3367) by @kaisoz)
+- chore: Remove deprecated Python models ([#3318](https://github.com/kubeflow/trainer/pull/3318) by @andreyvelich)
+- fix: rename JAX and Torch runtime plugin tests to descriptive names ([#3283](https://github.com/kubeflow/trainer/pull/3283) by @Amir380-A)
+- fix(examples): add parameters to Fashion MNIST training function ([#3301](https://github.com/kubeflow/trainer/pull/3301) by @krishdef7)
+- chore(ci): Ignore Coveralls Errors ([#3260](https://github.com/kubeflow/trainer/pull/3260) by @andreyvelich)
+- fix: Enforce single ML policy constraint with CEL validation for Torch, MPI, and JAX ([#3225](https://github.com/kubeflow/trainer/pull/3225) by @Krishna-kg732)
+- feat: Helm test workflow ([#3228](https://github.com/kubeflow/trainer/pull/3228) by @Goku2099)
+- feat: add production-ready MNIST example for PyTorch ([#3063](https://github.com/kubeflow/trainer/pull/3063) by @Snehadas2005)
+- feat(runtimes): add support for ClusterTrainingRuntimes in Helm chart ([#3124](https://github.com/kubeflow/trainer/pull/3124) by @khushiiagrawal)
+- feat(cache): add Helm chart configuration for data_cache ([#3080](https://github.com/kubeflow/trainer/pull/3080) by @khushiiagrawal)
+- feat(examples): add torch.compile to PyTorch local examples ([#3076](https://github.com/kubeflow/trainer/pull/3076) by @Ishtiyaque-Alam)
+- feat(manifests): Publish Trainer Helm Charts ([#2906](https://github.com/kubeflow/trainer/pull/2906) by @adity1raut)
+- fix(test): Ignore version increment in Helm Chart lint ([#3240](https://github.com/kubeflow/trainer/pull/3240) by @andreyvelich)
+- feat: Code Quality Checks workflow ([#3224](https://github.com/kubeflow/trainer/pull/3224) by @Goku2099)
+- chore: Add comprehensive unit tests for Config API ([#2893](https://github.com/kubeflow/trainer/pull/2893) by @kapil27)
+- chore(operator): Use SSA throughout runtime framework ([#2877](https://github.com/kubeflow/trainer/pull/2877) by @astefanutti)
+- chore(operator): Remove Unstructured objects caching ([#3010](https://github.com/kubeflow/trainer/pull/3010) by @astefanutti)
+- chore: Expose trainer API version via public ConfigMap ([#3083](https://github.com/kubeflow/trainer/pull/3083) by @sameerdattav)
+- chore: changed latest to dev in trainer manifests ([#3146](https://github.com/kubeflow/trainer/pull/3146) by @sameerdattav)
+- chore: use named ports for manager deployment and service ([#3100](https://github.com/kubeflow/trainer/pull/3100) by @Goku2099)
+- chore: fix `make helm-lint` ([#3103](https://github.com/kubeflow/trainer/pull/3103) by @robert-bell)
+- feat: add scaffolding for feature gates ([#3102](https://github.com/kubeflow/trainer/pull/3102) by @robert-bell)
+- chore: Add welcome workflow for new contributors ([#3017](https://github.com/kubeflow/trainer/pull/3017) by @ryanHwH20)
+- chore: Nominate @akshaychitneni as Kubeflow Trainer reviewer ([#3149](https://github.com/kubeflow/trainer/pull/3149) by @andreyvelich)
+- chore: add dependabot to trainer repo ([#2930](https://github.com/kubeflow/trainer/pull/2930) by @kannon92)
+- chore: only update k8s dependencies via patches ([#2969](https://github.com/kubeflow/trainer/pull/2969) by @kannon92)
+- chore: migrate to a10.2 gpu for gpu e2e ([#3220](https://github.com/kubeflow/trainer/pull/3220) by @jaiakash)
+- chore(examples): Add device to local process MNIST training example ([#3006](https://github.com/kubeflow/trainer/pull/3006) by @astefanutti)
+- chore(examples): Use DDP in local container MNIST training example ([#3007](https://github.com/kubeflow/trainer/pull/3007) by @astefanutti)
+- feat: replaced vm runner with test gpu arc from cncf ([#3067](https://github.com/kubeflow/trainer/pull/3067) by @jaiakash)
+- feat: add VERSION file ([#3077](https://github.com/kubeflow/trainer/pull/3077) by @milinddethe15)
+- chore(docs): added kubecon 2025 trainer talk ([#3187](https://github.com/kubeflow/trainer/pull/3187) by @jaiakash)
+- chore(docs): Create symlink for CLAUDE.md ([#3182](https://github.com/kubeflow/trainer/pull/3182) by @andreyvelich)
+- chore(docs): Update Trainer README with Data Cache and MPI use-cases ([#3142](https://github.com/kubeflow/trainer/pull/3142) by @andreyvelich)
+- chore(docs): Add Trainer v2.1 release news to the README ([#3117](https://github.com/kubeflow/trainer/pull/3117) by @andreyvelich)
+- feat(docs): Add AGENTS.md and Copilot instructions ([#3121](https://github.com/kubeflow/trainer/pull/3121) by @andreyvelich)
+- feat: Adding local execution example notebook ([#2907](https://github.com/kubeflow/trainer/pull/2907) by @Fiona-Waters)
+
+## Dependencies Upgrade
+
+- chore(deps): Bump Torch to 2.10 version ([#3320](https://github.com/kubeflow/trainer/pull/3320) by @andreyvelich)
+- chore(deps): bump transformers from 5.2.0 to 5.3.0 in /cmd/runtimes/deepspeed ([#3297](https://github.com/kubeflow/trainer/pull/3297) by @dependabot[bot])
+- chore(deps): bump datasets from 4.6.1 to 4.7.0 in /cmd/runtimes/mlx ([#3291](https://github.com/kubeflow/trainer/pull/3291) by @dependabot[bot])
+- chore(deps): bump datasets from 4.5.0 to 4.7.0 in /cmd/runtimes/deepspeed ([#3298](https://github.com/kubeflow/trainer/pull/3298) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <1.5,>=0.27.0 to >=0.27.0,<1.7 in /cmd/initializers/dataset ([#3296](https://github.com/kubeflow/trainer/pull/3296) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.30.7 to 0.31.0 in /cmd/runtimes/mlx ([#3295](https://github.com/kubeflow/trainer/pull/3295) by @dependabot[bot])
+- chore(deps): bump docker/login-action from 3 to 4 ([#3293](https://github.com/kubeflow/trainer/pull/3293) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <1.5,>=0.27.0 to >=0.27.0,<1.7 in /cmd/initializers/model ([#3292](https://github.com/kubeflow/trainer/pull/3292) by @dependabot[bot])
+- chore(deps): bump aquasecurity/trivy-action from 0.34.2 to 0.35.0 ([#3290](https://github.com/kubeflow/trainer/pull/3290) by @dependabot[bot])
+- chore(deps): bump rust from 1.93-bullseye to 1.94-bullseye in /cmd/data_cache ([#3289](https://github.com/kubeflow/trainer/pull/3289) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.59 to 4.5.60 in /pkg/data_cache/test ([#3249](https://github.com/kubeflow/trainer/pull/3249) by @dependabot[bot])
+- chore(deps): bump actions/upload-artifact from 6 to 7 ([#3267](https://github.com/kubeflow/trainer/pull/3267) by @dependabot[bot])
+- chore(deps): bump quinn-proto from 0.11.13 to 0.11.14 in /pkg/data_cache ([#3305](https://github.com/kubeflow/trainer/pull/3305) by @dependabot[bot])
+- chore(deps): bump tokio from 1.49.0 to 1.50.0 in /pkg/data_cache/test ([#3288](https://github.com/kubeflow/trainer/pull/3288) by @dependabot[bot])
+- chore(deps): bump tokio from 1.49.0 to 1.50.0 in /pkg/data_cache ([#3299](https://github.com/kubeflow/trainer/pull/3299) by @dependabot[bot])
+- chore(deps): bump deepspeed from 0.18.6 to 0.18.7 in /cmd/runtimes/deepspeed ([#3294](https://github.com/kubeflow/trainer/pull/3294) by @dependabot[bot])
+- chore(deps): bump the kubernetes group across 1 directory with 9 updates ([#3287](https://github.com/kubeflow/trainer/pull/3287) by @dependabot[bot])
+- chore(deps): bump datasets from 4.5.0 to 4.6.1 in /cmd/runtimes/mlx ([#3272](https://github.com/kubeflow/trainer/pull/3272) by @dependabot[bot])
+- chore(deps): bump aquasecurity/trivy-action from 0.34.1 to 0.34.2 ([#3268](https://github.com/kubeflow/trainer/pull/3268) by @dependabot[bot])
+- chore(deps): Bump Trivy version to v0.69.2 ([#3265](https://github.com/kubeflow/trainer/pull/3265) by @andreyvelich)
+- chore(deps): bump arrow-flight from 57.3.0 to 58.0.0 in /pkg/data_cache/test ([#3248](https://github.com/kubeflow/trainer/pull/3248) by @dependabot[bot])
+- chore(deps): bump tonic from 0.14.3 to 0.14.5 in /pkg/data_cache/test ([#3246](https://github.com/kubeflow/trainer/pull/3246) by @dependabot[bot])
+- chore(deps): bump mpioperator/base from v0.7.0 to v0.8.0 in /cmd/runtimes/deepspeed ([#3243](https://github.com/kubeflow/trainer/pull/3243) by @dependabot[bot])
+- chore(deps): bump actions/setup-go from 5 to 6 ([#3245](https://github.com/kubeflow/trainer/pull/3245) by @dependabot[bot])
+- chore(deps): bump mpioperator/base from v0.7.0 to v0.8.0 in /cmd/runtimes/mlx ([#3244](https://github.com/kubeflow/trainer/pull/3244) by @dependabot[bot])
+- chore(deps): bump futures from 0.3.31 to 0.3.32 in /pkg/data_cache/test ([#3211](https://github.com/kubeflow/trainer/pull/3211) by @dependabot[bot])
+- chore(deps): bump aquasecurity/trivy-action from 0.33.1 to 0.34.0 in /.github/workflows ([#3222](https://github.com/kubeflow/trainer/pull/3222) by @dependabot[bot])
+- chore(deps): bump futures from 0.3.31 to 0.3.32 in /pkg/data_cache ([#3214](https://github.com/kubeflow/trainer/pull/3214) by @dependabot[bot])
+- chore(deps): bump deepspeed from 0.18.5 to 0.18.6 in /cmd/runtimes/deepspeed ([#3212](https://github.com/kubeflow/trainer/pull/3212) by @dependabot[bot])
+- chore(deps): bump transformers from 4.57.6 to 5.2.0 in /cmd/runtimes/deepspeed ([#3210](https://github.com/kubeflow/trainer/pull/3210) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.57 to 4.5.59 in /pkg/data_cache/test ([#3206](https://github.com/kubeflow/trainer/pull/3206) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <1.4,>=0.27.0 to >=0.27.0,<1.5 in /cmd/initializers/dataset ([#3194](https://github.com/kubeflow/trainer/pull/3194) by @dependabot[bot])
+- chore(deps): bump the kubernetes group with 7 updates ([#3204](https://github.com/kubeflow/trainer/pull/3204) by @dependabot[bot])
+- feat: Add the manager field to the podTemplateOverride object ([#3020](https://github.com/kubeflow/trainer/pull/3020) by @kaisoz)
+- chore(deps): bump mlx[cuda] from 0.30.5 to 0.30.6 in /cmd/runtimes/mlx ([#3196](https://github.com/kubeflow/trainer/pull/3196) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <1.4,>=0.27.0 to >=0.27.0,<1.5 in /cmd/initializers/model ([#3198](https://github.com/kubeflow/trainer/pull/3198) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.30.5 to 0.30.6 in /cmd/runtimes/mlx ([#3195](https://github.com/kubeflow/trainer/pull/3195) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.56 to 4.5.57 in /pkg/data_cache/test ([#3193](https://github.com/kubeflow/trainer/pull/3193) by @dependabot[bot])
+- chore(deps): bump sigs.k8s.io/structured-merge-diff/v6 from 6.3.2-0.20260122202528-d9cc6641c482 to 6.3.2 in the kubernetes group ([#3190](https://github.com/kubeflow/trainer/pull/3190) by @dependabot[bot])
+- chore(deps): bump arrow-flight from 57.2.0 to 57.3.0 in /pkg/data_cache/test ([#3192](https://github.com/kubeflow/trainer/pull/3192) by @dependabot[bot])
+- chore(deps): bump tonic from 0.14.2 to 0.14.3 in /pkg/data_cache/test ([#3163](https://github.com/kubeflow/trainer/pull/3163) by @dependabot[bot])
+- chore(deps): bump golang.org/x/crypto from 0.47.0 to 0.48.0 in the golang group ([#3191](https://github.com/kubeflow/trainer/pull/3191) by @dependabot[bot])
+- chore(deps): bump mlx[cuda] from 0.30.3 to 0.30.5 in /cmd/runtimes/mlx ([#3162](https://github.com/kubeflow/trainer/pull/3162) by @dependabot[bot])
+- chore(deps): bump time from 0.3.44 to 0.3.47 in /pkg/data_cache ([#3180](https://github.com/kubeflow/trainer/pull/3180) by @dependabot[bot])
+- chore(deps): bump deepspeed from 0.18.4 to 0.18.5 in /cmd/runtimes/deepspeed ([#3161](https://github.com/kubeflow/trainer/pull/3161) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/gomega from 1.39.0 to 1.39.1 ([#3159](https://github.com/kubeflow/trainer/pull/3159) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.54 to 4.5.56 in /pkg/data_cache/test ([#3160](https://github.com/kubeflow/trainer/pull/3160) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/ginkgo/v2 from 2.27.5 to 2.28.1 ([#3158](https://github.com/kubeflow/trainer/pull/3158) by @dependabot[bot])
+- chore(deps): bump bytes from 1.11.0 to 1.11.1 in /pkg/data_cache ([#3170](https://github.com/kubeflow/trainer/pull/3170) by @dependabot[bot])
+- chore(deps): bump bytes from 1.11.0 to 1.11.1 in /pkg/data_cache/test ([#3169](https://github.com/kubeflow/trainer/pull/3169) by @dependabot[bot])
+- chore(deps): bump nvidia/cuda from 13.1.0-devel-ubuntu22.04 to 13.1.1-devel-ubuntu22.04 in /cmd/runtimes/deepspeed ([#3131](https://github.com/kubeflow/trainer/pull/3131) by @dependabot[bot])
+- chore(deps): bump nvidia/cuda from 13.1.0-devel-ubuntu22.04 to 13.1.1-devel-ubuntu22.04 in /cmd/runtimes/mlx ([#3129](https://github.com/kubeflow/trainer/pull/3129) by @dependabot[bot])
+- chore(deps): Bump JobSet v0.11.0 and LWS v0.8.0 ([#3144](https://github.com/kubeflow/trainer/pull/3144) by @andreyvelich)
+- chore(deps): bump tower from 0.5.2 to 0.5.3 in /pkg/data_cache ([#3137](https://github.com/kubeflow/trainer/pull/3137) by @dependabot[bot])
+- chore(deps): bump rust from 1.92-bullseye to 1.93-bullseye in /cmd/data_cache ([#3132](https://github.com/kubeflow/trainer/pull/3132) by @dependabot[bot])
+- chore(deps): Bump Go 1.25, k8s v1.35, and controller-runtime v0.23.1 ([#3127](https://github.com/kubeflow/trainer/pull/3127) by @andreyvelich)
+- chore(deps): bump mlx-lm from 0.30.4 to 0.30.5 in /cmd/runtimes/mlx ([#3134](https://github.com/kubeflow/trainer/pull/3134) by @dependabot[bot])
+- chore(deps): bump tokio from 1.48.0 to 1.49.0 in /pkg/data_cache ([#3138](https://github.com/kubeflow/trainer/pull/3138) by @dependabot[bot])
+- chore(deps): bump datasets from 4.4.2 to 4.5.0 in /cmd/runtimes/deepspeed ([#3105](https://github.com/kubeflow/trainer/pull/3105) by @dependabot[bot])
+- chore(deps): bump datasets from 4.4.2 to 4.5.0 in /cmd/runtimes/mlx ([#3108](https://github.com/kubeflow/trainer/pull/3108) by @dependabot[bot])
+- chore(deps): bump mlx[cuda] from 0.30.1 to 0.30.3 in /cmd/runtimes/mlx ([#3107](https://github.com/kubeflow/trainer/pull/3107) by @dependabot[bot])
+- chore(deps): bump transformers from 4.57.3 to 4.57.6 in /cmd/runtimes/deepspeed ([#3106](https://github.com/kubeflow/trainer/pull/3106) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.30.2 to 0.30.4 in /cmd/runtimes/mlx ([#3109](https://github.com/kubeflow/trainer/pull/3109) by @dependabot[bot])
+- chore(runtimes): Bump Torch to 2.9.1 version ([#3093](https://github.com/kubeflow/trainer/pull/3093) by @andreyvelich)
+- chore(deps): bump axum from 0.7.9 to 0.8.8 in /pkg/data_cache ([#3072](https://github.com/kubeflow/trainer/pull/3072) by @dependabot[bot])
+- chore(deps): bump tonic from 0.12.3 to 0.14.2 in /pkg/data_cache/test ([#3054](https://github.com/kubeflow/trainer/pull/3054) by @dependabot[bot])
+- chore(deps): bump tower from 0.4.13 to 0.5.2 in /pkg/data_cache ([#3074](https://github.com/kubeflow/trainer/pull/3074) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <1.2,>=0.27.0 to >=0.27.0,<1.4 in /cmd/initializers/dataset ([#3090](https://github.com/kubeflow/trainer/pull/3090) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.53 to 4.5.54 in /pkg/data_cache/test ([#3070](https://github.com/kubeflow/trainer/pull/3070) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/gomega from 1.38.3 to 1.39.0 ([#3085](https://github.com/kubeflow/trainer/pull/3085) by @dependabot[bot])
+- chore(deps): bump tokio from 1.48.0 to 1.49.0 in /pkg/data_cache/test ([#3069](https://github.com/kubeflow/trainer/pull/3069) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <1.2,>=0.27.0 to >=0.27.0,<1.4 in /cmd/initializers/model ([#3091](https://github.com/kubeflow/trainer/pull/3091) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.30.0 to 0.30.2 in /cmd/runtimes/mlx ([#3089](https://github.com/kubeflow/trainer/pull/3089) by @dependabot[bot])
+- chore(deps): bump deepspeed from 0.18.3 to 0.18.4 in /cmd/runtimes/deepspeed ([#3088](https://github.com/kubeflow/trainer/pull/3088) by @dependabot[bot])
+- chore(deps): bump arrow-flight from 57.1.0 to 57.2.0 in /pkg/data_cache/test ([#3087](https://github.com/kubeflow/trainer/pull/3087) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/ginkgo/v2 from 2.27.3 to 2.27.5 ([#3086](https://github.com/kubeflow/trainer/pull/3086) by @dependabot[bot])
+- chore(deps): bump golang.org/x/crypto from 0.46.0 to 0.47.0 in the golang group ([#3084](https://github.com/kubeflow/trainer/pull/3084) by @dependabot[bot])
+- chore(deps): bump mlx[cuda] from 0.30.0 to 0.30.1 in /cmd/runtimes/mlx ([#3053](https://github.com/kubeflow/trainer/pull/3053) by @dependabot[bot])
+- chore(deps): bump tracing from 0.1.41 to 0.1.44 in /pkg/data_cache/test ([#3051](https://github.com/kubeflow/trainer/pull/3051) by @dependabot[bot])
+- chore(deps): bump arrow-flight from 55.2.0 to 57.1.0 in /pkg/data_cache/test ([#3055](https://github.com/kubeflow/trainer/pull/3055) by @dependabot[bot])
+- chore(deps): bump datasets from 4.4.1 to 4.4.2 in /cmd/runtimes/mlx ([#3052](https://github.com/kubeflow/trainer/pull/3052) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.28.4 to 0.30.0 in /cmd/runtimes/mlx ([#3050](https://github.com/kubeflow/trainer/pull/3050) by @dependabot[bot])
+- chore(deps): bump datasets from 4.4.1 to 4.4.2 in /cmd/runtimes/deepspeed ([#3049](https://github.com/kubeflow/trainer/pull/3049) by @dependabot[bot])
+- chore(deps): bump bincode from 2.0.1 to 3.0.0 in /pkg/data_cache/test ([#3048](https://github.com/kubeflow/trainer/pull/3048) by @dependabot[bot])
+- chore(deps): bump sigs.k8s.io/kind from 0.30.0 to 0.31.0 in the kubernetes group ([#3047](https://github.com/kubeflow/trainer/pull/3047) by @dependabot[bot])
+- chore(deps): bump transformers from 4.57.2 to 4.57.3 in /cmd/runtimes/deepspeed ([#3031](https://github.com/kubeflow/trainer/pull/3031) by @dependabot[bot])
+- chore(deps): bump nvidia/cuda from 13.0.2-devel-ubuntu22.04 to 13.1.0-devel-ubuntu22.04 in /cmd/runtimes/mlx ([#3036](https://github.com/kubeflow/trainer/pull/3036) by @dependabot[bot])
+- chore(deps): bump the kubernetes group with 6 updates ([#3035](https://github.com/kubeflow/trainer/pull/3035) by @dependabot[bot])
+- chore(deps): bump actions/upload-artifact from 5 to 6 ([#3038](https://github.com/kubeflow/trainer/pull/3038) by @dependabot[bot])
+- chore(deps): bump nvidia/cuda from 13.0.2-devel-ubuntu22.04 to 13.1.0-devel-ubuntu22.04 in /cmd/runtimes/deepspeed ([#3037](https://github.com/kubeflow/trainer/pull/3037) by @dependabot[bot])
+- chore(deps): bump rust from 1.91-bullseye to 1.92-bullseye in /cmd/data_cache ([#3040](https://github.com/kubeflow/trainer/pull/3040) by @dependabot[bot])
+- chore(deps): bump deepspeed from 0.18.2 to 0.18.3 in /cmd/runtimes/deepspeed ([#3039](https://github.com/kubeflow/trainer/pull/3039) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.28.3 to 0.28.4 in /cmd/runtimes/mlx ([#3029](https://github.com/kubeflow/trainer/pull/3029) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/ginkgo/v2 from 2.27.2 to 2.27.3 ([#3026](https://github.com/kubeflow/trainer/pull/3026) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/gomega from 1.38.2 to 1.38.3 ([#3027](https://github.com/kubeflow/trainer/pull/3027) by @dependabot[bot])
+- chore(deps): bump golang.org/x/crypto from 0.45.0 to 0.46.0 in the golang group ([#3025](https://github.com/kubeflow/trainer/pull/3025) by @dependabot[bot])
+- chore(deps): bump bytes from 1.10.1 to 1.11.0 in /pkg/data_cache ([#3001](https://github.com/kubeflow/trainer/pull/3001) by @dependabot[bot])
+- chore(deps): bump go.uber.org/zap from 1.27.0 to 1.27.1 ([#2998](https://github.com/kubeflow/trainer/pull/2998) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.52 to 4.5.53 in /pkg/data_cache/test ([#3004](https://github.com/kubeflow/trainer/pull/3004) by @dependabot[bot])
+- chore(deps): bump arrow-flight from 57.0.0 to 57.1.0 in /pkg/data_cache/test ([#3003](https://github.com/kubeflow/trainer/pull/3003) by @dependabot[bot])
+- chore(deps): bump transformers from 4.57.1 to 4.57.2 in /cmd/runtimes/deepspeed ([#3002](https://github.com/kubeflow/trainer/pull/3002) by @dependabot[bot])
+- chore(deps): bump actions/checkout from 5 to 6 ([#3000](https://github.com/kubeflow/trainer/pull/3000) by @dependabot[bot])
+- chore(deps): bump mlx[cuda] from 0.29.4 to 0.30.0 in /cmd/runtimes/mlx ([#2999](https://github.com/kubeflow/trainer/pull/2999) by @dependabot[bot])
+- chore(deps): bump sigs.k8s.io/structured-merge-diff/v6 from 6.3.0 to 6.3.1 in the kubernetes group ([#2996](https://github.com/kubeflow/trainer/pull/2996) by @dependabot[bot])
+- chore(deps): bump github.com/open-policy-agent/cert-controller from 0.14.0 to 0.15.0 ([#2997](https://github.com/kubeflow/trainer/pull/2997) by @dependabot[bot])
+- chore(deps): bump golang.org/x/crypto from 0.44.0 to 0.45.0 ([#2994](https://github.com/kubeflow/trainer/pull/2994) by @dependabot[bot])
+- chore(deps): bump golang.org/x/crypto from 0.43.0 to 0.44.0 in the golang group ([#2985](https://github.com/kubeflow/trainer/pull/2985) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.51 to 4.5.52 in /pkg/data_cache/test ([#2990](https://github.com/kubeflow/trainer/pull/2990) by @dependabot[bot])
+- chore(deps): bump async-trait from 0.1.88 to 0.1.89 in /pkg/data_cache ([#2988](https://github.com/kubeflow/trainer/pull/2988) by @dependabot[bot])
+- chore(deps): bump pytorch/pytorch from 2.9.0-cuda12.8-cudnn9-runtime to 2.9.1-cuda12.8-cudnn9-runtime in /cmd/trainers/torchtune ([#2986](https://github.com/kubeflow/trainer/pull/2986) by @dependabot[bot])
+- chore(deps): bump the kubernetes group with 6 updates ([#2984](https://github.com/kubeflow/trainer/pull/2984) by @dependabot[bot])
+- chore(deps): bump bytes from 1.10.1 to 1.11.0 in /pkg/data_cache/test ([#2989](https://github.com/kubeflow/trainer/pull/2989) by @dependabot[bot])
+- chore(deps): bump mlx-lm from 0.26.3 to 0.28.3 in /cmd/runtimes/mlx ([#2950](https://github.com/kubeflow/trainer/pull/2950) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <0.28,>=0.27.0 to >=0.27.0,<1.2 in /cmd/initializers/model ([#2957](https://github.com/kubeflow/trainer/pull/2957) by @dependabot[bot])
+- chore(deps): update huggingface-hub requirement from <0.28,>=0.27.0 to >=0.27.0,<1.2 in /cmd/initializers/dataset ([#2955](https://github.com/kubeflow/trainer/pull/2955) by @dependabot[bot])
+- chore(deps): bump datasets from 4.0.0 to 4.4.1 in /cmd/runtimes/deepspeed ([#2944](https://github.com/kubeflow/trainer/pull/2944) by @dependabot[bot])
+- chore(deps): bump mlx[cuda] from 0.28.0 to 0.29.3 in /cmd/runtimes/mlx ([#2956](https://github.com/kubeflow/trainer/pull/2956) by @dependabot[bot])
+- chore(deps): bump transformers from 4.55.0 to 4.57.1 in /cmd/runtimes/deepspeed ([#2961](https://github.com/kubeflow/trainer/pull/2961) by @dependabot[bot])
+- chore(deps): bump deepspeed from 0.17.4 to 0.18.2 in /cmd/runtimes/deepspeed ([#2954](https://github.com/kubeflow/trainer/pull/2954) by @dependabot[bot])
+- chore(deps): bump nvidia/cuda from 12.8.1-devel-ubuntu22.04 to 13.0.2-devel-ubuntu22.04 in /cmd/runtimes/deepspeed ([#2939](https://github.com/kubeflow/trainer/pull/2939) by @dependabot[bot])
+- chore(deps): bump pytorch/pytorch from 2.7.1-cuda12.8-cudnn9-runtime to 2.9.0-cuda12.8-cudnn9-runtime in /cmd/trainers/torchtune ([#2934](https://github.com/kubeflow/trainer/pull/2934) by @dependabot[bot])
+- chore(deps): bump datasets from 4.0.0 to 4.4.1 in /cmd/runtimes/mlx ([#2943](https://github.com/kubeflow/trainer/pull/2943) by @dependabot[bot])
+- chore(deps): bump nvidia/cuda from 12.8.1-devel-ubuntu22.04 to 13.0.2-devel-ubuntu22.04 in /cmd/runtimes/mlx ([#2932](https://github.com/kubeflow/trainer/pull/2932) by @dependabot[bot])
+- chore(deps): bump mpi4py from 4.1.0 to 4.1.1 in /cmd/runtimes/deepspeed ([#2958](https://github.com/kubeflow/trainer/pull/2958) by @dependabot[bot])
+- chore(deps): bump bincode from 1.3.3 to 2.0.1 in /pkg/data_cache/test ([#2949](https://github.com/kubeflow/trainer/pull/2949) by @dependabot[bot])
+- chore(deps): bump tonic from 0.12.3 to 0.14.2 in /pkg/data_cache/test ([#2962](https://github.com/kubeflow/trainer/pull/2962) by @dependabot[bot])
+- chore(deps): bump serde from 1.0.225 to 1.0.228 in /pkg/data_cache/test ([#2959](https://github.com/kubeflow/trainer/pull/2959) by @dependabot[bot])
+- chore(deps): bump actions/checkout from 4 to 5 ([#2974](https://github.com/kubeflow/trainer/pull/2974) by @dependabot[bot])
+- chore(deps): bump serde from 1.0.215 to 1.0.228 in /pkg/data_cache ([#2978](https://github.com/kubeflow/trainer/pull/2978) by @dependabot[bot])
+- chore(deps): bump actions/setup-go from 5 to 6 ([#2975](https://github.com/kubeflow/trainer/pull/2975) by @dependabot[bot])
+- chore(deps): bump amannn/action-semantic-pull-request from 5.5.3 to 6.1.1 ([#2976](https://github.com/kubeflow/trainer/pull/2976) by @dependabot[bot])
+- chore(deps): bump arrow-flight from 55.2.0 to 57.0.0 in /pkg/data_cache/test ([#2973](https://github.com/kubeflow/trainer/pull/2973) by @dependabot[bot])
+- chore(deps): bump actions/setup-python from 5 to 6 ([#2977](https://github.com/kubeflow/trainer/pull/2977) by @dependabot[bot])
+- chore(deps): bump python from 3.11-slim-bookworm to 3.14-slim-bookworm in /cmd/initializers/model ([#2951](https://github.com/kubeflow/trainer/pull/2951) by @dependabot[bot])
+- chore(deps): bump python from 3.11-slim-bookworm to 3.14-slim-bookworm in /cmd/initializers/dataset ([#2941](https://github.com/kubeflow/trainer/pull/2941) by @dependabot[bot])
+- chore(deps): bump sentencepiece from 0.2.0 to 0.2.1 in /cmd/runtimes/deepspeed ([#2948](https://github.com/kubeflow/trainer/pull/2948) by @dependabot[bot])
+- chore(deps): bump tokio from 1.47.1 to 1.48.0 in /pkg/data_cache/test ([#2963](https://github.com/kubeflow/trainer/pull/2963) by @dependabot[bot])
+- chore(deps): bump clap from 4.5.43 to 4.5.51 in /pkg/data_cache/test ([#2965](https://github.com/kubeflow/trainer/pull/2965) by @dependabot[bot])
+- chore(deps): bump tokio from 1.46.1 to 1.48.0 in /pkg/data_cache ([#2966](https://github.com/kubeflow/trainer/pull/2966) by @dependabot[bot])
+- chore(deps): bump aquasecurity/trivy-action from 0.28.0 to 0.33.1 ([#2947](https://github.com/kubeflow/trainer/pull/2947) by @dependabot[bot])
+- chore(deps): bump actions/stale from 9 to 10 ([#2942](https://github.com/kubeflow/trainer/pull/2942) by @dependabot[bot])
+- chore(deps): bump mpioperator/base from v0.6.0 to v0.7.0 in /cmd/runtimes/deepspeed ([#2938](https://github.com/kubeflow/trainer/pull/2938) by @dependabot[bot])
+- chore(deps): bump golang from 1.24 to 1.25 in /cmd/trainer-controller-manager ([#2935](https://github.com/kubeflow/trainer/pull/2935) by @dependabot[bot])
+- chore(deps): bump actions/github-script from 7 to 8 ([#2937](https://github.com/kubeflow/trainer/pull/2937) by @dependabot[bot])
+- chore(deps): bump actions/upload-artifact from 4 to 5 ([#2936](https://github.com/kubeflow/trainer/pull/2936) by @dependabot[bot])
+- chore(deps): bump mpioperator/base from v0.6.0 to v0.7.0 in /cmd/runtimes/mlx ([#2933](https://github.com/kubeflow/trainer/pull/2933) by @dependabot[bot])
+- chore(deps): bump rust from 1.85-bullseye to 1.91-bullseye in /cmd/data_cache ([#2931](https://github.com/kubeflow/trainer/pull/2931) by @dependabot[bot])
+- chore(deps): bump github/codeql-action from 3 to 4 ([#2953](https://github.com/kubeflow/trainer/pull/2953) by @dependabot[bot])
+- chore(deps): bump github.com/onsi/ginkgo/v2 from 2.25.3 to 2.27.2 ([#2952](https://github.com/kubeflow/trainer/pull/2952) by @dependabot[bot])
+- chore(deps): bump sigs.k8s.io/controller-runtime from 0.22.3 to 0.22.4 in the kubernetes group ([#2940](https://github.com/kubeflow/trainer/pull/2940) by @dependabot[bot])
+- chore(deps): bump golang.org/x/crypto from 0.41.0 to 0.43.0 in the golang group ([#2945](https://github.com/kubeflow/trainer/pull/2945) by @dependabot[bot])
+
+[Full Changelog](https://github.com/kubeflow/trainer/compare/v2.1.0...v2.2.0)
+
+# [v2.1.0](https://github.com/kubeflow/trainer/tree/v2.1.0) (2025-11-07)
+
+This is Kubeflow Trainer v2.1.0 release.
+
+```bash
+kubectl apply --server-side -k "https://github.com/kubeflow/trainer.git/manifests/overlays/manager?ref=v2.1.0"
+kubectl apply --server-side -k "https://github.com/kubeflow/trainer.git/manifests/overlays/runtimes?ref=v2.1.0"
+```
+
+You can now install controller manager with Helm charts 🚀
+
+```bash
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer --version 2.1.0
+```
+
+For more information, please see [the Kubeflow Trainer docs](https://www.kubeflow.org/docs/components/trainer/overview/)
+
+## Breaking Changes
+
+- feat(api): Replace deprecated PodSpecOverrides API with PodTemplateOverrides in TrainJob ([#2785](https://github.com/kubeflow/trainer/pull/2785) by [@xigang](https://github.com/xigang))
+- feat(operator): Replace TrainJob controller settings with the Config API ([#2879](https://github.com/kubeflow/trainer/pull/2879) by [@kapil27](https://github.com/kapil27))
+- chore(operator): Upgrade JobSet to v0.10.1 ([#2875](https://github.com/kubeflow/trainer/pull/2875) by [@astefanutti](https://github.com/astefanutti))
+- chore(operator): Upgrade Kubernetes to v1.34 ([#2804](https://github.com/kubeflow/trainer/pull/2804) by [@astefanutti](https://github.com/astefanutti))
+- Upgrade Kubernetes to v1.33 ([#2756](https://github.com/kubeflow/trainer/pull/2756) by [@astefanutti](https://github.com/astefanutti))
+
+## New Features
+
+### Distributed AI Data Cache
+
+- feat(cache): KEP-2655: Adding default runtime with cache and example ([#2928](https://github.com/kubeflow/trainer/pull/2928) by [@akshaychitneni](https://github.com/akshaychitneni))
+- feat(cache): KEP-2655 - Supporting readiness probes on cache nodes ([#2920](https://github.com/kubeflow/trainer/pull/2920) by [@akshaychitneni](https://github.com/akshaychitneni))
+- feat(cache): KEP-2655 - Add build pipeline and address vulnerabilities for data_cache ([#2890](https://github.com/kubeflow/trainer/pull/2890) by [@akshaychitneni](https://github.com/akshaychitneni))
+- feat(cache): KEP-2655: Adding cache initializer ([#2793](https://github.com/kubeflow/trainer/pull/2793) by [@akshaychitneni](https://github.com/akshaychitneni))
+- feat: KEP-2655: Add data cache system ([#2755](https://github.com/kubeflow/trainer/pull/2755) by [@akshaychitneni](https://github.com/akshaychitneni))
+
+### LLM Post-Training
+
+- feat(runtimes): Add LoRA/QLoRA/DoRA support in LLM Trainer V2 ([#2832](https://github.com/kubeflow/trainer/pull/2832) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- feat: Add Qwen 2.5 1.5b runtime, example and fix gpu e2e test ([#2835](https://github.com/kubeflow/trainer/pull/2835) by [@jaiakash](https://github.com/jaiakash))
+- feat(runtimes): Support Distributed MLX on CUDA ([#2790](https://github.com/kubeflow/trainer/pull/2790) by [@andreyvelich](https://github.com/andreyvelich))
+
+### Kueue Enhancements
+
+- Support Topology Aware Scheduling for TrainJobs ([kubernetes-sigs/kueue#7249](https://github.com/kubernetes-sigs/kueue/pull/7249) by [@kaisoz](https://github.com/kaisoz))
+- fix: Allow multiple podSpec overrides to target the same TargetJob ([#2880](https://github.com/kubeflow/trainer/pull/2880) by [@kaisoz](https://github.com/kaisoz))
+- feat: support affinity in TrainJob pod spec overrides ([#2796](https://github.com/kubeflow/trainer/pull/2796) by [@toVersus](https://github.com/toVersus))
+- feat: Add schedulingGates to PodSpecOverrides ([#2700](https://github.com/kubeflow/trainer/pull/2700) by [@astefanutti](https://github.com/astefanutti))
+
+### Volcano Scheduler
+
+- feat: KEP-2437 - PodGroup Creation for Volcano Scheduler ([#2729](https://github.com/kubeflow/trainer/pull/2729) by [@Doris-xm](https://github.com/Doris-xm))
+- feat(docs): KEP-2437-Support Volcano Scheduler in Kubeflow Trainer V2 ([#2672](https://github.com/kubeflow/trainer/pull/2672) by [@Doris-xm](https://github.com/Doris-xm))
+
+### API Updates
+
+- feat(runtimes): add support for launcher resource allocation in MPI jobs ([#2653](https://github.com/kubeflow/trainer/pull/2653) by [@jskswamy](https://github.com/jskswamy))
+- feat: Add PodTemplateOverrides into TrainJob V2 API ([#2882](https://github.com/kubeflow/trainer/pull/2882) by [@xigang](https://github.com/xigang))
+- feat(api): Sync TrainJob JobsStatus from JobSet ReplicatedJobsStatus ([#2802](https://github.com/kubeflow/trainer/pull/2802) by [@astefanutti](https://github.com/astefanutti))
+- feat: support imagePullSecrets in TrainJob pod spec overrides ([#2806](https://github.com/kubeflow/trainer/pull/2806) by [@toVersus](https://github.com/toVersus))
+- feat(operator): enforce RFC 1035 validation for TrainJob name ([#2767](https://github.com/kubeflow/trainer/pull/2767) by [@juniemariam](https://github.com/juniemariam))
+
+## Bug Fixes
+
+- [release-2.1] fix(ci): Fix the Kubeflow SDK installation with Docker ([#2927](https://github.com/kubeflow/trainer/pull/2927) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(manifests): Add RBAC rules for Leases in Helm Charts ([#2901](https://github.com/kubeflow/trainer/pull/2901) by [@astefanutti](https://github.com/astefanutti))
+- fix(docs): correct example usage in KEP-2437-Support-Volcano-Scheduler ([#2898](https://github.com/kubeflow/trainer/pull/2898) by [@Doris-xm](https://github.com/Doris-xm))
+- fix(api): Keep mpiImplementation field a pointer ([#2897](https://github.com/kubeflow/trainer/pull/2897) by [@astefanutti](https://github.com/astefanutti))
+- fix(api): Fix lint errors for the config API ([#2896](https://github.com/kubeflow/trainer/pull/2896) by [@astefanutti](https://github.com/astefanutti))
+- fix: charts dependencies ([#2892](https://github.com/kubeflow/trainer/pull/2892) by [@ls-2018](https://github.com/ls-2018))
+- fix(runtimes): fix missing dependency in torchtune trainer image. ([#2887](https://github.com/kubeflow/trainer/pull/2887) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(ci): Add latest image tag only for the master branch ([#2854](https://github.com/kubeflow/trainer/pull/2854) by [@andreyvelich](https://github.com/andreyvelich))
+- fix: read only permission for PRs ([#2829](https://github.com/kubeflow/trainer/pull/2829) by [@jaiakash](https://github.com/jaiakash))
+- fix: read only permission for PRs ([#2827](https://github.com/kubeflow/trainer/pull/2827) by [@jaiakash](https://github.com/jaiakash))
+- fix: update examples to reflect func_args now being unpacked ([#2815](https://github.com/kubeflow/trainer/pull/2815) by [@briangallagher](https://github.com/briangallagher))
+- fix(examples): Update get_job_logs() API in examples ([#2813](https://github.com/kubeflow/trainer/pull/2813) by [@andreyvelich](https://github.com/andreyvelich))
+- fix: teraform for oci gpu based vm ([#2810](https://github.com/kubeflow/trainer/pull/2810) by [@jaiakash](https://github.com/jaiakash))
+- fix(api): Regenerate TrainJob CRD ([#2805](https://github.com/kubeflow/trainer/pull/2805) by [@astefanutti](https://github.com/astefanutti))
+- fix(ci): disable `Unit and Integration Test - Go` gh action in forked repos ([#2746](https://github.com/kubeflow/trainer/pull/2746) by [@milinddethe15](https://github.com/milinddethe15))
+- fix(manifests): Add missing permissions for the RuntimeClass and LimitRange ([#2787](https://github.com/kubeflow/trainer/pull/2787) by [@tenzen-y](https://github.com/tenzen-y))
+- fix: update kubeflow sdk reference ([#2780](https://github.com/kubeflow/trainer/pull/2780) by [@kramaranya](https://github.com/kramaranya))
+- fix(api): update license path for kubeflow_trainer_api ([#2778](https://github.com/kubeflow/trainer/pull/2778) by [@kramaranya](https://github.com/kramaranya))
+- fix(runtimes): Set numProcPerNode: 1 in DeepSpeed Runtime ([#2774](https://github.com/kubeflow/trainer/pull/2774) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(docs): update KEP-2401 according to current implementation. ([#2765](https://github.com/kubeflow/trainer/pull/2765) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(ci): Remove coverage from Go integration tests ([#2773](https://github.com/kubeflow/trainer/pull/2773) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(api): Fix license path for Kubeflow Trainer Python API ([#2771](https://github.com/kubeflow/trainer/pull/2771) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(examples): Update the argument for Runtime framework ([#2766](https://github.com/kubeflow/trainer/pull/2766) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(test): Fix Ginkgo command for integration tests ([#2758](https://github.com/kubeflow/trainer/pull/2758) by [@astefanutti](https://github.com/astefanutti))
+- fix: fix the command for fetching Kubeflow Trainer version in the issue template ([#2732](https://github.com/kubeflow/trainer/pull/2732) by [@rudeigerc](https://github.com/rudeigerc))
+- fix(manifests): add rbac config of events for event recorders ([#2731](https://github.com/kubeflow/trainer/pull/2731) by [@rudeigerc](https://github.com/rudeigerc))
+- fix(manifests): fix position of labels of dataset-initializer from pod to job ([#2719](https://github.com/kubeflow/trainer/pull/2719) by [@rudeigerc](https://github.com/rudeigerc))
+- fix(module): Change Go module name to v2 ([#2707](https://github.com/kubeflow/trainer/pull/2707) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(plugins): Fix some errors in torchtune mutation process. ([#2675](https://github.com/kubeflow/trainer/pull/2675) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(manifests): Update manifests to enable LLM fine-tuning workflow with CTR and TrainJob yaml files ([#2669](https://github.com/kubeflow/trainer/pull/2669) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(rbac): Add required RBAC to update ClusterTrainingRuntimes on OpenShift ([#2682](https://github.com/kubeflow/trainer/pull/2682) by [@astefanutti](https://github.com/astefanutti))
+
+## Misc
+
+- [release-2.1] feat: Adding local execution example notebook  ([#2924](https://github.com/kubeflow/trainer/pull/2924) by [@Fiona-Waters](https://github.com/Fiona-Waters))
+- feat(manifests): Publish Kubeflow Trainer Helm charts ([#2917](https://github.com/kubeflow/trainer/pull/2917) by [@adity1raut](https://github.com/adity1raut))
+- [release-2.1] chore(operator): Use SSA throughout runtime framework ([#2912](https://github.com/kubeflow/trainer/pull/2912) by [@astefanutti](https://github.com/astefanutti))
+- [release-2.1] feat(initializer): add s3 model and dataset initializers ([#2911](https://github.com/kubeflow/trainer/pull/2911) by [@rudeigerc](https://github.com/rudeigerc))
+- feat(operator): Add validation for required containers in replicatedJobs ([#2722](https://github.com/kubeflow/trainer/pull/2722) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- feat: add controller manager configuration helm chart ([#2895](https://github.com/kubeflow/trainer/pull/2895) by [@kapil27](https://github.com/kapil27))
+- chore(ci): Enable Kubernetes API Linter ([#2858](https://github.com/kubeflow/trainer/pull/2858) by [@astefanutti](https://github.com/astefanutti))
+- feat(runtimes): implement clusterTrainingRuntime deprecation process ([#2791](https://github.com/kubeflow/trainer/pull/2791) by [@tdn21](https://github.com/tdn21))
+- feat: add HF token and allow gpu workflow to run from pull request target ([#2818](https://github.com/kubeflow/trainer/pull/2818) by [@jaiakash](https://github.com/jaiakash))
+- feat(docs): KEP-2442-Support JAX Training Runtime ([#2643](https://github.com/kubeflow/trainer/pull/2643) by [@mahdikhashan](https://github.com/mahdikhashan))
+- chore(test): Support e2e cluster setup with Podman ([#2861](https://github.com/kubeflow/trainer/pull/2861) by [@astefanutti](https://github.com/astefanutti))
+- chore(runtimes): Upgrade torchtune version to v0.6.1 ([#2876](https://github.com/kubeflow/trainer/pull/2876) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- chore(operator): Upgrade JobSet to v0.10.1 ([#2875](https://github.com/kubeflow/trainer/pull/2875) by [@astefanutti](https://github.com/astefanutti))
+- feat(docs): Update Trainer diagram and SDK release ([#2867](https://github.com/kubeflow/trainer/pull/2867) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): Add changelog for Kubeflow Trainer v2.0.1 ([#2864](https://github.com/kubeflow/trainer/pull/2864) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(docs): Update the release document to push all changes ([#2865](https://github.com/kubeflow/trainer/pull/2865) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: Install released version of Kubeflow SDK ([#2857](https://github.com/kubeflow/trainer/pull/2857) by [@kramaranya](https://github.com/kramaranya))
+- chore(ci): Ignore generated files in .gitattributes ([#2855](https://github.com/kubeflow/trainer/pull/2855) by [@andreyvelich](https://github.com/andreyvelich))
+- feat: Add a public function to create runtime info objects ([#2837](https://github.com/kubeflow/trainer/pull/2837) by [@kaisoz](https://github.com/kaisoz))
+- chore(test): add uts for coscheduling plugin. ([#2582](https://github.com/kubeflow/trainer/pull/2582) by [@IRONICBo](https://github.com/IRONICBo))
+- feat(ci): Add Trivy Vulnerability Scan ([#2826](https://github.com/kubeflow/trainer/pull/2826) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: merge test cases using PodSpecOverrides into a single case ([#2822](https://github.com/kubeflow/trainer/pull/2822) by [@toVersus](https://github.com/toVersus))
+- chore(runtimes): update torchtune CTRs with multiple dependson feature in jobset v0.9.0 ([#2823](https://github.com/kubeflow/trainer/pull/2823) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- chore(operator): Bump JobSet to v0.9.0 version ([#2821](https://github.com/kubeflow/trainer/pull/2821) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): How to release Python API modules ([#2786](https://github.com/kubeflow/trainer/pull/2786) by [@andreyvelich](https://github.com/andreyvelich))
+- feat: support for managing gpu enabled self runner infra ([#2762](https://github.com/kubeflow/trainer/pull/2762) by [@jaiakash](https://github.com/jaiakash))
+- chore: Nominate @astefanutti as Kubeflow Trainer approver ([#2808](https://github.com/kubeflow/trainer/pull/2808) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: deflake test to ensure runtime is created before creating trainjob ([#2807](https://github.com/kubeflow/trainer/pull/2807) by [@toVersus](https://github.com/toVersus))
+- feat: KEP-2432: GPU Testing for LLM Blueprints ([#2689](https://github.com/kubeflow/trainer/pull/2689) by [@jaiakash](https://github.com/jaiakash))
+- chore(docs): Add license scan report and status ([#2788](https://github.com/kubeflow/trainer/pull/2788) by [@fossabot](https://github.com/fossabot))
+- chore: Remove tool.hatch.build.targets.wheel from pyproject ([#2803](https://github.com/kubeflow/trainer/pull/2803) by [@kramaranya](https://github.com/kramaranya))
+- chore: Add unit tests for `pkg/apply` ([#2479](https://github.com/kubeflow/trainer/pull/2479) by [@akagami-harsh](https://github.com/akagami-harsh))
+- chore(runtimes): Remove MPI pi Runtime ([#2760](https://github.com/kubeflow/trainer/pull/2760) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(runtimes): Update packages in DeepSpeed runtime and fix T5 example ([#2781](https://github.com/kubeflow/trainer/pull/2781) by [@andreyvelich](https://github.com/andreyvelich))
+- feat: run workflows on `/ok-to-test` label ([#2639](https://github.com/kubeflow/trainer/pull/2639) by [@milinddethe15](https://github.com/milinddethe15))
+- feat: Add security contexts to controller managers ([#2759](https://github.com/kubeflow/trainer/pull/2759) by [@kunal-511](https://github.com/kunal-511))
+- feat(docs): Introduce latest news to the README ([#2769](https://github.com/kubeflow/trainer/pull/2769) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(runtimes): Add Framework Label to the Runtimes ([#2761](https://github.com/kubeflow/trainer/pull/2761) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(runtimes): Remove command from the Runtimes with CustomTrainer ([#2754](https://github.com/kubeflow/trainer/pull/2754) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): Kubeflow Trainer ROADMAP 2025 ([#2748](https://github.com/kubeflow/trainer/pull/2748) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(docs): Add Changelog for Kubeflow Trainer v2.0.0 ([#2743](https://github.com/kubeflow/trainer/pull/2743) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: update github runners to oci gh arc runners ([#2739](https://github.com/kubeflow/trainer/pull/2739) by [@koksay](https://github.com/koksay))
+- feat(operator): force trainjob name to be compliant with RFC 1035 for jobset ([#2734](https://github.com/kubeflow/trainer/pull/2734) by [@rudeigerc](https://github.com/rudeigerc))
+- chore(ci): Add GitHub action to verify PR titles ([#2724](https://github.com/kubeflow/trainer/pull/2724) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): Guide to report security vulnerability ([#2718](https://github.com/kubeflow/trainer/pull/2718) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: Upgrade JobSet to version 0.8.2 ([#2726](https://github.com/kubeflow/trainer/pull/2726) by [@astefanutti](https://github.com/astefanutti))
+- Add Red Hat to ADOPTERS.md ([#2714](https://github.com/kubeflow/trainer/pull/2714) by [@terrytangyuan](https://github.com/terrytangyuan))
+- chore(docs): Add Changelog for v2.0.0-rc.1 ([#2709](https://github.com/kubeflow/trainer/pull/2709) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(docs): Update Release Guide ([#2710](https://github.com/kubeflow/trainer/pull/2710) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: Copy generated CRDs into Helm charts ([#2703](https://github.com/kubeflow/trainer/pull/2703) by [@astefanutti](https://github.com/astefanutti))
+- feat(example): Add alpaca-trianjob-yaml.ipynb. ([#2670](https://github.com/kubeflow/trainer/pull/2670) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- feat: Mutable PodSpecOverrides for suspended TrainJob ([#2683](https://github.com/kubeflow/trainer/pull/2683) by [@astefanutti](https://github.com/astefanutti))
+- chore: Replace the deprecated intstr.FromInt with intstr.FromInt32 ([#2695](https://github.com/kubeflow/trainer/pull/2695) by [@tenzen-y](https://github.com/tenzen-y))
+- chore: Remove the vendor specific parameters ([#2691](https://github.com/kubeflow/trainer/pull/2691) by [@tenzen-y](https://github.com/tenzen-y))
+- KEP-2170: Add the manifests overlay for Kubeflow Training V2 ([#2382](https://github.com/kubeflow/trainer/pull/2382) by [@Doris-xm](https://github.com/Doris-xm))
+- chore(runtime): Bump Torch to 2.7.1 and DeepSpeed to 0.17.1 ([#2685](https://github.com/kubeflow/trainer/pull/2685) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(helm): Sync ClusterRule in Helm chart ([#2686](https://github.com/kubeflow/trainer/pull/2686) by [@astefanutti](https://github.com/astefanutti))
+- Add Changelog for Trainer v2.0.0-rc.0 ([#2666](https://github.com/kubeflow/trainer/pull/2666) by [@kramaranya](https://github.com/kramaranya))
+- feat(initializer): Updated base image to Debian image and changed install commands compatible with Debian image ([#2528](https://github.com/kubeflow/trainer/pull/2528) by [@Debabrata47](https://github.com/Debabrata47))
+
+[Full Changelog](https://github.com/kubeflow/trainer/compare/v2.0.1...v2.1.0)
+
+# [v2.1.0-rc.1](https://github.com/kubeflow/trainer/tree/v2.1.0-rc.1) (2025-11-03)
+
+## New Features
+
+- feat(manifests): Publish Kubeflow Trainer Helm charts ([#2917](https://github.com/kubeflow/trainer/pull/2917) by [@adity1raut](https://github.com/adity1raut))
+- [release-2.1] chore(operator): Use SSA throughout runtime framework ([#2912](https://github.com/kubeflow/trainer/pull/2912) by [@astefanutti](https://github.com/astefanutti))
+- [release-2.1] feat(initializer): add s3 model and dataset initializers ([#2911](https://github.com/kubeflow/trainer/pull/2911) by [@rudeigerc](https://github.com/rudeigerc))
+
+## Bug Fixes
+
+- [release-2.1] fix(manifests): Fix boolean values defaulting in Helm charts ([#2914](https://github.com/kubeflow/trainer/pull/2914) by [@astefanutti](https://github.com/astefanutti))
+- [release-2.1] fix(runtimes): Update pip version in the MLX runtime ([#2910](https://github.com/kubeflow/trainer/pull/2910) by [@andreyvelich](https://github.com/andreyvelich))
+
+[Full Changelog](https://github.com/kubeflow/trainer/compare/v2.1.0-rc.0...v2.1.0-rc.1)
+
+# [v2.1.0-rc.0](https://github.com/kubeflow/trainer/tree/v2.1.0-rc.0) (2025-10-21)
+
+## Breaking Changes
+
+- feat(api): Replace deprecated PodSpecOverrides API with PodTemplateOverrides in TrainJob ([#2785](https://github.com/kubeflow/trainer/pull/2785) by [@xigang](https://github.com/xigang))
+- feat(operator): Replace TrainJob controller settings with the Config API ([#2879](https://github.com/kubeflow/trainer/pull/2879) by [@kapil27](https://github.com/kapil27))
+- chore(operator): Upgrade JobSet to v0.10.1 ([#2875](https://github.com/kubeflow/trainer/pull/2875) by [@astefanutti](https://github.com/astefanutti))
+- chore(operator): Upgrade Kubernetes to v1.34 ([#2804](https://github.com/kubeflow/trainer/pull/2804) by [@astefanutti](https://github.com/astefanutti))
+- Upgrade Kubernetes to v1.33 ([#2756](https://github.com/kubeflow/trainer/pull/2756) by [@astefanutti](https://github.com/astefanutti))
+
+## New Features
+
+### Distributed AI Data Cache
+
+- feat(cache): KEP-2655 - Add build pipeline and address vulnerabilities for data_cache ([#2890](https://github.com/kubeflow/trainer/pull/2890) by [@akshaychitneni](https://github.com/akshaychitneni))
+- feat(cache): KEP-2655: Adding cache initializer ([#2793](https://github.com/kubeflow/trainer/pull/2793) by [@akshaychitneni](https://github.com/akshaychitneni))
+- feat: KEP-2655: Add data cache system ([#2755](https://github.com/kubeflow/trainer/pull/2755) by [@akshaychitneni](https://github.com/akshaychitneni))
+
+### LLM Post-Training
+
+- feat(runtimes): Add LoRA/QLoRA/DoRA support in LLM Trainer V2 ([#2832](https://github.com/kubeflow/trainer/pull/2832) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- feat: Add Qwen 2.5 1.5b runtime, example and fix gpu e2e test ([#2835](https://github.com/kubeflow/trainer/pull/2835) by [@jaiakash](https://github.com/jaiakash))
+- feat(runtimes): Support Distributed MLX on CUDA ([#2790](https://github.com/kubeflow/trainer/pull/2790) by [@andreyvelich](https://github.com/andreyvelich))
+
+### Kueue Enhancements
+
+- Support Topology Aware Scheduling for TrainJobs ([kubernetes-sigs/kueue#7249](https://github.com/kubernetes-sigs/kueue/pull/7249) by [@kaisoz](https://github.com/kaisoz))
+- fix: Allow multiple podSpec overrides to target the same TargetJob ([#2880](https://github.com/kubeflow/trainer/pull/2880) by [@kaisoz](https://github.com/kaisoz))
+- feat: support affinity in TrainJob pod spec overrides ([#2796](https://github.com/kubeflow/trainer/pull/2796) by [@toVersus](https://github.com/toVersus))
+- feat: Add schedulingGates to PodSpecOverrides ([#2700](https://github.com/kubeflow/trainer/pull/2700) by [@astefanutti](https://github.com/astefanutti))
+
+### Volcano Scheduler
+
+- feat: KEP-2437 - PodGroup Creation for Volcano Scheduler ([#2729](https://github.com/kubeflow/trainer/pull/2729) by [@Doris-xm](https://github.com/Doris-xm))
+- feat(docs): KEP-2437-Support Volcano Scheduler in Kubeflow Trainer V2 ([#2672](https://github.com/kubeflow/trainer/pull/2672) by [@Doris-xm](https://github.com/Doris-xm))
+
+### API Updates
+
+- feat(runtimes): add support for launcher resource allocation in MPI jobs ([#2653](https://github.com/kubeflow/trainer/pull/2653) by [@jskswamy](https://github.com/jskswamy))
+- feat: Add PodTemplateOverrides into TrainJob V2 API ([#2882](https://github.com/kubeflow/trainer/pull/2882) by [@xigang](https://github.com/xigang))
+- feat(api): Sync TrainJob JobsStatus from JobSet ReplicatedJobsStatus ([#2802](https://github.com/kubeflow/trainer/pull/2802) by [@astefanutti](https://github.com/astefanutti))
+- feat: support imagePullSecrets in TrainJob pod spec overrides ([#2806](https://github.com/kubeflow/trainer/pull/2806) by [@toVersus](https://github.com/toVersus))
+- feat(operator): enforce RFC 1035 validation for TrainJob name ([#2767](https://github.com/kubeflow/trainer/pull/2767) by [@juniemariam](https://github.com/juniemariam))
+
+## Bug Fixes
+
+- fix(manifests): Add RBAC rules for Leases in Helm Charts ([#2901](https://github.com/kubeflow/trainer/pull/2901) by [@astefanutti](https://github.com/astefanutti))
+- fix(docs): correct example usage in KEP-2437-Support-Volcano-Scheduler ([#2898](https://github.com/kubeflow/trainer/pull/2898) by [@Doris-xm](https://github.com/Doris-xm))
+- fix(api): Keep mpiImplementation field a pointer ([#2897](https://github.com/kubeflow/trainer/pull/2897) by [@astefanutti](https://github.com/astefanutti))
+- fix(api): Fix lint errors for the config API ([#2896](https://github.com/kubeflow/trainer/pull/2896) by [@astefanutti](https://github.com/astefanutti))
+- fix: charts dependencies ([#2892](https://github.com/kubeflow/trainer/pull/2892) by [@ls-2018](https://github.com/ls-2018))
+- fix(runtimes): fix missing dependency in torchtune trainer image. ([#2887](https://github.com/kubeflow/trainer/pull/2887) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(ci): Add latest image tag only for the master branch ([#2854](https://github.com/kubeflow/trainer/pull/2854) by [@andreyvelich](https://github.com/andreyvelich))
+- fix: read only permission for PRs ([#2829](https://github.com/kubeflow/trainer/pull/2829) by [@jaiakash](https://github.com/jaiakash))
+- fix: read only permission for PRs ([#2827](https://github.com/kubeflow/trainer/pull/2827) by [@jaiakash](https://github.com/jaiakash))
+- fix: update examples to reflect func_args now being unpacked ([#2815](https://github.com/kubeflow/trainer/pull/2815) by [@briangallagher](https://github.com/briangallagher))
+- fix(examples): Update get_job_logs() API in examples ([#2813](https://github.com/kubeflow/trainer/pull/2813) by [@andreyvelich](https://github.com/andreyvelich))
+- fix: teraform for oci gpu based vm ([#2810](https://github.com/kubeflow/trainer/pull/2810) by [@jaiakash](https://github.com/jaiakash))
+- fix(api): Regenerate TrainJob CRD ([#2805](https://github.com/kubeflow/trainer/pull/2805) by [@astefanutti](https://github.com/astefanutti))
+- fix(ci): disable `Unit and Integration Test - Go` gh action in forked repos ([#2746](https://github.com/kubeflow/trainer/pull/2746) by [@milinddethe15](https://github.com/milinddethe15))
+- fix(manifests): Add missing permissions for the RuntimeClass and LimitRange ([#2787](https://github.com/kubeflow/trainer/pull/2787) by [@tenzen-y](https://github.com/tenzen-y))
+- fix: update kubeflow sdk reference ([#2780](https://github.com/kubeflow/trainer/pull/2780) by [@kramaranya](https://github.com/kramaranya))
+- fix(api): update license path for kubeflow_trainer_api ([#2778](https://github.com/kubeflow/trainer/pull/2778) by [@kramaranya](https://github.com/kramaranya))
+- fix(runtimes): Set numProcPerNode: 1 in DeepSpeed Runtime ([#2774](https://github.com/kubeflow/trainer/pull/2774) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(docs): update KEP-2401 according to current implementation. ([#2765](https://github.com/kubeflow/trainer/pull/2765) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(ci): Remove coverage from Go integration tests ([#2773](https://github.com/kubeflow/trainer/pull/2773) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(api): Fix license path for Kubeflow Trainer Python API ([#2771](https://github.com/kubeflow/trainer/pull/2771) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(examples): Update the argument for Runtime framework ([#2766](https://github.com/kubeflow/trainer/pull/2766) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(test): Fix Ginkgo command for integration tests ([#2758](https://github.com/kubeflow/trainer/pull/2758) by [@astefanutti](https://github.com/astefanutti))
+- fix: fix the command for fetching Kubeflow Trainer version in the issue template ([#2732](https://github.com/kubeflow/trainer/pull/2732) by [@rudeigerc](https://github.com/rudeigerc))
+- fix(manifests): add rbac config of events for event recorders ([#2731](https://github.com/kubeflow/trainer/pull/2731) by [@rudeigerc](https://github.com/rudeigerc))
+- fix(manifests): fix position of labels of dataset-initializer from pod to job ([#2719](https://github.com/kubeflow/trainer/pull/2719) by [@rudeigerc](https://github.com/rudeigerc))
+- fix(module): Change Go module name to v2 ([#2707](https://github.com/kubeflow/trainer/pull/2707) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(plugins): Fix some errors in torchtune mutation process. ([#2675](https://github.com/kubeflow/trainer/pull/2675) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(manifests): Update manifests to enable LLM fine-tuning workflow with CTR and TrainJob yaml files ([#2669](https://github.com/kubeflow/trainer/pull/2669) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- fix(rbac): Add required RBAC to update ClusterTrainingRuntimes on OpenShift ([#2682](https://github.com/kubeflow/trainer/pull/2682) by [@astefanutti](https://github.com/astefanutti))
+
+## Misc
+
+- feat(operator): Add validation for required containers in replicatedJobs ([#2722](https://github.com/kubeflow/trainer/pull/2722) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- feat: add controller manager configuration helm chart ([#2895](https://github.com/kubeflow/trainer/pull/2895) by [@kapil27](https://github.com/kapil27))
+- chore(ci): Enable Kubernetes API Linter ([#2858](https://github.com/kubeflow/trainer/pull/2858) by [@astefanutti](https://github.com/astefanutti))
+- feat(runtimes): implement clusterTrainingRuntime deprecation process ([#2791](https://github.com/kubeflow/trainer/pull/2791) by [@tdn21](https://github.com/tdn21))
+- feat: add HF token and allow gpu workflow to run from pull request target ([#2818](https://github.com/kubeflow/trainer/pull/2818) by [@jaiakash](https://github.com/jaiakash))
+- feat(docs): KEP-2442-Support JAX Training Runtime ([#2643](https://github.com/kubeflow/trainer/pull/2643) by [@mahdikhashan](https://github.com/mahdikhashan))
+- chore(test): Support e2e cluster setup with Podman ([#2861](https://github.com/kubeflow/trainer/pull/2861) by [@astefanutti](https://github.com/astefanutti))
+- chore(runtimes): Upgrade torchtune version to v0.6.1 ([#2876](https://github.com/kubeflow/trainer/pull/2876) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- chore(operator): Upgrade JobSet to v0.10.1 ([#2875](https://github.com/kubeflow/trainer/pull/2875) by [@astefanutti](https://github.com/astefanutti))
+- feat(docs): Update Trainer diagram and SDK release ([#2867](https://github.com/kubeflow/trainer/pull/2867) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): Add changelog for Kubeflow Trainer v2.0.1 ([#2864](https://github.com/kubeflow/trainer/pull/2864) by [@andreyvelich](https://github.com/andreyvelich))
+- fix(docs): Update the release document to push all changes ([#2865](https://github.com/kubeflow/trainer/pull/2865) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: Install released version of Kubeflow SDK ([#2857](https://github.com/kubeflow/trainer/pull/2857) by [@kramaranya](https://github.com/kramaranya))
+- chore(ci): Ignore generated files in .gitattributes ([#2855](https://github.com/kubeflow/trainer/pull/2855) by [@andreyvelich](https://github.com/andreyvelich))
+- feat: Add a public function to create runtime info objects ([#2837](https://github.com/kubeflow/trainer/pull/2837) by [@kaisoz](https://github.com/kaisoz))
+- chore(test): add uts for coscheduling plugin. ([#2582](https://github.com/kubeflow/trainer/pull/2582) by [@IRONICBo](https://github.com/IRONICBo))
+- feat(ci): Add Trivy Vulnerability Scan ([#2826](https://github.com/kubeflow/trainer/pull/2826) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: merge test cases using PodSpecOverrides into a single case ([#2822](https://github.com/kubeflow/trainer/pull/2822) by [@toVersus](https://github.com/toVersus))
+- chore(runtimes): update torchtune CTRs with multiple dependson feature in jobset v0.9.0 ([#2823](https://github.com/kubeflow/trainer/pull/2823) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- chore(operator): Bump JobSet to v0.9.0 version ([#2821](https://github.com/kubeflow/trainer/pull/2821) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): How to release Python API modules ([#2786](https://github.com/kubeflow/trainer/pull/2786) by [@andreyvelich](https://github.com/andreyvelich))
+- feat: support for managing gpu enabled self runner infra ([#2762](https://github.com/kubeflow/trainer/pull/2762) by [@jaiakash](https://github.com/jaiakash))
+- chore: Nominate @astefanutti as Kubeflow Trainer approver ([#2808](https://github.com/kubeflow/trainer/pull/2808) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: deflake test to ensure runtime is created before creating trainjob ([#2807](https://github.com/kubeflow/trainer/pull/2807) by [@toVersus](https://github.com/toVersus))
+- feat: KEP-2432: GPU Testing for LLM Blueprints ([#2689](https://github.com/kubeflow/trainer/pull/2689) by [@jaiakash](https://github.com/jaiakash))
+- chore(docs): Add license scan report and status ([#2788](https://github.com/kubeflow/trainer/pull/2788) by [@fossabot](https://github.com/fossabot))
+- chore: Remove tool.hatch.build.targets.wheel from pyproject ([#2803](https://github.com/kubeflow/trainer/pull/2803) by [@kramaranya](https://github.com/kramaranya))
+- chore: Add unit tests for `pkg/apply` ([#2479](https://github.com/kubeflow/trainer/pull/2479) by [@akagami-harsh](https://github.com/akagami-harsh))
+- chore(runtimes): Remove MPI pi Runtime ([#2760](https://github.com/kubeflow/trainer/pull/2760) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(runtimes): Update packages in DeepSpeed runtime and fix T5 example ([#2781](https://github.com/kubeflow/trainer/pull/2781) by [@andreyvelich](https://github.com/andreyvelich))
+- feat: run workflows on `/ok-to-test` label ([#2639](https://github.com/kubeflow/trainer/pull/2639) by [@milinddethe15](https://github.com/milinddethe15))
+- feat: Add security contexts to controller managers ([#2759](https://github.com/kubeflow/trainer/pull/2759) by [@kunal-511](https://github.com/kunal-511))
+- feat(docs): Introduce latest news to the README ([#2769](https://github.com/kubeflow/trainer/pull/2769) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(runtimes): Add Framework Label to the Runtimes ([#2761](https://github.com/kubeflow/trainer/pull/2761) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(runtimes): Remove command from the Runtimes with CustomTrainer ([#2754](https://github.com/kubeflow/trainer/pull/2754) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): Kubeflow Trainer ROADMAP 2025 ([#2748](https://github.com/kubeflow/trainer/pull/2748) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(docs): Add Changelog for Kubeflow Trainer v2.0.0 ([#2743](https://github.com/kubeflow/trainer/pull/2743) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: update github runners to oci gh arc runners ([#2739](https://github.com/kubeflow/trainer/pull/2739) by [@koksay](https://github.com/koksay))
+- feat(operator): force trainjob name to be compliant with RFC 1035 for jobset ([#2734](https://github.com/kubeflow/trainer/pull/2734) by [@rudeigerc](https://github.com/rudeigerc))
+- chore(ci): Add GitHub action to verify PR titles ([#2724](https://github.com/kubeflow/trainer/pull/2724) by [@andreyvelich](https://github.com/andreyvelich))
+- feat(docs): Guide to report security vulnerability ([#2718](https://github.com/kubeflow/trainer/pull/2718) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: Upgrade JobSet to version 0.8.2 ([#2726](https://github.com/kubeflow/trainer/pull/2726) by [@astefanutti](https://github.com/astefanutti))
+- Add Red Hat to ADOPTERS.md ([#2714](https://github.com/kubeflow/trainer/pull/2714) by [@terrytangyuan](https://github.com/terrytangyuan))
+- chore(docs): Add Changelog for v2.0.0-rc.1 ([#2709](https://github.com/kubeflow/trainer/pull/2709) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(docs): Update Release Guide ([#2710](https://github.com/kubeflow/trainer/pull/2710) by [@andreyvelich](https://github.com/andreyvelich))
+- chore: Copy generated CRDs into Helm charts ([#2703](https://github.com/kubeflow/trainer/pull/2703) by [@astefanutti](https://github.com/astefanutti))
+- feat(example): Add alpaca-trianjob-yaml.ipynb. ([#2670](https://github.com/kubeflow/trainer/pull/2670) by [@Electronic-Waste](https://github.com/Electronic-Waste))
+- feat: Mutable PodSpecOverrides for suspended TrainJob ([#2683](https://github.com/kubeflow/trainer/pull/2683) by [@astefanutti](https://github.com/astefanutti))
+- chore: Replace the deprecated intstr.FromInt with intstr.FromInt32 ([#2695](https://github.com/kubeflow/trainer/pull/2695) by [@tenzen-y](https://github.com/tenzen-y))
+- chore: Remove the vendor specific parameters ([#2691](https://github.com/kubeflow/trainer/pull/2691) by [@tenzen-y](https://github.com/tenzen-y))
+- KEP-2170: Add the manifests overlay for Kubeflow Training V2 ([#2382](https://github.com/kubeflow/trainer/pull/2382) by [@Doris-xm](https://github.com/Doris-xm))
+- chore(runtime): Bump Torch to 2.7.1 and DeepSpeed to 0.17.1 ([#2685](https://github.com/kubeflow/trainer/pull/2685) by [@andreyvelich](https://github.com/andreyvelich))
+- chore(helm): Sync ClusterRule in Helm chart ([#2686](https://github.com/kubeflow/trainer/pull/2686) by [@astefanutti](https://github.com/astefanutti))
+- Add Changelog for Trainer v2.0.0-rc.0 ([#2666](https://github.com/kubeflow/trainer/pull/2666) by [@kramaranya](https://github.com/kramaranya))
+- feat(initializer): Updated base image to Debian image and changed install commands compatible with Debian image ([#2528](https://github.com/kubeflow/trainer/pull/2528) by [@Debabrata47](https://github.com/Debabrata47))
+
+[Full Changelog](https://github.com/kubeflow/trainer/compare/v2.0.0...v2.1.0-rc.0)
+
 # [v2.0.1](https://github.com/kubeflow/trainer/tree/v2.0.1) (2025-09-29)
 
 ## New Features

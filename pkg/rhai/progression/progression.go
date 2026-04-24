@@ -273,7 +273,7 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metrics from %s: %w", metricsURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code %d from metrics endpoint", resp.StatusCode)
@@ -719,6 +719,11 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 func ReconcileProgression(ctx context.Context, c client.Client, reader client.Reader, log logr.Logger, trainJob *trainer.TrainJob) (ctrl.Result, error) {
 	if !IsProgressionTrackingEnabled(trainJob) {
 		return ctrl.Result{}, nil
+	}
+
+	// Re-fetch from API server to get latest status before patching annotations
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(trainJob), trainJob); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	isRunning := !meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobSuspended) &&

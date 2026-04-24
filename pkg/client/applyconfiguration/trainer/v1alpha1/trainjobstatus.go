@@ -1,4 +1,4 @@
-// Copyright 2024 The Kubeflow Authors
+// Copyright The Kubeflow Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,9 +22,23 @@ import (
 
 // TrainJobStatusApplyConfiguration represents a declarative configuration of the TrainJobStatus type for use
 // with apply.
+//
+// TrainJobStatus represents the current status of TrainJob.
 type TrainJobStatusApplyConfiguration struct {
+	// conditions for the TrainJob.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
-	JobsStatus []JobStatusApplyConfiguration    `json:"jobsStatus,omitempty"`
+	// jobsStatus tracks the child Jobs in TrainJob.
+	JobsStatus []JobStatusApplyConfiguration `json:"jobsStatus,omitempty"`
+	// trainerStatus contains the latest observed runtime status of the
+	// Trainer step of the TrainJob. It reflects progress, remaining time,
+	// metrics, and the last update timestamp.
+	//
+	// This field is nil if the TrainJob does not report trainer-level
+	// status, or if no status has been observed yet (for example,
+	// immediately after the TrainJob is created).
+	//
+	// This is an alpha feature and requires enabling the TrainJobStatus feature gate.
+	TrainerStatus *TrainerStatusApplyConfiguration `json:"trainerStatus,omitempty"`
 }
 
 // TrainJobStatusApplyConfiguration constructs a declarative configuration of the TrainJobStatus type for use with
@@ -56,5 +70,13 @@ func (b *TrainJobStatusApplyConfiguration) WithJobsStatus(values ...*JobStatusAp
 		}
 		b.JobsStatus = append(b.JobsStatus, *values[i])
 	}
+	return b
+}
+
+// WithTrainerStatus sets the TrainerStatus field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TrainerStatus field is set to the value of the last call.
+func (b *TrainJobStatusApplyConfiguration) WithTrainerStatus(value *TrainerStatusApplyConfiguration) *TrainJobStatusApplyConfiguration {
+	b.TrainerStatus = value
 	return b
 }

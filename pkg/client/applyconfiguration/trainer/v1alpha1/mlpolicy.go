@@ -1,4 +1,4 @@
-// Copyright 2024 The Kubeflow Authors
+// Copyright The Kubeflow Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,10 +16,20 @@
 
 package v1alpha1
 
+import (
+	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+)
+
 // MLPolicyApplyConfiguration represents a declarative configuration of the MLPolicy type for use
 // with apply.
+//
+// MLPolicy represents configuration for the model training with ML-specific parameters.
 type MLPolicyApplyConfiguration struct {
-	NumNodes                         *int32 `json:"numNodes,omitempty"`
+	// numNodes is the number of training nodes.
+	// Defaults to 1.
+	NumNodes *int32 `json:"numNodes,omitempty"`
+	// Configuration for the runtime-specific parameters, such as Torch, Flux, or MPI.
+	// Only one of its members may be specified.
 	MLPolicySourceApplyConfiguration `json:",inline"`
 }
 
@@ -40,8 +50,8 @@ func (b *MLPolicyApplyConfiguration) WithNumNodes(value int32) *MLPolicyApplyCon
 // WithTorch sets the Torch field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Torch field is set to the value of the last call.
-func (b *MLPolicyApplyConfiguration) WithTorch(value *TorchMLPolicySourceApplyConfiguration) *MLPolicyApplyConfiguration {
-	b.MLPolicySourceApplyConfiguration.Torch = value
+func (b *MLPolicyApplyConfiguration) WithTorch(value trainerv1alpha1.TorchMLPolicySource) *MLPolicyApplyConfiguration {
+	b.MLPolicySourceApplyConfiguration.Torch = &value
 	return b
 }
 
@@ -50,5 +60,29 @@ func (b *MLPolicyApplyConfiguration) WithTorch(value *TorchMLPolicySourceApplyCo
 // If called multiple times, the MPI field is set to the value of the last call.
 func (b *MLPolicyApplyConfiguration) WithMPI(value *MPIMLPolicySourceApplyConfiguration) *MLPolicyApplyConfiguration {
 	b.MLPolicySourceApplyConfiguration.MPI = value
+	return b
+}
+
+// WithFlux sets the Flux field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Flux field is set to the value of the last call.
+func (b *MLPolicyApplyConfiguration) WithFlux(value *FluxMLPolicySourceApplyConfiguration) *MLPolicyApplyConfiguration {
+	b.MLPolicySourceApplyConfiguration.Flux = value
+	return b
+}
+
+// WithJAX sets the JAX field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the JAX field is set to the value of the last call.
+func (b *MLPolicyApplyConfiguration) WithJAX(value trainerv1alpha1.JAXMLPolicySource) *MLPolicyApplyConfiguration {
+	b.MLPolicySourceApplyConfiguration.JAX = &value
+	return b
+}
+
+// WithXGBoost sets the XGBoost field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the XGBoost field is set to the value of the last call.
+func (b *MLPolicyApplyConfiguration) WithXGBoost(value trainerv1alpha1.XGBoostMLPolicySource) *MLPolicyApplyConfiguration {
+	b.MLPolicySourceApplyConfiguration.XGBoost = &value
 	return b
 }
