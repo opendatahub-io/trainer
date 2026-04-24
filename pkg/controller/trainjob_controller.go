@@ -150,7 +150,9 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !equality.Semantic.DeepEqual(&trainJob.Status, prevTrainJob.Status) {
 		// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
 		// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
+		if statusErr := r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)); statusErr != nil {
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
 	}
 
 	// RHAI progression tracking
