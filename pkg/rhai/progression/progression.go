@@ -721,6 +721,11 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 		return ctrl.Result{}, nil
 	}
 
+	// Re-fetch from API server to get latest status before patching annotations
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(trainJob), trainJob); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
 	isRunning := !meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobSuspended) &&
 		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete) &&
 		!meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
