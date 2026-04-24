@@ -144,26 +144,19 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		err = errors.Join(err, statusErr)
 	}
 
-	// reconcileDeadline may schedule a requeue to check the deadline later. Save the result
-	// but do NOT return early — RHAI progression tracking must always run.
 	deadlineResult, deadlineErr := r.reconcileDeadline(ctx, &trainJob)
 	err = errors.Join(err, deadlineErr)
 
-	// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
-	// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
 	if !equality.Semantic.DeepEqual(&trainJob.Status, prevTrainJob.Status) {
+		// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
+		// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
 		if statusErr := r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)); statusErr != nil {
 			return ctrl.Result{}, errors.Join(err, statusErr)
 		}
 	}
 
-	// RHAI progression tracking (fetches fresh state from API server, logs errors without joining)
-	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	if progressionErr != nil {
-		log.V(1).Info("Progression tracking encountered an error (will retry on next reconcile)", "error", progressionErr)
-	}
-
-	// Use the deadline requeue if it is sooner than the progression requeue.
+	// RHAI progression tracking
+	result, _ := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
 	if deadlineResult.RequeueAfter > 0 && (result.RequeueAfter == 0 || deadlineResult.RequeueAfter < result.RequeueAfter) {
 		return deadlineResult, err
 	}

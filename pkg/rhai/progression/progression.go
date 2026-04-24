@@ -721,9 +721,7 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 		return ctrl.Result{}, nil
 	}
 
-	// Re-fetch the TrainJob from the API server to ensure we have the latest state,
-	// including any status updates committed by the upstream reconcile, before
-	// patching annotations.
+	// Re-fetch from API server to get latest status before patching annotations
 	if err := reader.Get(ctx, client.ObjectKeyFromObject(trainJob), trainJob); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
