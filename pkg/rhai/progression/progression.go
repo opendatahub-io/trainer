@@ -467,7 +467,7 @@ func IsFinalStatusCaptured(trainJob *trainer.TrainJob) bool {
 
 	hasZeroRemaining := status.EstimatedRemainingSeconds != nil && *status.EstimatedRemainingSeconds == 0
 	hasCompleteSummary := status.EstimatedRemainingTimeSummary == "complete" ||
-		status.EstimatedRemainingTimeSummary == "complete (early stopped)"
+		status.EstimatedRemainingTimeSummary == "0 seconds"
 
 	if hasZeroRemaining || hasCompleteSummary {
 		return true
@@ -672,17 +672,23 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader cli
 }
 
 func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
-	var status AnnotationStatus
-
-	if trainJob.Annotations != nil {
-		if statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]; exists && statusJSON != "" {
-			if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
-				return err
-			}
-		}
+	if trainJob.Annotations == nil {
+		return nil // No existing status to update
 	}
 
+	statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]
+	if !exists || statusJSON == "" {
+		return nil // No existing status to update
+	}
+
+	var status AnnotationStatus
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+		return err
+	}
+
+	// Only update summary - don't modify actual metrics (progress %, remaining time, etc.)
 	if completed {
+		// Detect early stop: currentStep < totalSteps
 		earlyStop := false
 		if status.CurrentStep != nil && status.TotalSteps != nil && *status.TotalSteps > 0 {
 			if *status.CurrentStep < *status.TotalSteps {
@@ -690,18 +696,12 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 			}
 		}
 		if earlyStop {
-			status.EstimatedRemainingTimeSummary = "complete (early stopped)"
+			status.EstimatedRemainingTimeSummary = "early stopped"
 		} else {
 			status.EstimatedRemainingTimeSummary = "complete"
 		}
-		// Synthesize progress if no prior annotation existed
-		if status.ProgressPercentage == nil {
-			pct := 100
-			status.ProgressPercentage = &pct
-			remaining := 0
-			status.EstimatedRemainingSeconds = &remaining
-		}
 	} else {
+		// For failed jobs: show progress context in summary
 		progressPct := 0
 		if status.ProgressPercentage != nil {
 			progressPct = *status.ProgressPercentage
@@ -752,7 +752,7 @@ func ReconcileProgression(ctx context.Context, c client.Client, reader client.Re
 			log.V(1).Info("Pod not available for final metrics poll, will retry", "completed", isCompleted)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
-		log.Info("Captured final training progress", "completed", isCompleted)
+		log.Info("Captured final training progress from HTTP poll", "completed", isCompleted)
 	}
 
 	return ctrl.Result{}, nil
