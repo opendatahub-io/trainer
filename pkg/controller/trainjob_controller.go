@@ -141,7 +141,9 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if !equality.Semantic.DeepEqual(&trainJob.Status, originStatus) {
-		return ctrl.Result{}, errors.Join(err, r.client.Status().Update(ctx, &trainJob))
+		if statusUpdateErr := r.client.Status().Update(ctx, &trainJob); statusUpdateErr != nil {
+			return ctrl.Result{}, errors.Join(err, statusUpdateErr)
+		}
 	}
 
 	// RHAI progression tracking (use APIReader to avoid pod watches)
