@@ -1,0 +1,9 @@
+apiVersion: components.platform.opendatahub.io/v1alpha1
+kind: Trainer
+metadata:
+  labels:
+    app.kubernetes.io/name: odh-trainer-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: trainer-sample
+spec:
+  # TODO(user): Add fields here

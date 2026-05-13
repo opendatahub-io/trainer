@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - components.platform.opendatahub.io
+  resources:
+  - trainers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - components.platform.opendatahub.io
+  resources:
+  - trainers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - components.platform.opendatahub.io
+  resources:
+  - trainers/status
+  verbs:
+  - get
+  - patch
+  - update
