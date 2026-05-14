@@ -8,7 +8,7 @@
 
 ### Prerequisites
 - go version v1.24.0+
-- docker version 17.03+.
+- podman (or docker via `CONTAINER_TOOL=docker`)
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
 
@@ -19,7 +19,8 @@
 make docker-build docker-push IMG=<some-registry>/odh-trainer-operator:tag
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
+**NOTE:** Podman is used by default. To use Docker instead, set `CONTAINER_TOOL=docker`.
+This image ought to be published in the personal registry you specified.
 And it is required to have access to pull the image from the working environment.
 Make sure you have the proper permission to the registry if the above commands don’t work.
 

@@ -18,12 +18,13 @@ package e2e
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 
 	"github.com/hrathina/odh-trainer-operator/test/utils"
 )
@@ -42,48 +43,39 @@ var (
 	projectImage = "example.com/odh-trainer-operator:v0.0.1"
 )
 
-// TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
-// temporary environment to validate project changes with the purposed to be used in CI jobs.
-// The default setup requires Kind, builds/loads the Manager Docker image locally, and installs
-// CertManager.
-func TestE2E(t *testing.T) {
-	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting odh-trainer-operator integration test suite\n")
-	RunSpecs(t, "e2e suite")
-}
+func TestMain(m *testing.M) {
+	fmt.Fprintln(os.Stderr, "Starting odh-trainer-operator integration test suite")
 
-var _ = BeforeSuite(func() {
-	By("building the manager(Operator) image")
+	gomega.SetDefaultEventuallyTimeout(2 * time.Minute)
+	gomega.SetDefaultEventuallyPollingInterval(time.Second)
+
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	if _, err := utils.Run(cmd); err != nil {
+		log.Fatalf("Failed to build the manager(Operator) image: %v", err)
+	}
 
-	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
-	// built and available before running the tests. Also, remove the following block.
-	By("loading the manager(Operator) image on Kind")
-	err = utils.LoadImageToKindClusterWithName(projectImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+	if err := utils.LoadImageToKindClusterWithName(projectImage); err != nil {
+		log.Fatalf("Failed to load the manager(Operator) image into Kind: %v", err)
+	}
 
-	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
-	// To prevent errors when tests run in environments with CertManager already installed,
-	// we check for its presence before execution.
-	// Setup CertManager before the suite if not skipped and if not already installed
 	if !skipCertManagerInstall {
-		By("checking if cert manager is installed already")
 		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled()
 		if !isCertManagerAlreadyInstalled {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Installing CertManager...\n")
-			Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
+			fmt.Fprintln(os.Stderr, "Installing CertManager...")
+			if err := utils.InstallCertManager(); err != nil {
+				log.Fatalf("Failed to install CertManager: %v", err)
+			}
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
+			fmt.Fprintln(os.Stderr, "WARNING: CertManager is already installed. Skipping installation...")
 		}
 	}
-})
 
-var _ = AfterSuite(func() {
-	// Teardown CertManager after the suite if not skipped and if it was not already installed
+	code := m.Run()
+
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
+		fmt.Fprintln(os.Stderr, "Uninstalling CertManager...")
 		utils.UninstallCertManager()
 	}
-})
+
+	os.Exit(code)
+}

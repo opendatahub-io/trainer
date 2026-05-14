@@ -23,7 +23,7 @@ Kubernetes operator for managing the Trainer component on OpenDataHub/RHOAI. Sca
 ### Prerequisites
 
 - Go 1.24+
-- Docker 17.03+
+- Podman (or Docker via `CONTAINER_TOOL=docker`)
 - kubectl v1.11.3+
 - Access to a Kubernetes cluster
 
@@ -38,7 +38,7 @@ make lint             # Run linter
 make test             # Run unit tests (envtest)
 make build            # Build the operator binary
 make run              # Run operator locally against cluster
-make docker-build     # Build container image
+make docker-build     # Build container image (uses podman by default)
 make install          # Install CRDs into cluster
 make deploy IMG=<img> # Deploy operator to cluster
 ```
@@ -67,6 +67,10 @@ make test-e2e
 
 RBAC rules are derived from `// +kubebuilder:rbac:` markers in the controller. After adding new markers, run `make manifests` to regenerate.
 
-### Controller Tests
+### Tests
+
+Tests use standard Go testing with gomega matchers (no ginkgo). Use `TestMain` for setup/teardown, `t.Run` for subtests, `t.Cleanup` for resource cleanup, and `gomega.NewWithT(t)` for assertions.
 
 Controller unit tests use envtest (lightweight API server). Test files live alongside the controller in `internal/controller/`.
+
+E2E tests in `test/e2e/` deploy the operator to a Kind cluster and verify the full lifecycle including metrics.

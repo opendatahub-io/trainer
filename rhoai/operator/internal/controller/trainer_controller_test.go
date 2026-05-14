@@ -18,8 +18,8 @@ package controller
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,55 +30,46 @@ import (
 	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 )
 
-var _ = Describe("Trainer Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+func TestTrainerControllerReconcile(t *testing.T) {
+	g := NewWithT(t)
 
-		ctx := context.Background()
+	const resourceName = "test-resource"
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+	ctx := context.Background()
+
+	typeNamespacedName := types.NamespacedName{
+		Name:      resourceName,
+		Namespace: "default",
+	}
+
+	// Create the custom resource for the Kind Trainer
+	trainer := &componentsv1alpha1.Trainer{}
+	err := k8sClient.Get(ctx, typeNamespacedName, trainer)
+	if err != nil && errors.IsNotFound(err) {
+		resource := &componentsv1alpha1.Trainer{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: "default",
+			},
 		}
-		trainer := &componentsv1alpha1.Trainer{}
+		g.Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+	}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind Trainer")
-			err := k8sClient.Get(ctx, typeNamespacedName, trainer)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &componentsv1alpha1.Trainer{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
-
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &componentsv1alpha1.Trainer{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance Trainer")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &TrainerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+	t.Cleanup(func() {
+		resource := &componentsv1alpha1.Trainer{}
+		err := k8sClient.Get(ctx, typeNamespacedName, resource)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 	})
-})
+
+	// Reconcile the created resource
+	controllerReconciler := &TrainerReconciler{
+		Client: k8sClient,
+		Scheme: k8sClient.Scheme(),
+	}
+
+	_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+		NamespacedName: typeNamespacedName,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+}
