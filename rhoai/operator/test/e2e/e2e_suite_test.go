@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -25,23 +26,24 @@ import (
 	"time"
 
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/hrathina/odh-trainer-operator/test/support"
 	"github.com/hrathina/odh-trainer-operator/test/utils"
 )
 
 var (
-	// Optional Environment Variables:
-	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
-	// These variables are useful if CertManager is already installed, avoiding
-	// re-installation and conflicts.
-	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
-	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
+	skipCertManagerInstall        = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
 	isCertManagerAlreadyInstalled = false
 
-	// projectImage is the name of the image which will be build and loaded
-	// with the code source changes to be tested.
 	projectImage = "example.com/odh-trainer-operator:v0.0.1"
+
+	k8sClient *support.Client
+	ctx       = context.Background()
 )
+
+const namespace = "odh-trainer-operator-system"
 
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "Starting odh-trainer-operator integration test suite")
@@ -70,7 +72,47 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	var err error
+	k8sClient, err = support.NewClient()
+	if err != nil {
+		log.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+			Labels: map[string]string{
+				"pod-security.kubernetes.io/enforce": "restricted",
+			},
+		},
+	}
+	if _, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil {
+		log.Fatalf("Failed to create namespace: %v", err)
+	}
+
+	cmd = exec.Command("make", "install")
+	if _, err := utils.Run(cmd); err != nil {
+		log.Fatalf("Failed to install CRDs: %v", err)
+	}
+
+	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+	if _, err := utils.Run(cmd); err != nil {
+		log.Fatalf("Failed to deploy the controller-manager: %v", err)
+	}
+
 	code := m.Run()
+
+	_ = k8sClient.CoreV1().Pods(namespace).Delete(ctx, "curl-metrics", metav1.DeleteOptions{})
+	_ = k8sClient.RbacV1().ClusterRoleBindings().Delete(
+		ctx, "odh-trainer-operator-metrics-binding", metav1.DeleteOptions{})
+
+	cmd = exec.Command("make", "undeploy")
+	_, _ = utils.Run(cmd)
+
+	cmd = exec.Command("make", "uninstall")
+	_, _ = utils.Run(cmd)
+
+	_ = k8sClient.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
 
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		fmt.Fprintln(os.Stderr, "Uninstalling CertManager...")

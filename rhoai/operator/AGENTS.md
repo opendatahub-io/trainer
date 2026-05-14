@@ -9,7 +9,8 @@ Kubernetes operator for managing the Trainer component on OpenDataHub/RHOAI. Sca
 - `cmd/main.go` - Operator entrypoint
 - `config/` - Kustomize manifests (CRDs, RBAC, manager deployment, samples)
 - `test/e2e/` - End-to-end tests
-- `test/utils/` - Test utilities
+- `test/support/` - Shared test client (`Client` wrapping `kubernetes.Interface`)
+- `test/utils/` - Shell command utilities (make, kind, cert-manager)
 - `hack/` - Development scripts
 
 ## Key Paths
@@ -67,10 +68,14 @@ make test-e2e
 
 RBAC rules are derived from `// +kubebuilder:rbac:` markers in the controller. After adding new markers, run `make manifests` to regenerate.
 
+### Before Committing
+
+Run `make lint` after any code changes to catch formatting and lint issues early.
+
 ### Tests
 
 Tests use standard Go testing with gomega matchers (no ginkgo). Use `TestMain` for setup/teardown, `t.Run` for subtests, `t.Cleanup` for resource cleanup, and `gomega.NewWithT(t)` for assertions.
 
 Controller unit tests use envtest (lightweight API server). Test files live alongside the controller in `internal/controller/`.
 
-E2E tests in `test/e2e/` deploy the operator to a Kind cluster and verify the full lifecycle including metrics.
+E2E tests in `test/e2e/` deploy the operator to a Kind cluster and verify the full lifecycle including metrics. Tests use a Go client (`test/support.Client`) for cluster interactions instead of shelling out to kubectl. Test files are split by concern: `controller_test.go`, `metrics_test.go`.
