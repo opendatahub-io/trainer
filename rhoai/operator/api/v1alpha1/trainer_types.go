@@ -17,29 +17,42 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// TrainerSpec defines the desired state of Trainer.
-type TrainerSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Trainer. Edit trainer_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+type ControllerResources struct {
+	Name      string                      `json:"name"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// TrainerStatus defines the observed state of Trainer.
+type TrainerSpec struct {
+	// +kubebuilder:validation:Enum=Managed;Removed
+	// +kubebuilder:default=Managed
+	ManagementState common.ManagementState `json:"managementState,omitempty"`
+
+	AppNamespace string `json:"appNamespace,omitempty"`
+
+	// +optional
+	FeatureGates map[string]bool `json:"featureGates,omitempty"`
+
+	// +optional
+	Controllers []ControllerResources `json:"controllers,omitempty"`
+}
+
 type TrainerStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	common.Status                 `json:",inline"`
+	common.ComponentReleaseStatus `json:",inline"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default-trainer'",message="Trainer must be named 'default-trainer'"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Reason",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].reason"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // Trainer is the Schema for the trainers API.
 type Trainer struct {
@@ -61,4 +74,33 @@ type TrainerList struct {
 
 func init() {
 	SchemeBuilder.Register(&Trainer{}, &TrainerList{})
+}
+
+var _ common.PlatformObject = &Trainer{}
+
+func (t *Trainer) GetStatus() *common.Status {
+	return &t.Status.Status
+}
+
+func (t *Trainer) GetConditions() []common.Condition {
+	return t.Status.Conditions
+}
+
+func (t *Trainer) SetConditions(conditions []common.Condition) {
+	t.Status.Conditions = conditions
+}
+
+func (t *Trainer) GetReleaseStatus() *common.ComponentReleaseStatus {
+	return &t.Status.ComponentReleaseStatus
+}
+
+func (t *Trainer) SetReleaseStatus(status common.ComponentReleaseStatus) {
+	t.Status.ComponentReleaseStatus = status
+}
+
+func (t *Trainer) GetManagementState() common.ManagementState {
+	if t.Spec.ManagementState == "" {
+		return common.Managed
+	}
+	return t.Spec.ManagementState
 }

@@ -33,13 +33,12 @@ import (
 func TestTrainerControllerReconcile(t *testing.T) {
 	g := NewWithT(t)
 
-	const resourceName = "test-resource"
+	const resourceName = "default-trainer"
 
 	ctx := context.Background()
 
 	typeNamespacedName := types.NamespacedName{
-		Name:      resourceName,
-		Namespace: "default",
+		Name: resourceName,
 	}
 
 	// Create the custom resource for the Kind Trainer
@@ -48,8 +47,7 @@ func TestTrainerControllerReconcile(t *testing.T) {
 	if err != nil && errors.IsNotFound(err) {
 		resource := &componentsv1alpha1.Trainer{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      resourceName,
-				Namespace: "default",
+				Name: resourceName,
 			},
 		}
 		g.Expect(k8sClient.Create(ctx, resource)).To(Succeed())
