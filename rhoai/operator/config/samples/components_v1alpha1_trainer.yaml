@@ -4,6 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: odh-trainer-operator
     app.kubernetes.io/managed-by: kustomize
-  name: trainer-sample
+  name: default-trainer
 spec:
-  # TODO(user): Add fields here
+  managementState: Managed
+  appNamespace: opendatahub
