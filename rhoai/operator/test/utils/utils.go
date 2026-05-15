@@ -161,6 +161,35 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
+// InstallImageStreamCRD installs a minimal ImageStream CRD stub so that
+// OpenShift-specific resources in upstream manifests can be applied on Kind.
+func InstallImageStreamCRD() error {
+	crd := `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: imagestreams.image.openshift.io
+spec:
+  group: image.openshift.io
+  names:
+    kind: ImageStream
+    listKind: ImageStreamList
+    plural: imagestreams
+    singular: imagestream
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        x-kubernetes-preserve-unknown-fields: true`
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(crd)
+	_, err := Run(cmd)
+	return err
+}
+
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string) error {
 	cluster := "kind"

@@ -72,6 +72,13 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	if !utils.IsPrometheusCRDsInstalled() {
+		fmt.Fprintln(os.Stderr, "Installing Prometheus Operator...")
+		if err := utils.InstallPrometheusOperator(); err != nil {
+			log.Fatalf("Failed to install Prometheus Operator: %v", err)
+		}
+	}
+
 	var err error
 	k8sClient, err = support.NewClient()
 	if err != nil {
@@ -95,6 +102,10 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to install CRDs: %v", err)
 	}
 
+	if err := utils.InstallImageStreamCRD(); err != nil {
+		log.Fatalf("Failed to install ImageStream CRD: %v", err)
+	}
+
 	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 	if _, err := utils.Run(cmd); err != nil {
 		log.Fatalf("Failed to deploy the controller-manager: %v", err)
@@ -102,6 +113,8 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
+	_ = k8sClient.DeleteTrainer(ctx)
+	_ = k8sClient.CoreV1().Namespaces().Delete(ctx, "opendatahub", metav1.DeleteOptions{})
 	_ = k8sClient.CoreV1().Pods(namespace).Delete(ctx, "curl-metrics", metav1.DeleteOptions{})
 	_ = k8sClient.RbacV1().ClusterRoleBindings().Delete(
 		ctx, "odh-trainer-operator-metrics-binding", metav1.DeleteOptions{})
@@ -113,6 +126,8 @@ func TestMain(m *testing.M) {
 	_, _ = utils.Run(cmd)
 
 	_ = k8sClient.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
+
+	utils.UninstallPrometheusOperator()
 
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		fmt.Fprintln(os.Stderr, "Uninstalling CertManager...")

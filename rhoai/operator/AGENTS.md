@@ -1,32 +1,58 @@
 # odh-trainer-operator
 
-Kubernetes operator for managing the Trainer component on OpenDataHub/RHOAI. Scaffolded with Kubebuilder (go.kubebuilder.io/v4), manages the `Trainer` custom resource in the `components.platform.opendatahub.io` API group. Built with Go, controller-runtime, Operator SDK.
+Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reconciles the `Trainer` Module CR (`components.platform.opendatahub.io/v1alpha1`) and deploys upstream Kubeflow Trainer resources via kustomize rendering from `opendatahub-io/trainer` manifests.
 
 ## Structure
 
-- `api/v1alpha1/` - CRD type definitions (`Trainer`, `TrainerSpec`, `TrainerStatus`)
-- `internal/controller/` - Reconciler implementation (`TrainerReconciler`)
+- `api/v1alpha1/` - CRD types implementing `common.PlatformObject` from `odh-platform-utilities`
+- `internal/controller/` - Reconciler, manifest rendering, params.env handling
 - `cmd/main.go` - Operator entrypoint
 - `config/` - Kustomize manifests (CRDs, RBAC, manager deployment, samples)
+- `hack/` - Manifest collection script (`get_trainer_manifests.sh`)
 - `test/e2e/` - End-to-end tests
 - `test/support/` - Shared test client (`Client` wrapping `kubernetes.Interface`)
 - `test/utils/` - Shell command utilities (make, kind, cert-manager)
-- `hack/` - Development scripts
 
 ## Key Paths
 
-- `api/v1alpha1/trainer_types.go` - Trainer CRD spec/status definitions
-- `internal/controller/trainer_controller.go` - Main reconciliation logic
-- `config/samples/` - Example Trainer CR manifests
+- `api/v1alpha1/trainer_types.go` - Trainer CRD with PlatformObject interface, ManagementSpec, CEL singleton validation
+- `internal/controller/trainer_controller.go` - Reconciler: managed/removed/delete paths, finalizer, GC, conditions
+- `internal/controller/manifests.go` - Kustomize rendering pipeline, SSA apply via `resources.Apply`
+- `internal/controller/params.go` - [TEMPORARY] params.env parsing for RELATED_IMAGE override
+- `hack/get_trainer_manifests.sh` - Fetches upstream trainer manifests (ODH or RHOAI)
+- `config/samples/components_v1alpha1_trainer.yaml` - Singleton CR `default-trainer`
+
+## Architecture
+
+### Platform Utilities (`odh-platform-utilities`)
+
+The controller uses shared utilities from `opendatahub-io/odh-platform-utilities`:
+- `api/common` - PlatformObject interface, ManagementSpec, Status, Condition types
+- `pkg/controller/conditions` - Condition Manager with happiness recomputation
+- `pkg/controller/gc` - GC Collector for label-based resource cleanup via discovery API
+- `pkg/render/kustomize` - Kustomize manifest rendering
+- `pkg/resources` - Server-Side Apply
+- `pkg/metadata/labels` - `platform.opendatahub.io/part-of` label
+
+### Manifest Pipeline
+
+1. Build time: `get_trainer_manifests.sh` fetches upstream manifests into `opt/manifests/`
+2. Dockerfile: copies into container at `/opt/manifests-template/`
+3. Runtime: copies to writable work dir, applies RELATED_IMAGE env var overrides to params.env, renders `rhoai/` overlay via kustomize, applies with SSA
+
+### Reconcile Flow
+
+- **Managed**: ensure finalizer → ensure namespace → render manifests → SSA apply → update status (Ready)
+- **Removed**: ensure finalizer → GC cleanup (label-based discovery) → update status (NotReady)
+- **Deleted**: GC cleanup → remove finalizer → CR deleted
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Podman (or Docker via `CONTAINER_TOOL=docker`)
 - kubectl v1.11.3+
-- Access to a Kubernetes cluster
 
 ### Common Commands
 
@@ -68,13 +94,19 @@ make test-e2e
 
 RBAC rules are derived from `// +kubebuilder:rbac:` markers in the controller. After adding new markers, run `make manifests` to regenerate.
 
+The controller SA must hold all permissions that upstream trainer ClusterRoles grant — Kubernetes RBAC escalation prevention blocks creating a ClusterRole with permissions the creator doesn't already have. When upstream manifests add new ClusterRole rules, matching RBAC markers must be added to the controller.
+
+### License Headers
+
+All `.go` files must include the Apache 2.0 license header from `hack/boilerplate.go.txt`. Do not remove existing headers.
+
 ### Before Committing
 
-Run `make lint` after any code changes to catch formatting and lint issues early.
+Run `make lint` after any code changes.
 
 ### Tests
 
-Tests use standard Go testing with gomega matchers (no ginkgo). Use `TestMain` for setup/teardown, `t.Run` for subtests, `t.Cleanup` for resource cleanup, and `gomega.NewWithT(t)` for assertions.
+Tests use standard Go testing with gomega matchers (no ginkgo). Use `TestMain` for setup/teardown, `t.Run` for subtests, `t.Cleanup` for resource cleanup, and `gomega.NewWithT(t)` for assertions. Test names use camelCase.
 
 Controller unit tests use envtest (lightweight API server). Test files live alongside the controller in `internal/controller/`.
 

@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,11 +36,14 @@ import (
 )
 
 var (
-	ctx       context.Context
-	cancel    context.CancelFunc
-	testEnv   *envtest.Environment
-	cfg       *rest.Config
-	k8sClient client.Client
+	ctx               context.Context
+	cancel            context.CancelFunc
+	testEnv           *envtest.Environment
+	cfg               *rest.Config
+	k8sClient         client.Client
+	dynamicClient     dynamic.Interface
+	discoveryClient   discovery.DiscoveryInterface
+	testManifestsPath string
 )
 
 func TestMain(m *testing.M) {
@@ -76,12 +81,34 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	dynamicClient, err = dynamic.NewForConfig(cfg)
+	if err != nil {
+		logf.Log.Error(err, "failed to create dynamic client")
+		os.Exit(1)
+	}
+
+	discoveryClient, err = discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		logf.Log.Error(err, "failed to create discovery client")
+		os.Exit(1)
+	}
+
+	testManifestsPath, err = createTestManifests()
+	if err != nil {
+		logf.Log.Error(err, "failed to create test manifests")
+		os.Exit(1)
+	}
+
 	code := m.Run()
 
 	cancel()
 	if err := testEnv.Stop(); err != nil {
 		logf.Log.Error(err, "failed to stop test environment")
 	}
+
+	_ = os.RemoveAll(testManifestsPath)
+	// Also clean up the work dir created by ensureWorkDir
+	_ = os.RemoveAll(testManifestsPath + "-work")
 
 	os.Exit(code)
 }
@@ -107,4 +134,37 @@ func getFirstFoundEnvTestBinaryDir() string {
 		}
 	}
 	return ""
+}
+
+func createTestManifests() (string, error) {
+	dir, err := os.MkdirTemp("", "trainer-manifests-*")
+	if err != nil {
+		return "", err
+	}
+
+	overlayDir := filepath.Join(dir, defaultOverlay)
+	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
+		return "", err
+	}
+
+	configMap := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trainer-test-config
+  namespace: default
+`
+	if err := os.WriteFile(filepath.Join(overlayDir, "configmap.yaml"), []byte(configMap), 0o644); err != nil {
+		return "", err
+	}
+
+	kustomization := `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- configmap.yaml
+`
+	if err := os.WriteFile(filepath.Join(overlayDir, "kustomization.yaml"), []byte(kustomization), 0o644); err != nil {
+		return "", err
+	}
+
+	return dir, nil
 }
