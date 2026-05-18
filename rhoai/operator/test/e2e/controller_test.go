@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -56,9 +57,11 @@ func TestControllerPodRunning(t *testing.T) {
 const (
 	trainerNamespace = "opendatahub"
 
-	jobSetCRDName      = "jobsets.jobset.x-k8s.io"
-	jobSetVersion      = "v1alpha2"
-	jobSetResourceName = "jobsets"
+	jobSetCRDName        = "jobsets.jobset.x-k8s.io"
+	jobSetVersion        = "v1alpha2"
+	jobSetResourceName   = "jobsets"
+	jobSetOperatorName   = "jobset-operator"
+	jobSetSystemNs       = "jobset-system"
 )
 
 func TestTrainerReconciliation(t *testing.T) {
@@ -114,6 +117,57 @@ func TestTrainerReconciliation(t *testing.T) {
 	}
 	g.Eventually(verifyJobSetCRDEstablished).Should(Succeed())
 
+	// Create jobset-system namespace
+	jobSetNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetSystemNs,
+		},
+	}
+	_, err = k8sClient.CoreV1().Namespaces().Create(ctx, jobSetNs, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create jobset-system namespace")
+	t.Cleanup(func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, jobSetSystemNs, metav1.DeleteOptions{})
+	})
+
+	// Create fake JobSet operator deployment to satisfy operator installation check
+	jobSetOperatorDeployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobSetOperatorName + "-controller-manager",
+			Namespace: jobSetSystemNs,
+			Labels: map[string]string{
+				"app.kubernetes.io/name": jobSetOperatorName,
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": jobSetOperatorName,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": jobSetOperatorName,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "manager",
+							Image: jobSetOperatorName + ":latest",
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = k8sClient.AppsV1().Deployments(jobSetSystemNs).Create(ctx, jobSetOperatorDeployment, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create JobSet operator deployment")
+	t.Cleanup(func() {
+		_ = k8sClient.AppsV1().Deployments(jobSetSystemNs).Delete(ctx, jobSetOperatorName+"-controller-manager", metav1.DeleteOptions{})
+	})
+
 	err = k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 	t.Cleanup(func() {
@@ -145,6 +199,10 @@ func TestTrainerReconciliation(t *testing.T) {
 		g.Expect(errors.IsNotFound(err)).To(BeTrue(), "Trainer CR should be deleted")
 	}
 	g.Eventually(verifyTrainerDeleted).Should(Succeed())
+}
+
+func int32Ptr(i int32) *int32 {
+	return &i
 }
 
 // +kubebuilder:scaffold:e2e-webhooks-checks
