@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -52,13 +53,68 @@ func TestControllerPodRunning(t *testing.T) {
 	g.Eventually(verifyControllerUp).Should(Succeed())
 }
 
-const trainerNamespace = "opendatahub"
+const (
+	trainerNamespace = "opendatahub"
+
+	jobSetCRDName      = "jobsets.jobset.x-k8s.io"
+	jobSetVersion      = "v1alpha2"
+	jobSetResourceName = "jobsets"
+)
 
 func TestTrainerReconciliation(t *testing.T) {
 	g := NewWithT(t)
 	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
 
-	err := k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
+	// Create JobSet CRD to satisfy dependency check
+	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetCRDName,
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "jobset.x-k8s.io",
+			Scope: apiextensionsv1.NamespaceScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   "JobSet",
+				Plural: jobSetResourceName,
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    jobSetVersion,
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: "object",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	crdClient := k8sClient.ApiextensionsClient.ApiextensionsV1().CustomResourceDefinitions()
+	_, err := crdClient.Create(ctx, jobSetCRD, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create JobSet CRD")
+	t.Cleanup(func() {
+		_ = crdClient.Delete(ctx, jobSetCRDName, metav1.DeleteOptions{})
+	})
+
+	// Wait for CRD to be established
+	verifyJobSetCRDEstablished := func(g Gomega) {
+		crd, err := crdClient.Get(ctx, jobSetCRDName, metav1.GetOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		established := false
+		for _, cond := range crd.Status.Conditions {
+			if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
+				established = true
+				break
+			}
+		}
+		g.Expect(established).To(BeTrue(), "JobSet CRD should be established")
+	}
+	g.Eventually(verifyJobSetCRDEstablished).Should(Succeed())
+
+	err = k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 	t.Cleanup(func() {
 		_ = k8sClient.DeleteTrainer(ctx)

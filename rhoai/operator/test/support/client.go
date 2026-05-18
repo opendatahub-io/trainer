@@ -26,6 +26,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -42,7 +43,8 @@ const trainerCRName = "default-trainer"
 
 type Client struct {
 	kubernetes.Interface
-	CRClient client.Client
+	CRClient            client.Client
+	ApiextensionsClient apiextensionsclientset.Interface
 }
 
 func NewClient() (*Client, error) {
@@ -58,6 +60,11 @@ func NewClient() (*Client, error) {
 		return nil, err
 	}
 
+	apiextensionsClient, err := apiextensionsclientset.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	scheme := runtime.NewScheme()
 	if err := componentsv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
@@ -68,7 +75,11 @@ func NewClient() (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{Interface: clientset, CRClient: crClient}, nil
+	return &Client{
+		Interface:           clientset,
+		CRClient:            crClient,
+		ApiextensionsClient: apiextensionsClient,
+	}, nil
 }
 
 func (c *Client) GetPodLogs(ctx context.Context, name, ns string) (string, error) {
