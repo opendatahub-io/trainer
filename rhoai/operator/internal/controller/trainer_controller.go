@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -45,6 +46,10 @@ const (
 	finalizerName         = "components.platform.opendatahub.io/trainer-cleanup"
 	readyCondition        = string(common.ConditionTypeReady)
 	provisioningCondition = string(common.ConditionTypeProvisioningSucceeded)
+	dependenciesCondition = "DependenciesReady"
+
+	// dependencyCheckInterval is how often to recheck for missing dependencies
+	dependencyCheckInterval = 60 * time.Second
 )
 
 type TrainerReconciler struct {
@@ -125,6 +130,31 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 	cm := newConditionManager(trainer)
 	namespace := resolveNamespace(trainer)
 	log.Info("Reconciling Trainer", "namespace", namespace)
+
+	// Check for JobSet Operator availability
+	jobSetAvailable := r.checkJobSetAvailable(ctx)
+
+	if !jobSetAvailable {
+		log.Info("JobSet Operator not available, will recheck", "recheckAfter", dependencyCheckInterval)
+		jobSetMsg := getJobSetMissingMessage()
+		cm.MarkFalse(dependenciesCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", jobSetMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSet Operator to be installed"))
+
+		// Update status and requeue to check again later
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
+	}
+
+	// JobSet is available, mark dependency condition as true
+	cm.MarkTrue(dependenciesCondition,
+		conditions.WithReason("DependenciesAvailable"),
+		conditions.WithMessage("All required dependencies are available"))
 
 	if err := r.ensureNamespace(ctx, namespace); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("NamespaceFailed"), conditions.WithError(err))
@@ -272,7 +302,7 @@ func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *component
 }
 
 func newConditionManager(trainer *componentsv1alpha1.Trainer) *conditions.Manager {
-	return conditions.NewManager(trainer, readyCondition, provisioningCondition)
+	return conditions.NewManager(trainer, readyCondition, provisioningCondition, dependenciesCondition)
 }
 
 func resolveNamespace(trainer *componentsv1alpha1.Trainer) string {
