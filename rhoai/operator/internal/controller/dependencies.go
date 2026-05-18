@@ -28,14 +28,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster/olm"
 )
 
 const (
-	jobSetCRDName          = "jobsets.jobset.x-k8s.io"
-	jobSetVersion          = "v1alpha2"
-	jobSetOperatorCRName   = "cluster"
-	jobSetOperatorName     = "jobset-operator"
-	jobSetOperatorCSVMatch = "jobset-operator"
+	jobSetCRDName        = "jobsets.jobset.x-k8s.io"
+	jobSetVersion        = "v1alpha2"
+	jobSetOperatorCRName = "cluster"
+	jobSetOperatorName   = "jobset-operator"
 )
 
 // checkJobSetAvailable verifies that the JobSet CRD exists and is established.
@@ -68,24 +69,16 @@ func (r *TrainerReconciler) checkJobSetAvailable(ctx context.Context) bool {
 func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bool {
 	log := logf.FromContext(ctx)
 
-	// Check if OLM is available by checking for CSV CRD
-	csvCRD := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "clusterserviceversions.operators.coreos.com",
-		},
+	operatorInfo, err := olm.OperatorExists(ctx, r.Client, jobSetOperatorName)
+	if err == nil && operatorInfo != nil {
+		log.V(1).Info("JobSet Operator found via OLM", "version", operatorInfo.Version)
+		return true
 	}
 
-	if err := r.Get(ctx, client.ObjectKeyFromObject(csvCRD), csvCRD); err == nil {
-		// OLM is available, check for CSV
-		if csvFound := r.checkJobSetOperatorCSV(ctx); csvFound {
-			log.V(1).Info("JobSet Operator found via ClusterServiceVersion")
-			return true
-		}
-	} else {
-		log.V(1).Info("OLM not available, checking for operator deployment")
+	if err != nil {
+		log.V(1).Info("OLM check failed, checking for operator deployment", "error", err)
 	}
 
-	// Fallback: check for deployment
 	deploymentList := &unstructured.UnstructuredList{}
 	deploymentList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "apps",
@@ -93,7 +86,6 @@ func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bo
 		Kind:    "DeploymentList",
 	})
 
-	// List all deployments across all namespaces
 	if err := r.List(ctx, deploymentList); err != nil {
 		log.Error(err, "Failed to list deployments")
 		return false
@@ -109,7 +101,6 @@ func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bo
 			return true
 		}
 
-		// Also check labels
 		if appName, ok := labels["app.kubernetes.io/name"]; ok && strings.Contains(appName, jobSetOperatorName) {
 			log.V(1).Info("JobSet Operator found via deployment labels", "name", name, "namespace", item.GetNamespace())
 			return true
@@ -117,40 +108,6 @@ func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bo
 	}
 
 	log.Info("JobSet Operator installation not found")
-	return false
-}
-
-func (r *TrainerReconciler) checkJobSetOperatorCSV(ctx context.Context) bool {
-	log := logf.FromContext(ctx)
-
-	csvList := &unstructured.UnstructuredList{}
-	csvList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "operators.coreos.com",
-		Version: "v1alpha1",
-		Kind:    "ClusterServiceVersionList",
-	})
-
-	if err := r.List(ctx, csvList); err != nil {
-		log.V(1).Info("Failed to list ClusterServiceVersions, OLM may not be available", "error", err)
-		return false
-	}
-
-	// Look for jobset-operator CSV
-	for _, item := range csvList.Items {
-		name := item.GetName()
-		if strings.Contains(name, jobSetOperatorCSVMatch) {
-			// Check if CSV is in a successful phase
-			phase, found, err := unstructured.NestedString(item.Object, "status", "phase")
-			if err == nil && found {
-				if phase == "Succeeded" {
-					log.V(1).Info("JobSet Operator CSV found and active", "name", name, "namespace", item.GetNamespace())
-					return true
-				}
-				log.Info("JobSet Operator CSV found but not in Succeeded phase", "name", name, "phase", phase)
-			}
-		}
-	}
-
 	return false
 }
 
