@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -42,7 +43,52 @@ func TestReconcileManaged(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
 
-	// Create JobSet CRD to satisfy dependency check
+	// Create JobSet Operator Deployment to satisfy operator installation check
+	jobSetOperatorDeployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobSetOperatorName + "-controller-manager",
+			Namespace: "jobset-system",
+			Labels: map[string]string{
+				"app.kubernetes.io/name": jobSetOperatorName,
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": jobSetOperatorName,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": jobSetOperatorName,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "manager",
+							Image: jobSetOperatorName + ":latest",
+						},
+					},
+				},
+			},
+		},
+	}
+	// Create namespace for the deployment
+	jobSetNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "jobset-system",
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, jobSetNs)).To(Succeed())
+	g.Expect(k8sClient.Create(ctx, jobSetOperatorDeployment)).To(Succeed())
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, jobSetOperatorDeployment)
+		_ = k8sClient.Delete(ctx, jobSetNs)
+	})
+
+	// Create JobSet CRD to satisfy CRD dependency check
 	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: jobSetCRDName,
@@ -52,7 +98,7 @@ func TestReconcileManaged(t *testing.T) {
 			Scope: apiextensionsv1.NamespaceScoped,
 			Names: apiextensionsv1.CustomResourceDefinitionNames{
 				Kind:   "JobSet",
-				Plural: jobSetResourceName,
+				Plural: "jobsets",
 			},
 			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
 				{

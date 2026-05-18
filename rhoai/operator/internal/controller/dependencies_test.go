@@ -24,136 +24,103 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/scheme"
-	k8stesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestCheckJobSetAvailable(t *testing.T) {
+func TestCheckJobSetAvailableWhenCRDExistsAndEstablished(t *testing.T) {
+	g := NewWithT(t)
 	ctx := context.Background()
 
-	t.Run("returns true when JobSet CRD exists and is established", func(t *testing.T) {
-		g := NewWithT(t)
-
-		// Create a fake CRD for JobSet
-		jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: jobSetCRDName,
-			},
-			Status: apiextensionsv1.CustomResourceDefinitionStatus{
-				Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
-					{
-						Type:   apiextensionsv1.Established,
-						Status: apiextensionsv1.ConditionTrue,
-					},
+	// Create a fake CRD for JobSet
+	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetCRDName,
+		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{
+					Type:   apiextensionsv1.Established,
+					Status: apiextensionsv1.ConditionTrue,
 				},
 			},
-		}
+		},
+	}
 
-		// Create scheme and add CRD types
-		s := runtime.NewScheme()
-		_ = apiextensionsv1.AddToScheme(s)
+	// Create scheme and add CRD types
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
 
-		// Create fake client with the CRD
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(s).
-			WithObjects(jobSetCRD).
-			Build()
+	// Create fake client with the CRD
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(jobSetCRD).
+		Build()
 
-		// Create fake discovery client
-		fakeDiscovery := &fakediscovery.FakeDiscovery{
-			Fake: &k8stesting.Fake{},
-		}
-		fakeDiscovery.Resources = []*metav1.APIResourceList{
-			{
-				GroupVersion: "jobset.x-k8s.io/v1alpha2",
-				APIResources: []metav1.APIResource{
-					{
-						Name: jobSetResourceName,
-						Kind: "JobSet",
-					},
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
+
+	available := reconciler.checkJobSetAvailable(ctx)
+	g.Expect(available).To(BeTrue())
+}
+
+func TestCheckJobSetAvailableWhenCRDDoesNotExist(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	// Create scheme without JobSet CRD
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
+
+	// Create fake client without the CRD
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
+
+	available := reconciler.checkJobSetAvailable(ctx)
+	g.Expect(available).To(BeFalse())
+}
+
+func TestCheckJobSetAvailableWhenCRDNotEstablished(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	// Create a fake CRD for JobSet that's not established
+	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetCRDName,
+		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{
+					Type:   apiextensionsv1.Established,
+					Status: apiextensionsv1.ConditionFalse,
 				},
 			},
-		}
+		},
+	}
 
-		reconciler := &TrainerReconciler{
-			Client:          fakeClient,
-			DiscoveryClient: fakeDiscovery,
-		}
+	// Create scheme and add CRD types
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
 
-		available := reconciler.checkJobSetAvailable(ctx)
-		g.Expect(available).To(BeTrue())
-	})
+	// Create fake client with the CRD
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(jobSetCRD).
+		Build()
 
-	t.Run("returns false when JobSet CRD does not exist", func(t *testing.T) {
-		g := NewWithT(t)
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
 
-		// Create scheme without JobSet CRD
-		s := runtime.NewScheme()
-		_ = apiextensionsv1.AddToScheme(s)
-
-		// Create fake client without the CRD
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(s).
-			Build()
-
-		// Create fake discovery client with empty resources
-		fakeDiscovery := &fakediscovery.FakeDiscovery{
-			Fake: &k8stesting.Fake{},
-		}
-		fakeDiscovery.Resources = []*metav1.APIResourceList{}
-
-		reconciler := &TrainerReconciler{
-			Client:          fakeClient,
-			DiscoveryClient: fakeDiscovery,
-		}
-
-		available := reconciler.checkJobSetAvailable(ctx)
-		g.Expect(available).To(BeFalse())
-	})
-
-	t.Run("returns false when JobSet CRD exists but not established", func(t *testing.T) {
-		g := NewWithT(t)
-
-		// Create a fake CRD for JobSet that's not established
-		jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: jobSetCRDName,
-			},
-			Status: apiextensionsv1.CustomResourceDefinitionStatus{
-				Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
-					{
-						Type:   apiextensionsv1.Established,
-						Status: apiextensionsv1.ConditionFalse,
-					},
-				},
-			},
-		}
-
-		// Create scheme and add CRD types
-		s := runtime.NewScheme()
-		_ = apiextensionsv1.AddToScheme(s)
-
-		// Create fake client with the CRD
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(s).
-			WithObjects(jobSetCRD).
-			Build()
-
-		// Create fake discovery client with empty resources
-		fakeDiscovery := &fakediscovery.FakeDiscovery{
-			Fake: &k8stesting.Fake{},
-		}
-
-		reconciler := &TrainerReconciler{
-			Client:          fakeClient,
-			DiscoveryClient: fakeDiscovery,
-		}
-
-		available := reconciler.checkJobSetAvailable(ctx)
-		g.Expect(available).To(BeFalse())
-	})
+	available := reconciler.checkJobSetAvailable(ctx)
+	g.Expect(available).To(BeFalse())
 }
 
 func TestGetJobSetMissingMessage(t *testing.T) {
@@ -162,8 +129,119 @@ func TestGetJobSetMissingMessage(t *testing.T) {
 	message := getJobSetMissingMessage()
 	g.Expect(message).To(ContainSubstring(jobSetCRDName))
 	g.Expect(message).To(ContainSubstring(jobSetVersion))
+	g.Expect(message).To(ContainSubstring("JobSet"))
+	g.Expect(message).To(ContainSubstring("CRD"))
+}
+
+func TestCheckJobSetOperatorCRWhenCRDDoesNotExist(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	// Create scheme without JobSetOperator CRD
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
+
+	// Create fake client without the JobSetOperator CRD
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
+
+	// Should return true (skip check) when CRD doesn't exist
+	available := reconciler.checkJobSetOperatorCR(ctx)
+	g.Expect(available).To(BeTrue())
+}
+
+func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	// Create JobSetOperator CRD
+	jobSetOperatorCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "jobsetoperators.operator.openshift.io",
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "operator.openshift.io",
+			Scope: apiextensionsv1.ClusterScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   "JobSetOperator",
+				Plural: "jobsetoperators",
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    "v1",
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: "object",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Create scheme and add CRD types
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
+
+	// Create fake client with CRD but without the CR
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(jobSetOperatorCRD).
+		Build()
+
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
+
+	// Should return false when CRD exists but CR doesn't
+	available := reconciler.checkJobSetOperatorCR(ctx)
+	g.Expect(available).To(BeFalse())
+}
+
+func TestGetJobSetOperatorCRMissingMessage(t *testing.T) {
+	g := NewWithT(t)
+
+	message := getJobSetOperatorCRMissingMessage()
+	g.Expect(message).To(ContainSubstring(jobSetOperatorCRName))
+	g.Expect(message).To(ContainSubstring("JobSetOperator CR"))
+	g.Expect(message).To(ContainSubstring("cluster"))
+}
+
+func TestCheckJobSetOperatorInstalledWhenNoOperatorFound(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	// Create scheme
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
+
+	// Create fake client with no operator
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
+
+	installed := reconciler.checkJobSetOperatorInstalled(ctx)
+	g.Expect(installed).To(BeFalse())
+}
+
+func TestGetJobSetOperatorNotInstalledMessage(t *testing.T) {
+	g := NewWithT(t)
+
+	message := getJobSetOperatorNotInstalledMessage()
 	g.Expect(message).To(ContainSubstring("JobSet Operator"))
-	g.Expect(message).To(ContainSubstring("TrainJob"))
+	g.Expect(message).To(ContainSubstring("not installed"))
+	g.Expect(message).To(ContainSubstring("OLM"))
 }
 
 func init() {

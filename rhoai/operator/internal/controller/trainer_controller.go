@@ -46,7 +46,7 @@ const (
 	finalizerName         = "components.platform.opendatahub.io/trainer-cleanup"
 	readyCondition        = string(common.ConditionTypeReady)
 	provisioningCondition = string(common.ConditionTypeProvisioningSucceeded)
-	dependenciesCondition = "DependenciesReady"
+	degradedCondition     = string(common.ConditionTypeDegraded)
 
 	// dependencyCheckInterval is how often to recheck for missing dependencies
 	dependencyCheckInterval = 60 * time.Second
@@ -131,15 +131,15 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 	namespace := resolveNamespace(trainer)
 	log.Info("Reconciling Trainer", "namespace", namespace)
 
-	// Check for JobSet Operator availability
-	jobSetAvailable := r.checkJobSetAvailable(ctx)
+	// Check for JobSet Operator installation
+	jobSetOperatorInstalled := r.checkJobSetOperatorInstalled(ctx)
 
-	if !jobSetAvailable {
-		log.Info("JobSet Operator not available, will recheck", "recheckAfter", dependencyCheckInterval)
-		jobSetMsg := getJobSetMissingMessage()
-		cm.MarkFalse(dependenciesCondition,
+	if !jobSetOperatorInstalled {
+		log.Info("JobSet Operator not installed, will recheck", "recheckAfter", dependencyCheckInterval)
+		operatorMsg := getJobSetOperatorNotInstalledMessage()
+		cm.MarkTrue(degradedCondition,
 			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("%s", jobSetMsg))
+			conditions.WithMessage("%s", operatorMsg))
 		cm.MarkFalse(provisioningCondition,
 			conditions.WithReason("DependencyMissing"),
 			conditions.WithMessage("Waiting for JobSet Operator to be installed"))
@@ -151,8 +151,48 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
 	}
 
-	// JobSet is available, mark dependency condition as true
-	cm.MarkTrue(dependenciesCondition,
+	// Check for JobSetOperator CR (OpenShift only)
+	jobSetOperatorCRAvailable := r.checkJobSetOperatorCR(ctx)
+
+	if !jobSetOperatorCRAvailable {
+		log.Info("JobSetOperator CR not available, will recheck", "recheckAfter", dependencyCheckInterval)
+		jobSetOperatorCRMsg := getJobSetOperatorCRMissingMessage()
+		cm.MarkTrue(degradedCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", jobSetOperatorCRMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSetOperator CR to be created"))
+
+		// Update status and requeue to check again later
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
+	}
+
+	// Check for JobSet CRD availability
+	jobSetAvailable := r.checkJobSetAvailable(ctx)
+
+	if !jobSetAvailable {
+		log.Info("JobSet CRD not available, will recheck", "recheckAfter", dependencyCheckInterval)
+		jobSetMsg := getJobSetMissingMessage()
+		cm.MarkTrue(degradedCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", jobSetMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSet CRD to be installed"))
+
+		// Update status and requeue to check again later
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
+	}
+
+	// Dependencies available - module is not degraded
+	cm.MarkFalse(degradedCondition,
 		conditions.WithReason("DependenciesAvailable"),
 		conditions.WithMessage("All required dependencies are available"))
 
@@ -302,7 +342,7 @@ func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *component
 }
 
 func newConditionManager(trainer *componentsv1alpha1.Trainer) *conditions.Manager {
-	return conditions.NewManager(trainer, readyCondition, provisioningCondition, dependenciesCondition)
+	return conditions.NewManager(trainer, readyCondition, provisioningCondition)
 }
 
 func resolveNamespace(trainer *componentsv1alpha1.Trainer) string {
