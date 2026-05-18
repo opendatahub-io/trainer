@@ -57,11 +57,11 @@ func TestControllerPodRunning(t *testing.T) {
 const (
 	trainerNamespace = "opendatahub"
 
-	jobSetCRDName        = "jobsets.jobset.x-k8s.io"
-	jobSetVersion        = "v1alpha2"
-	jobSetResourceName   = "jobsets"
-	jobSetOperatorName   = "jobset-operator"
-	jobSetSystemNs       = "jobset-system"
+	jobSetCRDName      = "jobsets.jobset.x-k8s.io"
+	jobSetVersion      = "v1alpha2"
+	jobSetResourceName = "jobsets"
+	jobSetOperatorName = "jobset-operator"
+	jobSetSystemNs     = "jobset-system"
 )
 
 func TestTrainerReconciliation(t *testing.T) {
@@ -165,7 +165,8 @@ func TestTrainerReconciliation(t *testing.T) {
 	_, err = k8sClient.AppsV1().Deployments(jobSetSystemNs).Create(ctx, jobSetOperatorDeployment, metav1.CreateOptions{})
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create JobSet operator deployment")
 	t.Cleanup(func() {
-		_ = k8sClient.AppsV1().Deployments(jobSetSystemNs).Delete(ctx, jobSetOperatorName+"-controller-manager", metav1.DeleteOptions{})
+		deploymentName := jobSetOperatorName + "-controller-manager"
+		_ = k8sClient.AppsV1().Deployments(jobSetSystemNs).Delete(ctx, deploymentName, metav1.DeleteOptions{})
 	})
 
 	err = k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
