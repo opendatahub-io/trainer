@@ -34,7 +34,7 @@ import (
 
 const defaultOverlay = "rhoai"
 
-func renderManifests(manifestsPath string) ([]unstructured.Unstructured, error) {
+func renderManifests(manifestsPath, namespace string) ([]unstructured.Unstructured, error) {
 	overlayPath := filepath.Join(manifestsPath, defaultOverlay)
 	paramsPath := filepath.Join(overlayPath, "params.env")
 	if _, err := os.Stat(paramsPath); err == nil {
@@ -45,6 +45,7 @@ func renderManifests(manifestsPath string) ([]unstructured.Unstructured, error) 
 
 	rendered, err := kustomize.Render(overlayPath, nil,
 		kustomize.WithLabel(labels.PlatformPartOf, trainerPartOf),
+		kustomize.WithNamespace(namespace),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("rendering kustomize overlay: %w", err)

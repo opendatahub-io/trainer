@@ -83,6 +83,7 @@ type TrainerReconciler struct {
 // +kubebuilder:rbac:groups=image.openshift.io,resources=imagestreams,verbs=get;list;watch;create;update;patch;delete
 
 func (r *TrainerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// TODO(RHOAIENG-62940): add Watches for downstream resources to detect drift
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&componentsv1alpha1.Trainer{}).
 		Named("trainer").
@@ -130,7 +131,7 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
 	}
 
-	if err := r.renderAndApply(ctx); err != nil {
+	if err := r.renderAndApply(ctx, namespace); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("ProvisioningFailed"), conditions.WithError(err))
 		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
 	}
@@ -181,7 +182,7 @@ func (r *TrainerReconciler) reconcileDelete(ctx context.Context, trainer *compon
 
 // --- Helpers ---
 
-func (r *TrainerReconciler) renderAndApply(ctx context.Context) error {
+func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string) error {
 	log := logf.FromContext(ctx)
 
 	workDir := r.ManifestsPath + "-work"
@@ -190,7 +191,7 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context) error {
 		return fmt.Errorf("preparing work directory: %w", err)
 	}
 
-	resources, err := renderManifests(workDir)
+	resources, err := renderManifests(workDir, namespace)
 	if err != nil {
 		return fmt.Errorf("rendering manifests: %w", err)
 	}

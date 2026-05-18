@@ -35,6 +35,7 @@ import (
 )
 
 const testTrainerName = "default-trainer"
+const testTrainerNamespace = "test-trainer-ns"
 
 func TestReconcileManaged(t *testing.T) {
 	g := NewWithT(t)
@@ -46,13 +47,13 @@ func TestReconcileManaged(t *testing.T) {
 		},
 		Spec: componentsv1alpha1.TrainerSpec{
 			ManagementState: common.Managed,
-			AppNamespace:    "test-trainer-ns",
+			AppNamespace:    testTrainerNamespace,
 		},
 	}
 	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
 	t.Cleanup(func() {
 		cleanupTrainer(ctx)
-		cleanupNamespace(ctx, "test-trainer-ns")
+		cleanupNamespace(ctx, testTrainerNamespace)
 	})
 
 	reconciler := newTestReconciler()
@@ -80,11 +81,11 @@ func TestReconcileManaged(t *testing.T) {
 	g.Expect(provCond.Reason).To(Equal("Provisioned"))
 
 	ns := &corev1.Namespace{}
-	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-trainer-ns"}, ns)).To(Succeed())
+	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testTrainerNamespace}, ns)).To(Succeed())
 	g.Expect(ns.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", trainerPartOf))
 
 	cm := &corev1.ConfigMap{}
-	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "trainer-test-config", Namespace: "default"}, cm)).To(Succeed())
+	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "trainer-test-config", Namespace: testTrainerNamespace}, cm)).To(Succeed())
 	g.Expect(cm.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", trainerPartOf))
 }
 
