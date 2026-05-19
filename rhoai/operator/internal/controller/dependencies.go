@@ -32,10 +32,15 @@ import (
 )
 
 const (
-	jobSetCRDName        = "jobsets.jobset.x-k8s.io"
-	jobSetVersion        = "v1alpha2"
-	jobSetOperatorCRName = "cluster"
-	jobSetOperatorName   = "jobset-operator"
+	jobSetCRDName            = "jobsets.jobset.x-k8s.io"
+	jobSetVersion            = "v1alpha2"
+	jobSetOperatorCRName     = "cluster"
+	jobSetOperatorName       = "jobset-operator"
+	jobSetOperatorCRDName    = "jobsetoperators.operator.openshift.io"
+	jobSetOperatorGroup      = "operator.openshift.io"
+	jobSetOperatorKind       = "JobSetOperator"
+	jobSetOperatorAPIVersion = "v1"
+	crdSchemaType            = "object"
 )
 
 // checkJobSetAvailable verifies that the JobSet CRD exists and is established.
@@ -89,7 +94,7 @@ func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 	// Check if the JobSetOperator CRD exists first
 	jobSetOperatorCRD := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "jobsetoperators.operator.openshift.io",
+			Name: jobSetOperatorCRDName,
 		},
 	}
 
@@ -101,9 +106,9 @@ func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 	// CRD exists, now check for the CR
 	jobSetOperatorCR := &unstructured.Unstructured{}
 	jobSetOperatorCR.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "operator.openshift.io",
-		Version: "v1",
-		Kind:    "JobSetOperator",
+		Group:   jobSetOperatorGroup,
+		Version: jobSetOperatorAPIVersion,
+		Kind:    jobSetOperatorKind,
 	})
 
 	if err := r.Get(ctx, client.ObjectKey{Name: jobSetOperatorCRName}, jobSetOperatorCR); err != nil {

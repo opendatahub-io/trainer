@@ -36,8 +36,11 @@ import (
 	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 )
 
-const testTrainerName = "default-trainer"
-const testTrainerNamespace = "test-trainer-ns"
+const (
+	testTrainerName      = "default-trainer"
+	testTrainerNamespace = "test-trainer-ns"
+	testCRDSchemaType    = "object"
+)
 
 func TestReconcileManaged(t *testing.T) {
 	g := NewWithT(t)
@@ -107,7 +110,7 @@ func TestReconcileManaged(t *testing.T) {
 					Storage: true,
 					Schema: &apiextensionsv1.CustomResourceValidation{
 						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
+							Type: testCRDSchemaType,
 						},
 					},
 				},

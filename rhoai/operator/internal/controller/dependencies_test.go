@@ -23,9 +23,15 @@ import (
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+)
+
+const (
+	testObjectType = "object"
 )
 
 func TestCheckJobSetAvailableWhenCRDExistsAndEstablished(t *testing.T) {
@@ -150,7 +156,8 @@ func TestCheckJobSetOperatorCRWhenCRDDoesNotExist(t *testing.T) {
 		Client: fakeClient,
 	}
 
-	// Should return true (skip check) when CRD doesn't exist
+	// Returns true (skips CR check) on vanilla Kubernetes where JobSetOperator CRD doesn't exist
+	// This indicates "check not applicable" rather than "CR is available"
 	available := reconciler.checkJobSetOperatorCR(ctx)
 	g.Expect(available).To(BeTrue())
 }
@@ -162,23 +169,23 @@ func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
 	// Create JobSetOperator CRD
 	jobSetOperatorCRD := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "jobsetoperators.operator.openshift.io",
+			Name: jobSetOperatorCRDName,
 		},
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "operator.openshift.io",
+			Group: jobSetOperatorGroup,
 			Scope: apiextensionsv1.ClusterScoped,
 			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:   "JobSetOperator",
+				Kind:   jobSetOperatorKind,
 				Plural: "jobsetoperators",
 			},
 			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
 				{
-					Name:    "v1",
+					Name:    jobSetOperatorAPIVersion,
 					Served:  true,
 					Storage: true,
 					Schema: &apiextensionsv1.CustomResourceValidation{
 						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
+							Type: testObjectType,
 						},
 					},
 				},
@@ -203,6 +210,65 @@ func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
 	// Should return false when CRD exists but CR doesn't
 	available := reconciler.checkJobSetOperatorCR(ctx)
 	g.Expect(available).To(BeFalse())
+}
+
+func TestCheckJobSetOperatorCRWhenCRDAndCRExist(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	// Create JobSetOperator CRD
+	jobSetOperatorCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetOperatorCRDName,
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: jobSetOperatorGroup,
+			Scope: apiextensionsv1.ClusterScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   jobSetOperatorKind,
+				Plural: "jobsetoperators",
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    jobSetOperatorAPIVersion,
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: testObjectType,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Create JobSetOperator CR named "cluster"
+	jobSetOperatorCR := &unstructured.Unstructured{}
+	jobSetOperatorCR.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   jobSetOperatorGroup,
+		Version: jobSetOperatorAPIVersion,
+		Kind:    jobSetOperatorKind,
+	})
+	jobSetOperatorCR.SetName(jobSetOperatorCRName)
+
+	// Create scheme and add CRD types
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
+
+	// Create fake client with both CRD and CR
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(jobSetOperatorCRD, jobSetOperatorCR).
+		Build()
+
+	reconciler := &TrainerReconciler{
+		Client: fakeClient,
+	}
+
+	// Should return true when both CRD and CR exist (happy path)
+	available := reconciler.checkJobSetOperatorCR(ctx)
+	g.Expect(available).To(BeTrue())
 }
 
 func TestGetJobSetOperatorCRMissingMessage(t *testing.T) {
