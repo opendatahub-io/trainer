@@ -140,29 +140,6 @@ func TestGetJobSetMissingMessage(t *testing.T) {
 	g.Expect(message).To(ContainSubstring("CRD"))
 }
 
-func TestCheckJobSetOperatorCRWhenCRDDoesNotExist(t *testing.T) {
-	g := NewWithT(t)
-	ctx := context.Background()
-
-	// Create scheme without JobSetOperator CRD
-	s := runtime.NewScheme()
-	_ = apiextensionsv1.AddToScheme(s)
-
-	// Create fake client without the JobSetOperator CRD
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(s).
-		Build()
-
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
-
-	// Returns true (skips CR check) on vanilla Kubernetes where JobSetOperator CRD doesn't exist
-	// This indicates "check not applicable" rather than "CR is available"
-	available := reconciler.checkJobSetOperatorCR(ctx)
-	g.Expect(available).To(BeTrue())
-}
-
 func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()

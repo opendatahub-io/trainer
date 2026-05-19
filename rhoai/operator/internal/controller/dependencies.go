@@ -75,18 +75,6 @@ func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bo
 func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 	log := logf.FromContext(ctx)
 
-	// Check if the JobSetOperator CRD exists first
-	jobSetOperatorGK := schema.GroupKind{
-		Group: jobSetOperatorGroup,
-		Kind:  jobSetOperatorKind,
-	}
-
-	if err := cluster.CustomResourceDefinitionExists(ctx, r.Client, jobSetOperatorGK); err != nil {
-		log.V(1).Info("JobSetOperator CRD not found, skipping CR check")
-		return true // Not in OpenShift, skip this check
-	}
-
-	// CRD exists, now check for the CR using GetSingleton
 	jobSetOperatorCR := &unstructured.Unstructured{}
 	jobSetOperatorCR.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   jobSetOperatorGroup,
