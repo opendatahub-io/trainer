@@ -20,71 +20,55 @@ import (
 	"context"
 	"fmt"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster/olm"
 )
 
 const (
 	jobSetCRDName            = "jobsets.jobset.x-k8s.io"
 	jobSetVersion            = "v1alpha2"
+	jobSetGroup              = "jobset.x-k8s.io"
+	jobSetKind               = "JobSet"
 	jobSetOperatorCRName     = "cluster"
 	jobSetOperatorName       = "jobset-operator"
-	jobSetOperatorCRDName    = "jobsetoperators.operator.openshift.io"
 	jobSetOperatorGroup      = "operator.openshift.io"
 	jobSetOperatorKind       = "JobSetOperator"
 	jobSetOperatorAPIVersion = "v1"
-	crdSchemaType            = "object"
 )
 
 // checkJobSetAvailable verifies that the JobSet CRD exists and is established.
 func (r *TrainerReconciler) checkJobSetAvailable(ctx context.Context) bool {
 	log := logf.FromContext(ctx)
 
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: jobSetCRDName,
-		},
+	jobSetGK := schema.GroupKind{
+		Group: jobSetGroup,
+		Kind:  jobSetKind,
 	}
 
-	if err := r.Get(ctx, client.ObjectKeyFromObject(crd), crd); err != nil {
-		log.Info("JobSet Operator not available", "crd", jobSetCRDName, "version", jobSetVersion)
+	if err := cluster.CustomResourceDefinitionExists(ctx, r.Client, jobSetGK); err != nil {
+		log.Error(err, "JobSet CRD not available", "crd", jobSetCRDName, "version", jobSetVersion)
 		return false
 	}
 
-	// Check if CRD is established (ready to use)
-	for _, cond := range crd.Status.Conditions {
-		if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
-			log.V(1).Info("JobSet CRD is established", "name", jobSetCRDName)
-			return true
-		}
-	}
-
-	log.Info("JobSet CRD found but not established yet", "name", jobSetCRDName)
-	return false
+	log.V(1).Info("JobSet CRD is established", "name", jobSetCRDName)
+	return true
 }
 
 func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bool {
 	log := logf.FromContext(ctx)
 
 	operatorInfo, err := olm.OperatorExists(ctx, r.Client, jobSetOperatorName)
-	if err == nil && operatorInfo != nil {
-		log.V(1).Info("JobSet Operator found via OLM", "version", operatorInfo.Version)
-		return true
-	}
-
 	if err != nil {
-		log.V(1).Info("OLM check failed", "error", err)
+		log.Error(err, "Failed to verify JobSet Operator installation")
+		return false
 	}
 
-	log.Info("JobSet Operator installation not found")
-	return false
+	log.V(1).Info("JobSet Operator found via OLM", "version", operatorInfo.Version)
+	return true
 }
 
 // checkJobSetOperatorCR checks that JobSetOperator CR exists with name "cluster".
@@ -92,18 +76,17 @@ func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 	log := logf.FromContext(ctx)
 
 	// Check if the JobSetOperator CRD exists first
-	jobSetOperatorCRD := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: jobSetOperatorCRDName,
-		},
+	jobSetOperatorGK := schema.GroupKind{
+		Group: jobSetOperatorGroup,
+		Kind:  jobSetOperatorKind,
 	}
 
-	if err := r.Get(ctx, client.ObjectKeyFromObject(jobSetOperatorCRD), jobSetOperatorCRD); err != nil {
+	if err := cluster.CustomResourceDefinitionExists(ctx, r.Client, jobSetOperatorGK); err != nil {
 		log.V(1).Info("JobSetOperator CRD not found, skipping CR check")
 		return true // Not in OpenShift, skip this check
 	}
 
-	// CRD exists, now check for the CR
+	// CRD exists, now check for the CR using GetSingleton
 	jobSetOperatorCR := &unstructured.Unstructured{}
 	jobSetOperatorCR.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   jobSetOperatorGroup,
@@ -111,12 +94,8 @@ func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 		Kind:    jobSetOperatorKind,
 	})
 
-	if err := r.Get(ctx, client.ObjectKey{Name: jobSetOperatorCRName}, jobSetOperatorCR); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("JobSetOperator CR not found", "name", jobSetOperatorCRName)
-			return false
-		}
-		log.Error(err, "Failed to check JobSetOperator CR", "name", jobSetOperatorCRName)
+	if err := cluster.GetSingleton(ctx, r.Client, jobSetOperatorCR); err != nil {
+		log.Error(err, "Failed to verify JobSetOperator CR", "expectedName", jobSetOperatorCRName)
 		return false
 	}
 

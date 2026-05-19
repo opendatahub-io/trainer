@@ -6,6 +6,7 @@ require (
 	github.com/onsi/gomega v1.39.1
 	github.com/opendatahub-io/odh-platform-utilities v0.0.0-20260506180717-e15e712db78d
 	k8s.io/api v0.35.2
+	k8s.io/apiextensions-apiserver v0.35.2
 	k8s.io/apimachinery v0.35.4
 	k8s.io/client-go v0.35.2
 	sigs.k8s.io/controller-runtime v0.23.3
@@ -115,7 +116,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	helm.sh/helm/v4 v4.1.1 // indirect
-	k8s.io/apiextensions-apiserver v0.35.2 // indirect
 	k8s.io/apiserver v0.35.2 // indirect
 	k8s.io/component-base v0.35.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect

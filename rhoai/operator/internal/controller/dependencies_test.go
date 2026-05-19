@@ -31,7 +31,8 @@ import (
 )
 
 const (
-	testObjectType = "object"
+	testObjectType        = "object"
+	jobSetOperatorCRDName = "jobsetoperators.operator.openshift.io"
 )
 
 func TestCheckJobSetAvailableWhenCRDExistsAndEstablished(t *testing.T) {
@@ -191,6 +192,14 @@ func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
 				},
 			},
 		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{
+					Type:   apiextensionsv1.Established,
+					Status: apiextensionsv1.ConditionTrue,
+				},
+			},
+		},
 	}
 
 	// Create scheme and add CRD types
@@ -238,6 +247,14 @@ func TestCheckJobSetOperatorCRWhenCRDAndCRExist(t *testing.T) {
 							Type: testObjectType,
 						},
 					},
+				},
+			},
+		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{
+					Type:   apiextensionsv1.Established,
+					Status: apiextensionsv1.ConditionTrue,
 				},
 			},
 		},
