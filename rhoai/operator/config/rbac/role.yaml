@@ -113,6 +113,12 @@ rules:
   - patch
   - update
 - apiGroups:
+  - config.openshift.io
+  resources:
+  - clusterversions
+  verbs:
+  - get
+- apiGroups:
   - coordination.k8s.io
   resources:
   - leases
@@ -175,6 +181,19 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - operator.openshift.io
+  resources:
+  - jobsetoperators
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - operators.coreos.com
+  resources:
+  - operatorconditions
+  verbs:
+  - list
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
