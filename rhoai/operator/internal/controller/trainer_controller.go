@@ -33,6 +33,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/conditions"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/gc"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
@@ -131,64 +132,25 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 	namespace := resolveNamespace(trainer)
 	log.Info("Reconciling Trainer", "namespace", namespace)
 
-	// Check for JobSet Operator installation
-	jobSetOperatorInstalled := r.checkJobSetOperatorInstalled(ctx)
-
-	if !jobSetOperatorInstalled {
-		log.Info("JobSet Operator not installed, will recheck", "recheckAfter", dependencyCheckInterval)
-		operatorMsg := getJobSetOperatorNotInstalledMessage()
+	clusterType, err := cluster.DetectClusterType(ctx, r.Client)
+	if err != nil {
+		log.Error(err, "Failed to detect cluster type")
 		cm.MarkTrue(degradedCondition,
-			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("%s", operatorMsg))
-		cm.MarkFalse(provisioningCondition,
-			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("Waiting for JobSet Operator to be installed"))
-
-		// Update status and requeue to check again later
-		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
+			conditions.WithReason("ClusterDetectionFailed"),
+			conditions.WithMessage("Failed to detect cluster type: %v", err))
+		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
 	}
 
-	// Check for JobSetOperator CR (OpenShift only)
-	jobSetOperatorCRAvailable := r.checkJobSetOperatorCR(ctx)
+	log.V(1).Info("Detected cluster type", "clusterType", clusterType)
 
-	if !jobSetOperatorCRAvailable {
-		log.Info("JobSetOperator CR not available, will recheck", "recheckAfter", dependencyCheckInterval)
-		jobSetOperatorCRMsg := getJobSetOperatorCRMissingMessage()
-		cm.MarkTrue(degradedCondition,
-			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("%s", jobSetOperatorCRMsg))
-		cm.MarkFalse(provisioningCondition,
-			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("Waiting for JobSetOperator CR to be created"))
-
-		// Update status and requeue to check again later
-		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
-			return ctrl.Result{}, err
+	if clusterType == cluster.ClusterTypeOpenShift {
+		if result, done := r.checkOpenShiftDependencies(ctx, trainer, cm); done {
+			return result, nil
 		}
-		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
-	}
-
-	// Check for JobSet CRD availability
-	jobSetAvailable := r.checkJobSetAvailable(ctx)
-
-	if !jobSetAvailable {
-		log.Info("JobSet CRD not available, will recheck", "recheckAfter", dependencyCheckInterval)
-		jobSetMsg := getJobSetMissingMessage()
-		cm.MarkTrue(degradedCondition,
-			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("%s", jobSetMsg))
-		cm.MarkFalse(provisioningCondition,
-			conditions.WithReason("DependencyMissing"),
-			conditions.WithMessage("Waiting for JobSet CRD to be installed"))
-
-		// Update status and requeue to check again later
-		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
-			return ctrl.Result{}, err
+	} else {
+		if result, done := r.checkKubernetesDependencies(ctx, trainer, cm); done {
+			return result, nil
 		}
-		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, nil
 	}
 
 	// Dependencies available - module is not degraded
@@ -248,6 +210,86 @@ func (r *TrainerReconciler) reconcileDelete(ctx context.Context, trainer *compon
 
 	log.Info("Finalizer removed, cleanup complete")
 	return ctrl.Result{}, nil
+}
+
+func (r *TrainerReconciler) checkOpenShiftDependencies(ctx context.Context, trainer *componentsv1alpha1.Trainer, cm *conditions.Manager) (ctrl.Result, bool) {
+	log := logf.FromContext(ctx)
+
+	jobSetOperatorInstalled := r.checkJobSetOperatorInstalled(ctx)
+	if !jobSetOperatorInstalled {
+		log.Info("JobSet Operator not installed, will recheck", "recheckAfter", dependencyCheckInterval)
+		operatorMsg := getJobSetOperatorNotInstalledMessage()
+		cm.MarkTrue(degradedCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", operatorMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSet Operator to be installed"))
+
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, true
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
+	}
+
+	jobSetOperatorCRAvailable := r.checkJobSetOperatorCR(ctx)
+	if !jobSetOperatorCRAvailable {
+		log.Info("JobSetOperator CR not available, will recheck", "recheckAfter", dependencyCheckInterval)
+		jobSetOperatorCRMsg := getJobSetOperatorCRMissingMessage()
+		cm.MarkTrue(degradedCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", jobSetOperatorCRMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSetOperator CR to be created"))
+
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, true
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
+	}
+
+	jobSetAvailable := r.checkJobSetAvailable(ctx)
+	if !jobSetAvailable {
+		log.Info("JobSet CRD not available, will recheck", "recheckAfter", dependencyCheckInterval)
+		jobSetMsg := getJobSetMissingMessageOpenShift()
+		cm.MarkTrue(degradedCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", jobSetMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSet CRD to be installed"))
+
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, true
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
+	}
+
+	return ctrl.Result{}, false
+}
+
+func (r *TrainerReconciler) checkKubernetesDependencies(ctx context.Context, trainer *componentsv1alpha1.Trainer, cm *conditions.Manager) (ctrl.Result, bool) {
+	log := logf.FromContext(ctx)
+
+	jobSetAvailable := r.checkJobSetAvailable(ctx)
+	if !jobSetAvailable {
+		log.Info("JobSet CRD not available, will recheck", "recheckAfter", dependencyCheckInterval)
+		jobSetMsg := getJobSetMissingMessage()
+		cm.MarkTrue(degradedCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("%s", jobSetMsg))
+		cm.MarkFalse(provisioningCondition,
+			conditions.WithReason("DependencyMissing"),
+			conditions.WithMessage("Waiting for JobSet CRD to be installed"))
+
+		if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+			return ctrl.Result{}, true
+		}
+		return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
+	}
+
+	return ctrl.Result{}, false
 }
 
 // --- Helpers ---

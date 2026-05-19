@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -76,35 +75,7 @@ func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bo
 	}
 
 	if err != nil {
-		log.V(1).Info("OLM check failed, checking for operator deployment", "error", err)
-	}
-
-	deploymentList := &unstructured.UnstructuredList{}
-	deploymentList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "apps",
-		Version: "v1",
-		Kind:    "DeploymentList",
-	})
-
-	if err := r.List(ctx, deploymentList); err != nil {
-		log.Error(err, "Failed to list deployments")
-		return false
-	}
-
-	// Look for jobset-operator deployment
-	for _, item := range deploymentList.Items {
-		name := item.GetName()
-		labels := item.GetLabels()
-
-		if strings.Contains(name, jobSetOperatorName) {
-			log.V(1).Info("JobSet Operator found via deployment", "name", name, "namespace", item.GetNamespace())
-			return true
-		}
-
-		if appName, ok := labels["app.kubernetes.io/name"]; ok && strings.Contains(appName, jobSetOperatorName) {
-			log.V(1).Info("JobSet Operator found via deployment labels", "name", name, "namespace", item.GetNamespace())
-			return true
-		}
+		log.V(1).Info("OLM check failed", "error", err)
 	}
 
 	log.Info("JobSet Operator installation not found")
@@ -150,7 +121,7 @@ func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 
 func getJobSetOperatorNotInstalledMessage() string {
 	return "JobSet Operator is not installed. " +
-		"Please install the JobSet Operator via OLM (OperatorHub) or manually deploy it before deploying Trainer."
+		"Please install the JobSet Operator via OLM (OperatorHub) before deploying Trainer."
 }
 
 func getJobSetOperatorCRMissingMessage() string {
@@ -160,6 +131,12 @@ func getJobSetOperatorCRMissingMessage() string {
 }
 
 func getJobSetMissingMessage() string {
+	return fmt.Sprintf("JobSet CRD (%s version %s) is required but not found. "+
+		"Please install JobSet CRD before deploying Trainer.",
+		jobSetCRDName, jobSetVersion)
+}
+
+func getJobSetMissingMessageOpenShift() string {
 	return fmt.Sprintf("JobSet CRD (%s version %s) is required but not found. "+
 		"This CRD should be created by the JobSet Operator. "+
 		"Please check the JobSet Operator status or logs for more details.",
