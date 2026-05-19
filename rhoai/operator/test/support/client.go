@@ -29,6 +29,8 @@ import (
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
@@ -44,6 +46,7 @@ const trainerCRName = "default-trainer"
 type Client struct {
 	kubernetes.Interface
 	CRClient            client.Client
+	DynamicClient       dynamic.Interface
 	ApiextensionsClient apiextensionsclientset.Interface
 }
 
@@ -75,9 +78,15 @@ func NewClient() (*Client, error) {
 		return nil, err
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Client{
 		Interface:           clientset,
 		CRClient:            crClient,
+		DynamicClient:       dynamicClient,
 		ApiextensionsClient: apiextensionsClient,
 	}, nil
 }
@@ -168,6 +177,27 @@ func (c *Client) GetTrainer(ctx context.Context) (*componentsv1alpha1.Trainer, e
 	trainer := &componentsv1alpha1.Trainer{}
 	err := c.CRClient.Get(ctx, client.ObjectKey{Name: trainerCRName}, trainer)
 	return trainer, err
+}
+
+var clusterTrainingRuntimeGVR = schema.GroupVersionResource{
+	Group:    "trainer.kubeflow.org",
+	Version:  "v1alpha1",
+	Resource: "clustertrainingruntimes",
+}
+
+func (c *Client) ListClusterTrainingRuntimes(ctx context.Context, labelSelector string) ([]string, error) {
+	list, err := c.DynamicClient.Resource(clusterTrainingRuntimeGVR).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, item := range list.Items {
+		names = append(names, item.GetName())
+	}
+	return names, nil
 }
 
 func (c *Client) DeleteTrainer(ctx context.Context) error {

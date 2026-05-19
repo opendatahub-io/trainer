@@ -41,6 +41,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+
 	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 	"github.com/hrathina/odh-trainer-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
@@ -56,6 +58,7 @@ func init() {
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 
 	utilruntime.Must(componentsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(trainerv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

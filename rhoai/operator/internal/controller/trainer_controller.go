@@ -286,15 +286,29 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 		return fmt.Errorf("preparing work directory: %w", err)
 	}
 
-	resources, err := renderManifests(workDir, namespace)
+	if err := resolveImageParams(workDir); err != nil {
+		return fmt.Errorf("resolving image params: %w", err)
+	}
+
+	rendered, err := renderManifests(workDir, namespace)
 	if err != nil {
 		return fmt.Errorf("rendering manifests: %w", err)
 	}
 
-	log.Info("Applying Trainer resources", "count", len(resources))
+	log.Info("Applying Trainer manifests", "count", len(rendered))
 
-	if err := applyResources(ctx, r.Client, resources); err != nil {
-		return fmt.Errorf("applying resources: %w", err)
+	if err := applyResources(ctx, r.Client, rendered); err != nil {
+		return fmt.Errorf("applying manifests: %w", err)
+	}
+
+	ctrs := buildClusterTrainingRuntimes()
+
+	log.Info("Applying ClusterTrainingRuntimes", "count", len(ctrs))
+
+	for _, ctr := range ctrs {
+		if err := r.Patch(ctx, ctr, client.Apply, fieldOwner, client.ForceOwnership); err != nil { //nolint:staticcheck // kubeflow/trainer lacks ApplyConfiguration types
+			return fmt.Errorf("applying ClusterTrainingRuntime %s: %w", ctr.Name, err)
+		}
 	}
 
 	return nil

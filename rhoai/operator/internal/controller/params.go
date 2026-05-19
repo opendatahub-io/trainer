@@ -26,25 +26,29 @@ import (
 	"strings"
 )
 
+const imageParamControllerImage = "odh-kubeflow-trainer-controller-image"
+
 var trainerImageParamMap = map[string]string{
-	"odh-kubeflow-trainer-controller-image":           "RELATED_IMAGE_ODH_TRAINER_IMAGE",
-	"odh-training-cuda128-torch29-py312-image":        "RELATED_IMAGE_ODH_TRAINING_CUDA128_TORCH29_PY312_IMAGE",
-	"odh-training-rocm64-torch29-py312-image":         "RELATED_IMAGE_ODH_TRAINING_ROCM64_TORCH29_PY312_IMAGE",
-	"odh-th06-cuda130-torch210-py312-image":           "RELATED_IMAGE_ODH_TH06_CUDA130_TORCH210_PY312_IMAGE",
-	"odh-th06-rocm64-torch291-py312-image":            "RELATED_IMAGE_ODH_TH06_ROCM64_TORCH291_PY312_IMAGE",
-	"odh-th06-cpu-torch210-py312-image":               "RELATED_IMAGE_ODH_TH06_CPU_TORCH210_PY312_IMAGE",
-	"odh-training-universal-workbench-image-cuda-3-4": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CUDA_3_4",
-	"odh-training-universal-workbench-image-rocm-3-4": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_ROCM_3_4",
-	"odh-training-universal-workbench-image-cpu-3-4":  "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU_3_4",
+	imageParamControllerImage: "RELATED_IMAGE_ODH_TRAINER_IMAGE",
 }
 
-func applyParams(paramsPath string, imageMap map[string]string) error {
+func resolveImageParams(manifestsPath string) error {
+	overlayPath := filepath.Join(manifestsPath, defaultOverlay)
+	paramsPath := filepath.Join(overlayPath, "params.env")
+
+	if _, err := os.Stat(paramsPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
 	params, err := readParams(paramsPath)
 	if err != nil {
 		return fmt.Errorf("reading params.env: %w", err)
 	}
 
-	for key, envVar := range imageMap {
+	for key, envVar := range trainerImageParamMap {
 		if val := os.Getenv(envVar); val != "" {
 			params[key] = val
 		}

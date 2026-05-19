@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"k8s.io/client-go/discovery"
@@ -30,6 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 
 	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
@@ -58,10 +62,23 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	err = trainerv1alpha1.AddToScheme(scheme.Scheme)
+	if err != nil {
+		logf.Log.Error(err, "failed to add trainer scheme")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:scheme
 
+	trainerCRDPath := filepath.Join(
+		"..", "..", "bin", "trainer-crds",
+	)
+	if _, err := os.Stat(trainerCRDPath); os.IsNotExist(err) {
+		trainerCRDPath = findModuleCRDPath()
+	}
+
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases"), trainerCRDPath},
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -166,5 +183,19 @@ resources:
 		return "", err
 	}
 
+	paramsEnv := imageParamControllerImage + "=quay.io/test/trainer:latest\n"
+	if err := os.WriteFile(filepath.Join(overlayDir, "params.env"), []byte(paramsEnv), 0o644); err != nil {
+		return "", err
+	}
+
 	return dir, nil
+}
+
+func findModuleCRDPath() string {
+	out, err := exec.Command("go", "env", "GOPATH").Output()
+	if err != nil {
+		return ""
+	}
+	gopath := strings.TrimSpace(string(out))
+	return filepath.Join(gopath, "pkg", "mod", "github.com", "kubeflow", "trainer", "v2@v2.2.0", "manifests", "base", "crds")
 }

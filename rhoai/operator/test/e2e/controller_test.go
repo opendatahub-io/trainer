@@ -137,6 +137,10 @@ func TestTrainerReconciliation(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(deployments.Items).NotTo(BeEmpty(), "Expected at least one Trainer deployment")
 
+	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, "platform.opendatahub.io/part-of=trainer")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
+
 	err = k8sClient.DeleteTrainer(ctx)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to delete Trainer CR")
 
