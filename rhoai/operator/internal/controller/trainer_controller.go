@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -49,6 +50,9 @@ const (
 	readyCondition        = string(common.ConditionTypeReady)
 	provisioningCondition = string(common.ConditionTypeProvisioningSucceeded)
 	degradedCondition     = string(common.ConditionTypeDegraded)
+
+	trainerKubeflowGroup   = "trainer.kubeflow.org"
+	trainerKubeflowVersion = "v1alpha1"
 
 	// dependencyCheckInterval is how often to recheck for missing dependencies
 	dependencyCheckInterval = 60 * time.Second
@@ -318,9 +322,15 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 func (r *TrainerReconciler) runGC(ctx context.Context, trainer *componentsv1alpha1.Trainer) error {
 	namespace := resolveNamespace(trainer)
 
+	r.cleanupTrainerResources(ctx)
+
 	collector := gc.New(
 		gc.WithOnlyCollectOwned(false),
 		gc.InNamespace(namespace),
+		gc.WithUnremovables(
+			schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: "ClusterTrainingRuntime"},
+			schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: "TrainingRuntime"},
+		),
 	)
 
 	return collector.Run(ctx, gc.RunParams{
@@ -329,6 +339,44 @@ func (r *TrainerReconciler) runGC(ctx context.Context, trainer *componentsv1alph
 		DiscoveryClient: r.DiscoveryClient,
 		Owner:           trainer,
 	})
+}
+
+func (r *TrainerReconciler) cleanupTrainerResources(ctx context.Context) {
+	log := logf.FromContext(ctx)
+
+	gvrs := []schema.GroupVersionResource{
+		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "clustertrainingruntimes"},
+		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "trainingruntimes"},
+	}
+
+	selector := labels.PlatformPartOf + "=" + trainerPartOf
+	propagation := metav1.DeletePropagationBackground
+
+	for _, gvr := range gvrs {
+		items, err := r.DynamicClient.Resource(gvr).Namespace("").List(ctx, metav1.ListOptions{
+			LabelSelector: selector,
+		})
+		if err != nil {
+			log.V(1).Info("Cannot list trainer resources for cleanup, skipping", "gvr", gvr, "error", err)
+			continue
+		}
+
+		for i := range items.Items {
+			item := &items.Items[i]
+			if !item.GetDeletionTimestamp().IsZero() {
+				continue
+			}
+
+			log.Info("Deleting trainer resource", "gvr", gvr, "name", item.GetName(), "namespace", item.GetNamespace())
+
+			err := r.DynamicClient.Resource(gvr).Namespace(item.GetNamespace()).Delete(ctx, item.GetName(), metav1.DeleteOptions{
+				PropagationPolicy: &propagation,
+			})
+			if err != nil && !errors.IsNotFound(err) {
+				log.V(1).Info("Failed to delete trainer resource, skipping", "gvr", gvr, "name", item.GetName(), "error", err)
+			}
+		}
+	}
 }
 
 func (r *TrainerReconciler) ensureFinalizer(ctx context.Context, trainer *componentsv1alpha1.Trainer) error {

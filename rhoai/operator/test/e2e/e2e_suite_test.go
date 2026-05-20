@@ -27,6 +27,7 @@ import (
 
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/hrathina/odh-trainer-operator/test/support"
@@ -111,9 +112,15 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to deploy the controller-manager: %v", err)
 	}
 
+	if err := installJobSetCRD(); err != nil {
+		log.Fatalf("Failed to install JobSet CRD: %v", err)
+	}
+
 	code := m.Run()
 
 	_ = k8sClient.DeleteTrainer(ctx)
+	_ = k8sClient.ApiextensionsClient.ApiextensionsV1().CustomResourceDefinitions().Delete(
+		ctx, jobSetCRDName, metav1.DeleteOptions{})
 	_ = k8sClient.CoreV1().Namespaces().Delete(ctx, "opendatahub", metav1.DeleteOptions{})
 	_ = k8sClient.CoreV1().Pods(namespace).Delete(ctx, "curl-metrics", metav1.DeleteOptions{})
 	_ = k8sClient.RbacV1().ClusterRoleBindings().Delete(
@@ -135,4 +142,40 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func installJobSetCRD() error {
+	crdClient := k8sClient.ApiextensionsClient.ApiextensionsV1().CustomResourceDefinitions()
+
+	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetCRDName,
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "jobset.x-k8s.io",
+			Scope: apiextensionsv1.NamespaceScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   "JobSet",
+				Plural: jobSetResourceName,
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    jobSetVersion,
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: crdOpenAPI,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := crdClient.Create(ctx, jobSetCRD, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("failed to create JobSet CRD: %w", err)
+	}
+
+	return nil
 }

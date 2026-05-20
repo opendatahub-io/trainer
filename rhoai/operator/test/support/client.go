@@ -41,7 +41,11 @@ import (
 	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 )
 
-const trainerCRName = "default-trainer"
+const (
+	trainerCRName      = "default-trainer"
+	trainerKubeflowAPI = "trainer.kubeflow.org"
+	trainerAPIVersion  = "v1alpha1"
+)
 
 type Client struct {
 	kubernetes.Interface
@@ -68,17 +72,17 @@ func NewClient() (*Client, error) {
 		return nil, err
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	scheme := runtime.NewScheme()
 	if err := componentsv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 
 	crClient, err := client.New(cfg, client.Options{Scheme: scheme})
-	if err != nil {
-		return nil, err
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -180,8 +184,8 @@ func (c *Client) GetTrainer(ctx context.Context) (*componentsv1alpha1.Trainer, e
 }
 
 var clusterTrainingRuntimeGVR = schema.GroupVersionResource{
-	Group:    "trainer.kubeflow.org",
-	Version:  "v1alpha1",
+	Group:    trainerKubeflowAPI,
+	Version:  trainerAPIVersion,
 	Resource: "clustertrainingruntimes",
 }
 

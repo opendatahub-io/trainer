@@ -25,6 +25,8 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -237,6 +239,63 @@ func TestResolveNamespace(t *testing.T) {
 
 	trainer = &componentsv1alpha1.Trainer{}
 	g.Expect(resolveNamespace(trainer)).To(Equal(defaultNamespace))
+}
+
+func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	ctrGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "clustertrainingruntimes"}
+	ctrGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: "ClusterTrainingRuntime"}
+	trGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "trainingruntimes"}
+	trGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: "TrainingRuntime"}
+
+	labeledCTR := newUnstructured(ctrGVK, "labeled-ctr", "", map[string]string{"platform.opendatahub.io/part-of": trainerPartOf})
+	_, err := dynamicClient.Resource(ctrGVR).Create(ctx, labeledCTR, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	unlabeledCTR := newUnstructured(ctrGVK, "unlabeled-ctr", "", nil)
+	_, err = dynamicClient.Resource(ctrGVR).Create(ctx, unlabeledCTR, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "tr-test-ns"}}
+	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, ns) })
+
+	labeledTR := newUnstructured(trGVK, "labeled-tr", "tr-test-ns", map[string]string{"platform.opendatahub.io/part-of": trainerPartOf})
+	_, err = dynamicClient.Resource(trGVR).Namespace("tr-test-ns").Create(ctx, labeledTR, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	t.Cleanup(func() {
+		_ = dynamicClient.Resource(ctrGVR).Delete(ctx, "labeled-ctr", metav1.DeleteOptions{})
+		_ = dynamicClient.Resource(ctrGVR).Delete(ctx, "unlabeled-ctr", metav1.DeleteOptions{})
+		_ = dynamicClient.Resource(trGVR).Namespace("tr-test-ns").Delete(ctx, "labeled-tr", metav1.DeleteOptions{})
+	})
+
+	reconciler := newTestReconciler()
+	reconciler.cleanupTrainerResources(ctx)
+
+	_, err = dynamicClient.Resource(ctrGVR).Get(ctx, "labeled-ctr", metav1.GetOptions{})
+	g.Expect(errors.IsNotFound(err)).To(BeTrue(), "labeled CTR should be deleted")
+
+	_, err = dynamicClient.Resource(ctrGVR).Get(ctx, "unlabeled-ctr", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred(), "unlabeled CTR should remain")
+
+	_, err = dynamicClient.Resource(trGVR).Namespace("tr-test-ns").Get(ctx, "labeled-tr", metav1.GetOptions{})
+	g.Expect(errors.IsNotFound(err)).To(BeTrue(), "labeled TrainingRuntime should be deleted")
+}
+
+func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, labels map[string]string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName(name)
+	if namespace != "" {
+		obj.SetNamespace(namespace)
+	}
+	if labels != nil {
+		obj.SetLabels(labels)
+	}
+	return obj
 }
 
 func newTestReconciler() *TrainerReconciler {
