@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
@@ -141,7 +142,7 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		cm.MarkTrue(degradedCondition,
 			conditions.WithReason("ClusterDetectionFailed"),
 			conditions.WithMessage("Failed to detect cluster type: %v", err))
-		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
 	log.V(1).Info("Detected cluster type", "clusterType", clusterType)
@@ -163,17 +164,17 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 
 	if err := r.ensureNamespace(ctx, namespace); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("NamespaceFailed"), conditions.WithError(err))
-		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
 	if err := r.renderAndApply(ctx, namespace); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("ProvisioningFailed"), conditions.WithError(err))
-		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
 	cm.MarkTrue(provisioningCondition, conditions.WithReason("Provisioned"), conditions.WithMessage("Trainer resources provisioned successfully"))
 
-	return r.updateStatus(ctx, trainer, common.PhaseReady)
+	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseReady)
 }
 
 func (r *TrainerReconciler) reconcileRemoved(ctx context.Context, trainer *componentsv1alpha1.Trainer) (ctrl.Result, error) {
@@ -184,12 +185,12 @@ func (r *TrainerReconciler) reconcileRemoved(ctx context.Context, trainer *compo
 
 	if err := r.runGC(ctx, trainer); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("CleanupFailed"), conditions.WithError(err))
-		return r.updateStatus(ctx, trainer, common.PhaseNotReady)
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
 	cm.MarkFalse(provisioningCondition, conditions.WithReason("Removed"), conditions.WithMessage("Trainer has been removed"))
 
-	return r.updateStatus(ctx, trainer, common.PhaseNotReady)
+	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseNotReady)
 }
 
 func (r *TrainerReconciler) reconcileDelete(ctx context.Context, trainer *componentsv1alpha1.Trainer) (ctrl.Result, error) {
@@ -271,8 +272,8 @@ func (r *TrainerReconciler) handleMissingDependency(
 		conditions.WithReason("DependencyMissing"),
 		conditions.WithMessage("%s", waitingMessage))
 
-	if _, err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
-		return ctrl.Result{}, true
+	if err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+		log.Error(err, "Failed to update Trainer status")
 	}
 	return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
 }
@@ -369,15 +370,11 @@ func (r *TrainerReconciler) ensureNamespace(ctx context.Context, name string) er
 	return nil
 }
 
-func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *componentsv1alpha1.Trainer, phase common.Phase) (ctrl.Result, error) {
+func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *componentsv1alpha1.Trainer, phase common.Phase) error {
 	trainer.Status.Phase = phase
 	trainer.Status.ObservedGeneration = trainer.Generation
 
-	if err := r.Status().Update(ctx, trainer); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to update Trainer status: %w", err)
-	}
-
-	return ctrl.Result{}, nil
+	return r.Status().Update(ctx, trainer)
 }
 
 func newConditionManager(trainer *componentsv1alpha1.Trainer) *conditions.Manager {
