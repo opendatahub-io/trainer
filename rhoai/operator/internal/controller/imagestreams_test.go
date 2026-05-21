@@ -29,7 +29,7 @@ func TestResolveImageStreamParamsUsesDefaults(t *testing.T) {
 
 	dir := createTestImageStreamManifests(t)
 
-	g.Expect(resolveImageStreamParams(dir)).To(Succeed())
+	g.Expect(applyParamOverrides(dir, imageStreamParamMap)).To(Succeed())
 
 	params, err := readParams(filepath.Join(dir, "params.env"))
 	g.Expect(err).NotTo(HaveOccurred())
@@ -50,7 +50,7 @@ func TestResolveImageStreamParamsEnvVarOverride(t *testing.T) {
 
 	dir := createTestImageStreamManifests(t)
 
-	g.Expect(resolveImageStreamParams(dir)).To(Succeed())
+	g.Expect(applyParamOverrides(dir, imageStreamParamMap)).To(Succeed())
 
 	params, err := readParams(filepath.Join(dir, "params.env"))
 	g.Expect(err).NotTo(HaveOccurred())
@@ -66,7 +66,7 @@ func TestResolveImageStreamParamsMissingFile(t *testing.T) {
 
 	dir := t.TempDir()
 
-	g.Expect(resolveImageStreamParams(dir)).To(Succeed())
+	g.Expect(applyParamOverrides(dir, imageStreamParamMap)).To(Succeed())
 }
 
 func createTestImageStreamManifests(t *testing.T) string {

@@ -48,6 +48,7 @@ var (
 	dynamicClient        dynamic.Interface
 	discoveryClient      discovery.DiscoveryInterface
 	testManifestsPath    string
+	testRuntimesPath     string
 	testImageStreamsPath string
 	testWorkDir          string
 )
@@ -118,6 +119,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	testRuntimesPath, err = createTestRuntimes()
+	if err != nil {
+		logf.Log.Error(err, "failed to create test runtimes")
+		os.Exit(1)
+	}
+
 	testImageStreamsPath, err = createTestImageStreams()
 	if err != nil {
 		logf.Log.Error(err, "failed to create test imagestreams")
@@ -138,6 +145,7 @@ func TestMain(m *testing.M) {
 	}
 
 	_ = os.RemoveAll(testManifestsPath)
+	_ = os.RemoveAll(testRuntimesPath)
 	_ = os.RemoveAll(testImageStreamsPath)
 	_ = os.RemoveAll(testWorkDir)
 
@@ -199,6 +207,59 @@ resources:
 
 	paramsEnv := imageParamControllerImage + "=quay.io/test/trainer:latest\n"
 	if err := os.WriteFile(filepath.Join(overlayDir, "params.env"), []byte(paramsEnv), 0o644); err != nil {
+		return "", err
+	}
+
+	return dir, nil
+}
+
+func createTestRuntimes() (string, error) {
+	dir, err := os.MkdirTemp("", "trainer-runtimes-*")
+	if err != nil {
+		return "", err
+	}
+
+	ctr := `apiVersion: trainer.kubeflow.org/v1alpha1
+kind: ClusterTrainingRuntime
+metadata:
+  name: test-runtime
+  labels:
+    trainer.kubeflow.org/framework: torch
+spec:
+  mlPolicy:
+    numNodes: 1
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: quay.io/test/cuda:latest
+`
+	if err := os.WriteFile(filepath.Join(dir, "test_runtime.yaml"), []byte(ctr), 0o644); err != nil {
+		return "", err
+	}
+
+	kustomization := `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- test_runtime.yaml
+`
+	if err := os.WriteFile(filepath.Join(dir, "kustomization.yaml"), []byte(kustomization), 0o644); err != nil {
+		return "", err
+	}
+
+	paramsEnv := `odh-training-cuda128-torch29-py312-image=quay.io/test/cuda128:latest
+odh-training-rocm64-torch29-py312-image=quay.io/test/rocm64:latest
+odh-th06-cuda130-torch210-py312-image=quay.io/test/cuda:latest
+odh-th06-rocm64-torch291-py312-image=quay.io/test/rocm:latest
+odh-th06-cpu-torch210-py312-image=quay.io/test/cpu:latest
+`
+	if err := os.WriteFile(filepath.Join(dir, "params.env"), []byte(paramsEnv), 0o644); err != nil {
 		return "", err
 	}
 

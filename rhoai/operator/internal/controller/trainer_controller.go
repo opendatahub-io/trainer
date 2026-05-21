@@ -63,6 +63,7 @@ type TrainerReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	ManifestsPath    string
+	RuntimesPath     string
 	ImageStreamsPath string
 	WorkDir          string
 	DynamicClient    dynamic.Interface
@@ -285,42 +286,47 @@ func (r *TrainerReconciler) handleMissingDependency(
 	return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
 }
 
+type resourceSet struct {
+	name             string
+	subDir           string
+	templatePath     string
+	paramMap         map[string]string
+	namespace        string
+	overlay          string
+	filterConfigMaps bool
+}
+
 func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string, clusterType cluster.ClusterType) error {
-	log := logf.FromContext(ctx)
-
-	workDir := filepath.Join(r.WorkDir, "manifests")
-
-	if err := ensureWorkDir(r.ManifestsPath, workDir); err != nil {
-		return fmt.Errorf("preparing work directory: %w", err)
+	if err := r.renderAndApplyResourceSet(ctx, resourceSet{
+		name:         "manifests",
+		subDir:       "manifests",
+		templatePath: r.ManifestsPath,
+		paramMap:     trainerImageParamMap,
+		namespace:    namespace,
+		overlay:      defaultOverlay,
+	}); err != nil {
+		return fmt.Errorf("applying Trainer manifests: %w", err)
 	}
 
-	if err := resolveImageParams(workDir); err != nil {
-		return fmt.Errorf("resolving image params: %w", err)
-	}
-
-	rendered, err := renderManifests(workDir, namespace)
-	if err != nil {
-		return fmt.Errorf("rendering manifests: %w", err)
-	}
-
-	log.Info("Applying Trainer manifests", "count", len(rendered))
-
-	if err := applyResources(ctx, r.Client, rendered); err != nil {
-		return fmt.Errorf("applying manifests: %w", err)
-	}
-
-	ctrs := buildClusterTrainingRuntimes()
-
-	log.Info("Applying ClusterTrainingRuntimes", "count", len(ctrs))
-
-	for _, ctr := range ctrs {
-		if err := r.Patch(ctx, ctr, client.Apply, fieldOwner, client.ForceOwnership); err != nil { //nolint:staticcheck // kubeflow/trainer lacks ApplyConfiguration types
-			return fmt.Errorf("applying ClusterTrainingRuntime %s: %w", ctr.Name, err)
-		}
+	if err := r.renderAndApplyResourceSet(ctx, resourceSet{
+		name:             "runtimes",
+		subDir:           "runtimes",
+		templatePath:     r.RuntimesPath,
+		paramMap:         runtimesParamMap,
+		filterConfigMaps: true,
+	}); err != nil {
+		return fmt.Errorf("applying ClusterTrainingRuntimes: %w", err)
 	}
 
 	if clusterType == cluster.ClusterTypeOpenShift {
-		if err := r.renderAndApplyImageStreams(ctx, namespace); err != nil {
+		if err := r.renderAndApplyResourceSet(ctx, resourceSet{
+			name:             "imagestreams",
+			subDir:           "imagestreams",
+			templatePath:     r.ImageStreamsPath,
+			paramMap:         imageStreamParamMap,
+			namespace:        namespace,
+			filterConfigMaps: true,
+		}); err != nil {
 			return fmt.Errorf("applying ImageStreams: %w", err)
 		}
 	}
@@ -328,28 +334,37 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 	return nil
 }
 
-func (r *TrainerReconciler) renderAndApplyImageStreams(ctx context.Context, namespace string) error {
+func (r *TrainerReconciler) renderAndApplyResourceSet(ctx context.Context, rs resourceSet) error {
 	log := logf.FromContext(ctx)
 
-	workDir := filepath.Join(r.WorkDir, "imagestreams")
+	workDir := filepath.Join(r.WorkDir, rs.subDir)
 
-	if err := ensureWorkDir(r.ImageStreamsPath, workDir); err != nil {
-		return fmt.Errorf("preparing imagestreams work directory: %w", err)
+	if err := ensureWorkDir(rs.templatePath, workDir); err != nil {
+		return fmt.Errorf("preparing %s work directory: %w", rs.name, err)
 	}
 
-	if err := resolveImageStreamParams(workDir); err != nil {
-		return fmt.Errorf("resolving imagestream params: %w", err)
+	renderPath := workDir
+	if rs.overlay != "" {
+		renderPath = filepath.Join(workDir, rs.overlay)
 	}
 
-	rendered, err := renderImageStreams(workDir, namespace)
+	if err := applyParamOverrides(renderPath, rs.paramMap); err != nil {
+		return fmt.Errorf("resolving %s params: %w", rs.name, err)
+	}
+
+	rendered, err := renderOverlay(renderPath, rs.namespace)
 	if err != nil {
-		return fmt.Errorf("rendering imagestreams: %w", err)
+		return fmt.Errorf("rendering %s: %w", rs.name, err)
 	}
 
-	log.Info("Applying ImageStreams", "count", len(rendered))
+	if rs.filterConfigMaps {
+		rendered = filterConfigMaps(rendered)
+	}
+
+	log.Info("Applying "+rs.name, "count", len(rendered))
 
 	if err := applyResources(ctx, r.Client, rendered); err != nil {
-		return fmt.Errorf("applying imagestreams: %w", err)
+		return fmt.Errorf("applying %s: %w", rs.name, err)
 	}
 
 	return nil

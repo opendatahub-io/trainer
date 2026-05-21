@@ -34,13 +34,15 @@ import (
 
 const defaultOverlay = "rhoai"
 
-func renderManifests(manifestsPath, namespace string) ([]unstructured.Unstructured, error) {
-	overlayPath := filepath.Join(manifestsPath, defaultOverlay)
-
-	rendered, err := kustomize.Render(overlayPath, nil,
+func renderOverlay(path, namespace string) ([]unstructured.Unstructured, error) {
+	opts := []kustomize.RenderOptsFn{
 		kustomize.WithLabel(labels.PlatformPartOf, trainerPartOf),
-		kustomize.WithNamespace(namespace),
-	)
+	}
+	if namespace != "" {
+		opts = append(opts, kustomize.WithNamespace(namespace))
+	}
+
+	rendered, err := kustomize.Render(path, nil, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("rendering kustomize overlay: %w", err)
 	}
@@ -48,16 +50,14 @@ func renderManifests(manifestsPath, namespace string) ([]unstructured.Unstructur
 	return rendered, nil
 }
 
-func renderImageStreams(imageStreamsPath, namespace string) ([]unstructured.Unstructured, error) {
-	rendered, err := kustomize.Render(imageStreamsPath, nil,
-		kustomize.WithLabel(labels.PlatformPartOf, trainerPartOf),
-		kustomize.WithNamespace(namespace),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("rendering imagestreams overlay: %w", err)
+func filterConfigMaps(items []unstructured.Unstructured) []unstructured.Unstructured {
+	filtered := make([]unstructured.Unstructured, 0, len(items))
+	for _, item := range items {
+		if item.GetKind() != "ConfigMap" {
+			filtered = append(filtered, item)
+		}
 	}
-
-	return rendered, nil
+	return filtered
 }
 
 const fieldOwner = client.FieldOwner("trainer-module-controller")

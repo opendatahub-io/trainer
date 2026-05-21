@@ -303,6 +303,7 @@ func newTestReconciler() *TrainerReconciler {
 		Client:           k8sClient,
 		Scheme:           k8sClient.Scheme(),
 		ManifestsPath:    testManifestsPath,
+		RuntimesPath:     testRuntimesPath,
 		ImageStreamsPath: testImageStreamsPath,
 		WorkDir:          testWorkDir,
 		DynamicClient:    dynamicClient,

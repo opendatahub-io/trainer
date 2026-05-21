@@ -1,0 +1,226 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+sortOptions:
+  order: legacy
+
+configMapGenerator:
+- name: runtimes-config
+  envs:
+    - params.env
+
+configurations:
+- params.yaml
+
+replacements:
+# torch-distributed (floating CUDA)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cuda130-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-rocm (floating ROCm)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-rocm64-torch291-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-rocm
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-cpu (floating CPU)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cpu-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-cpu
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-cuda128-torch29-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-training-cuda128-torch29-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-cuda128-torch29-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-cuda130-torch210-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cuda130-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-cuda130-torch210-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-rocm64-torch29-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-training-rocm64-torch29-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-rocm64-torch29-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-rocm64-torch291-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-rocm64-torch291-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-rocm64-torch291-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# torch-distributed-cpu-torch210-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cpu-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: torch-distributed-cpu-torch210-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub (floating CUDA)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cuda130-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub-rocm (floating ROCm)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-rocm64-torch291-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub-rocm
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub-cpu (floating CPU)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cpu-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub-cpu
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub-th05-cuda128-torch29-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-training-cuda128-torch29-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub-th05-cuda128-torch29-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub-th06-cuda130-torch210-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cuda130-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub-th06-cuda130-torch210-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub-th06-rocm64-torch291-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-rocm64-torch291-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub-th06-rocm64-torch291-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+# training-hub-th06-cpu-torch210-py312
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-th06-cpu-torch210-py312-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: training-hub-th06-cpu-torch210-py312
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
+resources:
+- torch_distributed.yaml
+- torch_distributed_rocm.yaml
+- torch_distributed_cpu.yaml
+- torch_distributed_cuda128_torch29_py312.yaml
+- torch_distributed_cuda130_torch210_py312.yaml
+- torch_distributed_rocm64_torch29_py312.yaml
+- torch_distributed_rocm64_torch291_py312.yaml
+- torch_distributed_cpu_torch210_py312.yaml
+- training_hub.yaml
+- training_hub_rocm.yaml
+- training_hub_cpu.yaml
+- training_hub_th05_cuda128_torch29_py312.yaml
+- training_hub_th06_cuda130_torch210_py312.yaml
+- training_hub_th06_rocm64_torch291_py312.yaml
+- training_hub_th06_cpu_torch210_py312.yaml

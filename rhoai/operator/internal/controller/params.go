@@ -41,13 +41,12 @@ var imageStreamParamMap = map[string]string{
 	"odh-training-universal-workbench-image-cpu-3-5":  "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU_3_5",
 }
 
-func resolveImageParams(manifestsPath string) error {
-	overlayPath := filepath.Join(manifestsPath, defaultOverlay)
-	return applyParamOverrides(overlayPath, trainerImageParamMap)
-}
-
-func resolveImageStreamParams(imageStreamsPath string) error {
-	return applyParamOverrides(imageStreamsPath, imageStreamParamMap)
+var runtimesParamMap = map[string]string{
+	"odh-training-cuda128-torch29-py312-image": "RELATED_IMAGE_ODH_TRAINING_CUDA128_TORCH29_PY312_IMAGE",
+	"odh-training-rocm64-torch29-py312-image":  "RELATED_IMAGE_ODH_TRAINING_ROCM64_TORCH29_PY312_IMAGE",
+	"odh-th06-cuda130-torch210-py312-image":    "RELATED_IMAGE_ODH_TH06_CUDA130_TORCH210_PY312_IMAGE",
+	"odh-th06-rocm64-torch291-py312-image":     "RELATED_IMAGE_ODH_TH06_ROCM64_TORCH291_PY312_IMAGE",
+	"odh-th06-cpu-torch210-py312-image":        "RELATED_IMAGE_ODH_TH06_CPU_TORCH210_PY312_IMAGE",
 }
 
 func applyParamOverrides(dir string, paramMap map[string]string) error {

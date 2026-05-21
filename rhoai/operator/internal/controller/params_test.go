@@ -53,27 +53,24 @@ func TestWriteParams(t *testing.T) {
 	g.Expect(readBack).To(Equal(params))
 }
 
-func TestResolveImageParamsOverridesFromEnv(t *testing.T) {
+func TestApplyParamOverridesFromEnv(t *testing.T) {
 	g := NewWithT(t)
 
 	dir := t.TempDir()
-	overlayDir := filepath.Join(dir, defaultOverlay)
-	g.Expect(os.MkdirAll(overlayDir, 0o755)).To(Succeed())
-
-	paramsFile := filepath.Join(overlayDir, "params.env")
+	paramsFile := filepath.Join(dir, "params.env")
 	g.Expect(os.WriteFile(paramsFile, []byte(imageParamControllerImage+"=default-image\n"), 0o644)).To(Succeed())
 
 	t.Setenv("RELATED_IMAGE_ODH_TRAINER_IMAGE", "override-image")
 
-	g.Expect(resolveImageParams(dir)).To(Succeed())
+	g.Expect(applyParamOverrides(dir, trainerImageParamMap)).To(Succeed())
 
 	params, err := readParams(paramsFile)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(params[imageParamControllerImage]).To(Equal("override-image"))
 }
 
-func TestResolveImageParamsMissingParamsEnv(t *testing.T) {
+func TestApplyParamOverridesMissingParamsEnv(t *testing.T) {
 	g := NewWithT(t)
 
-	g.Expect(resolveImageParams(t.TempDir())).To(Succeed())
+	g.Expect(applyParamOverrides(t.TempDir(), trainerImageParamMap)).To(Succeed())
 }

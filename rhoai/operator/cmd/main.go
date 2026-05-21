@@ -202,6 +202,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	const runtimesPath = "/opt/runtimes-template"
+	if fi, err := os.Stat(runtimesPath); err != nil {
+		setupLog.Error(err, "runtimes path is not accessible", "path", runtimesPath)
+		os.Exit(1)
+	} else if !fi.IsDir() {
+		setupLog.Error(errors.New("not a directory"), "runtimes path is not a directory", "path", runtimesPath)
+		os.Exit(1)
+	}
+
 	const imageStreamsPath = "/opt/imagestreams-template"
 	if fi, err := os.Stat(imageStreamsPath); err != nil {
 		setupLog.Error(err, "imagestreams path is not accessible", "path", imageStreamsPath)
@@ -233,6 +242,7 @@ func main() {
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		ManifestsPath:    manifestsPath,
+		RuntimesPath:     runtimesPath,
 		ImageStreamsPath: imageStreamsPath,
 		WorkDir:          workDir,
 		DynamicClient:    dynamicClient,
