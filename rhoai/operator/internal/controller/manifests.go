@@ -48,6 +48,18 @@ func renderManifests(manifestsPath, namespace string) ([]unstructured.Unstructur
 	return rendered, nil
 }
 
+func renderImageStreams(imageStreamsPath, namespace string) ([]unstructured.Unstructured, error) {
+	rendered, err := kustomize.Render(imageStreamsPath, nil,
+		kustomize.WithLabel(labels.PlatformPartOf, trainerPartOf),
+		kustomize.WithNamespace(namespace),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rendering imagestreams overlay: %w", err)
+	}
+
+	return rendered, nil
+}
+
 const fieldOwner = client.FieldOwner("trainer-module-controller")
 
 func applyResources(ctx context.Context, c client.Client, rendered []unstructured.Unstructured) error {

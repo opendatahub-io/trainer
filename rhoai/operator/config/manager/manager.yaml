@@ -69,7 +69,7 @@ spec:
             memory: 64Mi
         volumeMounts:
         - name: manifests-work
-          mountPath: /opt/manifests-template-work
+          mountPath: /opt/manifests-work
         - name: tmp
           mountPath: /tmp
       volumes:

@@ -202,6 +202,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	const imageStreamsPath = "/opt/imagestreams-template"
+	if fi, err := os.Stat(imageStreamsPath); err != nil {
+		setupLog.Error(err, "imagestreams path is not accessible", "path", imageStreamsPath)
+		os.Exit(1)
+	} else if !fi.IsDir() {
+		setupLog.Error(errors.New("not a directory"), "imagestreams path is not a directory", "path", imageStreamsPath)
+		os.Exit(1)
+	}
+
+	const workDir = "/opt/manifests-work"
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		setupLog.Error(err, "unable to create work directory", "path", workDir)
+		os.Exit(1)
+	}
+
 	dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		setupLog.Error(err, "unable to create dynamic client")
@@ -215,11 +230,13 @@ func main() {
 	}
 
 	if err := (&controller.TrainerReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		ManifestsPath:   manifestsPath,
-		DynamicClient:   dynamicClient,
-		DiscoveryClient: discoveryClient,
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		ManifestsPath:    manifestsPath,
+		ImageStreamsPath: imageStreamsPath,
+		WorkDir:          workDir,
+		DynamicClient:    dynamicClient,
+		DiscoveryClient:  discoveryClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Trainer")
 		os.Exit(1)

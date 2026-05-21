@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -60,10 +61,12 @@ const (
 
 type TrainerReconciler struct {
 	client.Client
-	Scheme          *runtime.Scheme
-	ManifestsPath   string
-	DynamicClient   dynamic.Interface
-	DiscoveryClient discovery.DiscoveryInterface
+	Scheme           *runtime.Scheme
+	ManifestsPath    string
+	ImageStreamsPath string
+	WorkDir          string
+	DynamicClient    dynamic.Interface
+	DiscoveryClient  discovery.DiscoveryInterface
 }
 
 // +kubebuilder:rbac:groups=components.platform.opendatahub.io,resources=trainers,verbs=get;list;watch;patch
@@ -171,7 +174,7 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
-	if err := r.renderAndApply(ctx, namespace); err != nil {
+	if err := r.renderAndApply(ctx, namespace, clusterType); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("ProvisioningFailed"), conditions.WithError(err))
 		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
@@ -282,10 +285,10 @@ func (r *TrainerReconciler) handleMissingDependency(
 	return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
 }
 
-func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string) error {
+func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string, clusterType cluster.ClusterType) error {
 	log := logf.FromContext(ctx)
 
-	workDir := r.ManifestsPath + "-work"
+	workDir := filepath.Join(r.WorkDir, "manifests")
 
 	if err := ensureWorkDir(r.ManifestsPath, workDir); err != nil {
 		return fmt.Errorf("preparing work directory: %w", err)
@@ -314,6 +317,39 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 		if err := r.Patch(ctx, ctr, client.Apply, fieldOwner, client.ForceOwnership); err != nil { //nolint:staticcheck // kubeflow/trainer lacks ApplyConfiguration types
 			return fmt.Errorf("applying ClusterTrainingRuntime %s: %w", ctr.Name, err)
 		}
+	}
+
+	if clusterType == cluster.ClusterTypeOpenShift {
+		if err := r.renderAndApplyImageStreams(ctx, namespace); err != nil {
+			return fmt.Errorf("applying ImageStreams: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (r *TrainerReconciler) renderAndApplyImageStreams(ctx context.Context, namespace string) error {
+	log := logf.FromContext(ctx)
+
+	workDir := filepath.Join(r.WorkDir, "imagestreams")
+
+	if err := ensureWorkDir(r.ImageStreamsPath, workDir); err != nil {
+		return fmt.Errorf("preparing imagestreams work directory: %w", err)
+	}
+
+	if err := resolveImageStreamParams(workDir); err != nil {
+		return fmt.Errorf("resolving imagestream params: %w", err)
+	}
+
+	rendered, err := renderImageStreams(workDir, namespace)
+	if err != nil {
+		return fmt.Errorf("rendering imagestreams: %w", err)
+	}
+
+	log.Info("Applying ImageStreams", "count", len(rendered))
+
+	if err := applyResources(ctx, r.Client, rendered); err != nil {
+		return fmt.Errorf("applying imagestreams: %w", err)
 	}
 
 	return nil

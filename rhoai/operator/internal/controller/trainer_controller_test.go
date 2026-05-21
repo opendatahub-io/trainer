@@ -300,11 +300,13 @@ func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, labels
 
 func newTestReconciler() *TrainerReconciler {
 	return &TrainerReconciler{
-		Client:          k8sClient,
-		Scheme:          k8sClient.Scheme(),
-		ManifestsPath:   testManifestsPath,
-		DynamicClient:   dynamicClient,
-		DiscoveryClient: discoveryClient,
+		Client:           k8sClient,
+		Scheme:           k8sClient.Scheme(),
+		ManifestsPath:    testManifestsPath,
+		ImageStreamsPath: testImageStreamsPath,
+		WorkDir:          testWorkDir,
+		DynamicClient:    dynamicClient,
+		DiscoveryClient:  discoveryClient,
 	}
 }
 

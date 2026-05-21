@@ -40,14 +40,16 @@ import (
 )
 
 var (
-	ctx               context.Context
-	cancel            context.CancelFunc
-	testEnv           *envtest.Environment
-	cfg               *rest.Config
-	k8sClient         client.Client
-	dynamicClient     dynamic.Interface
-	discoveryClient   discovery.DiscoveryInterface
-	testManifestsPath string
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	testEnv              *envtest.Environment
+	cfg                  *rest.Config
+	k8sClient            client.Client
+	dynamicClient        dynamic.Interface
+	discoveryClient      discovery.DiscoveryInterface
+	testManifestsPath    string
+	testImageStreamsPath string
+	testWorkDir          string
 )
 
 func TestMain(m *testing.M) {
@@ -116,6 +118,18 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	testImageStreamsPath, err = createTestImageStreams()
+	if err != nil {
+		logf.Log.Error(err, "failed to create test imagestreams")
+		os.Exit(1)
+	}
+
+	testWorkDir, err = os.MkdirTemp("", "trainer-work-*")
+	if err != nil {
+		logf.Log.Error(err, "failed to create test work dir")
+		os.Exit(1)
+	}
+
 	code := m.Run()
 
 	cancel()
@@ -124,8 +138,8 @@ func TestMain(m *testing.M) {
 	}
 
 	_ = os.RemoveAll(testManifestsPath)
-	// Also clean up the work dir created by ensureWorkDir
-	_ = os.RemoveAll(testManifestsPath + "-work")
+	_ = os.RemoveAll(testImageStreamsPath)
+	_ = os.RemoveAll(testWorkDir)
 
 	os.Exit(code)
 }
@@ -185,6 +199,26 @@ resources:
 
 	paramsEnv := imageParamControllerImage + "=quay.io/test/trainer:latest\n"
 	if err := os.WriteFile(filepath.Join(overlayDir, "params.env"), []byte(paramsEnv), 0o644); err != nil {
+		return "", err
+	}
+
+	return dir, nil
+}
+
+func createTestImageStreams() (string, error) {
+	dir, err := os.MkdirTemp("", "trainer-imagestreams-*")
+	if err != nil {
+		return "", err
+	}
+
+	paramsEnv := `odh-training-universal-workbench-image-cuda-3-4=quay.io/test/cuda:3.4
+odh-training-universal-workbench-image-rocm-3-4=quay.io/test/rocm:3.4
+odh-training-universal-workbench-image-cpu-3-4=quay.io/test/cpu:3.4
+odh-training-universal-workbench-image-cuda-3-5=quay.io/test/cuda:3.5
+odh-training-universal-workbench-image-rocm-3-5=quay.io/test/rocm:3.5
+odh-training-universal-workbench-image-cpu-3-5=quay.io/test/cpu:3.5
+`
+	if err := os.WriteFile(filepath.Join(dir, "params.env"), []byte(paramsEnv), 0o644); err != nil {
 		return "", err
 	}
 

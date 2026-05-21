@@ -22,6 +22,7 @@ FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 WORKDIR /
 COPY --from=builder /workspace/manager .
 COPY --from=builder /workspace/opt/manifests/ /opt/manifests-template/
+COPY manifests/imagestreams/ /opt/imagestreams-template/
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

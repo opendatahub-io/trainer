@@ -32,9 +32,26 @@ var trainerImageParamMap = map[string]string{
 	imageParamControllerImage: "RELATED_IMAGE_ODH_TRAINER_IMAGE",
 }
 
+var imageStreamParamMap = map[string]string{
+	"odh-training-universal-workbench-image-cuda-3-4": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CUDA",
+	"odh-training-universal-workbench-image-rocm-3-4": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_ROCM",
+	"odh-training-universal-workbench-image-cpu-3-4":  "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU",
+	"odh-training-universal-workbench-image-cuda-3-5": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CUDA_3_5",
+	"odh-training-universal-workbench-image-rocm-3-5": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_ROCM_3_5",
+	"odh-training-universal-workbench-image-cpu-3-5":  "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU_3_5",
+}
+
 func resolveImageParams(manifestsPath string) error {
 	overlayPath := filepath.Join(manifestsPath, defaultOverlay)
-	paramsPath := filepath.Join(overlayPath, "params.env")
+	return applyParamOverrides(overlayPath, trainerImageParamMap)
+}
+
+func resolveImageStreamParams(imageStreamsPath string) error {
+	return applyParamOverrides(imageStreamsPath, imageStreamParamMap)
+}
+
+func applyParamOverrides(dir string, paramMap map[string]string) error {
+	paramsPath := filepath.Join(dir, "params.env")
 
 	if _, err := os.Stat(paramsPath); err != nil {
 		if os.IsNotExist(err) {
@@ -48,7 +65,7 @@ func resolveImageParams(manifestsPath string) error {
 		return fmt.Errorf("reading params.env: %w", err)
 	}
 
-	for key, envVar := range trainerImageParamMap {
+	for key, envVar := range paramMap {
 		if val := os.Getenv(envVar); val != "" {
 			params[key] = val
 		}
