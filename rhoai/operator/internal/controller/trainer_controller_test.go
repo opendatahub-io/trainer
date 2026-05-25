@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 
 	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 )
@@ -250,7 +252,7 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 	trGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "trainingruntimes"}
 	trGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: "TrainingRuntime"}
 
-	labeledCTR := newUnstructured(ctrGVK, "labeled-ctr", "", map[string]string{"platform.opendatahub.io/part-of": trainerPartOf})
+	labeledCTR := newUnstructured(ctrGVK, "labeled-ctr", "", map[string]string{labels.PlatformPartOf: trainerPartOf})
 	_, err := dynamicClient.Resource(ctrGVR).Create(ctx, labeledCTR, metav1.CreateOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -262,7 +264,7 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 	t.Cleanup(func() { _ = k8sClient.Delete(ctx, ns) })
 
-	labeledTR := newUnstructured(trGVK, "labeled-tr", "tr-test-ns", map[string]string{"platform.opendatahub.io/part-of": trainerPartOf})
+	labeledTR := newUnstructured(trGVK, "labeled-tr", "tr-test-ns", map[string]string{labels.PlatformPartOf: trainerPartOf})
 	_, err = dynamicClient.Resource(trGVR).Namespace("tr-test-ns").Create(ctx, labeledTR, metav1.CreateOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -285,15 +287,165 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 	g.Expect(errors.IsNotFound(err)).To(BeTrue(), "labeled TrainingRuntime should be deleted")
 }
 
-func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, labels map[string]string) *unstructured.Unstructured {
+func TestGetComponentReleases(t *testing.T) {
+	g := NewWithT(t)
+
+	reconciler := newTestReconciler()
+
+	releases, err := reconciler.getComponentReleases()
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(releases).NotTo(BeEmpty())
+
+	t.Logf("Parsed release: Name=%q, Version=%q, RepoURL=%q",
+		releases[0].Name, releases[0].Version, releases[0].RepoURL)
+
+	g.Expect(releases[0].Name).To(Equal("Kubeflow Trainer"))
+	g.Expect(releases[0].Version).To(Equal("2.1.0"))
+	g.Expect(releases[0].RepoURL).NotTo(BeEmpty(), "RepoURL should not be empty")
+}
+
+func TestReconcileManagedPopulatesReleases(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetCRDName,
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "jobset.x-k8s.io",
+			Scope: apiextensionsv1.NamespaceScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   "JobSet",
+				Plural: "jobsets",
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    jobSetVersion,
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: testCRDSchemaType,
+						},
+					},
+				},
+			},
+		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{
+					Type:   apiextensionsv1.Established,
+					Status: apiextensionsv1.ConditionTrue,
+				},
+			},
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, jobSetCRD)).To(Succeed())
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, jobSetCRD)
+	})
+
+	trainer := &componentsv1alpha1.Trainer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testTrainerName,
+		},
+		Spec: componentsv1alpha1.TrainerSpec{
+			ManagementState: common.Managed,
+			AppNamespace:    testTrainerNamespace,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
+	t.Cleanup(func() {
+		cleanupTrainer(ctx)
+		cleanupNamespace(ctx, testTrainerNamespace)
+	})
+
+	reconciler := newTestReconciler()
+
+	_, err := reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated := getTrainer(ctx, g)
+	g.Expect(updated.Status.Releases).NotTo(BeEmpty(), "Releases array should be populated")
+	g.Expect(updated.Status.Releases[0].Name).To(Equal("Kubeflow Trainer"))
+	g.Expect(updated.Status.Releases[0].Version).To(Equal("2.1.0"))
+	g.Expect(updated.Status.Releases[0].RepoURL).To(Equal("https://github.com/kubeflow/trainer"))
+}
+
+func TestDeploymentHealthCheckFailure(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	reconciler := newTestReconciler()
+	testNS := "deployment-health-test"
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "trainer-controller",
+			Namespace: testNS,
+			Labels: map[string]string{
+				"platform.opendatahub.io/part-of": trainerPartOf,
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": trainerPartOf},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": trainerPartOf},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: trainerPartOf, Image: trainerPartOf + ":latest"},
+					},
+				},
+			},
+		},
+		Status: appsv1.DeploymentStatus{
+			Replicas:      1,
+			ReadyReplicas: 0,
+		},
+	}
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testNS,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+	t.Cleanup(func() {
+		cleanupNamespace(ctx, testNS)
+	})
+
+	g.Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, deployment)
+	})
+
+	err := reconciler.checkDeploymentHealth(ctx, testNS)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("0/1 deployments ready"))
+}
+
+func int32Ptr(i int32) *int32 {
+	return &i
+}
+
+func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, objLabels map[string]string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(gvk)
 	obj.SetName(name)
 	if namespace != "" {
 		obj.SetNamespace(namespace)
 	}
-	if labels != nil {
-		obj.SetLabels(labels)
+	if objLabels != nil {
+		obj.SetLabels(objLabels)
 	}
 	return obj
 }

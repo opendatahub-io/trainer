@@ -210,6 +210,15 @@ resources:
 		return "", err
 	}
 
+	componentMetadata := `releases:
+  - name: Kubeflow Trainer
+    version: "2.1.0"
+    repoUrl: https://github.com/kubeflow/trainer
+`
+	if err := os.WriteFile(filepath.Join(dir, "component_metadata.yaml"), []byte(componentMetadata), 0o644); err != nil {
+		return "", err
+	}
+
 	return dir, nil
 }
 

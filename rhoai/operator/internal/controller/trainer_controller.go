@@ -20,9 +20,12 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
+	"gopkg.in/yaml.v3"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,6 +61,16 @@ const (
 	// dependencyCheckInterval is how often to recheck for missing dependencies
 	dependencyCheckInterval = 60 * time.Second
 )
+
+type componentRelease struct {
+	Name    string `yaml:"name"`
+	Version string `yaml:"version"`
+	RepoURL string `yaml:"repoUrl"`
+}
+
+type componentMetadata struct {
+	Releases []componentRelease `yaml:"releases"`
+}
 
 type TrainerReconciler struct {
 	client.Client
@@ -180,6 +193,11 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
+	if err := r.checkDeploymentHealth(ctx, namespace); err != nil {
+		cm.MarkFalse(provisioningCondition, conditions.WithReason("DeploymentNotReady"), conditions.WithError(err))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
+	}
+
 	cm.MarkTrue(provisioningCondition, conditions.WithReason("Provisioned"), conditions.WithMessage("Trainer resources provisioned successfully"))
 
 	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseReady)
@@ -258,6 +276,45 @@ func (r *TrainerReconciler) checkKubernetesDependencies(ctx context.Context, tra
 	}
 
 	return ctrl.Result{}, false
+}
+
+func (r *TrainerReconciler) checkDeploymentHealth(ctx context.Context, namespace string) error {
+	log := logf.FromContext(ctx)
+
+	deployments := &appsv1.DeploymentList{}
+	err := r.List(
+		ctx,
+		deployments,
+		client.InNamespace(namespace),
+		client.MatchingLabels{labels.PlatformPartOf: trainerPartOf},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to list deployments: %w", err)
+	}
+
+	if len(deployments.Items) == 0 {
+		log.V(1).Info("No deployments found yet", "label", fmt.Sprintf("%s=%s", labels.PlatformPartOf, trainerPartOf))
+		return nil
+	}
+
+	ready := 0
+	var notReadyDeployments []string
+	for _, deployment := range deployments.Items {
+		if deployment.Status.ReadyReplicas == deployment.Status.Replicas && deployment.Status.Replicas != 0 {
+			ready++
+		} else {
+			log.Info("Deployment not ready", "name", deployment.Name, "namespace", deployment.Namespace,
+				"readyReplicas", deployment.Status.ReadyReplicas, "replicas", deployment.Status.Replicas)
+			notReadyDeployments = append(notReadyDeployments, deployment.Namespace+"/"+deployment.Name)
+		}
+	}
+
+	if ready != len(deployments.Items) {
+		return fmt.Errorf("%d/%d deployments ready: %v", ready, len(deployments.Items), notReadyDeployments)
+	}
+
+	log.V(1).Info("All deployments are ready", "count", len(deployments.Items))
+	return nil
 }
 
 // --- Helpers ---
@@ -469,9 +526,43 @@ func (r *TrainerReconciler) ensureNamespace(ctx context.Context, name string) er
 	return nil
 }
 
+func (r *TrainerReconciler) getComponentReleases() ([]common.ComponentRelease, error) {
+	metadataPath := filepath.Join(r.ManifestsPath, "component_metadata.yaml")
+
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading component metadata: %w", err)
+	}
+
+	var metadata componentMetadata
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("parsing component metadata: %w", err)
+	}
+
+	releases := make([]common.ComponentRelease, len(metadata.Releases))
+	for i, r := range metadata.Releases {
+		releases[i] = common.ComponentRelease{
+			Name:    r.Name,
+			Version: r.Version,
+			RepoURL: r.RepoURL,
+		}
+	}
+
+	return releases, nil
+}
+
 func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *componentsv1alpha1.Trainer, phase common.Phase) error {
+	log := logf.FromContext(ctx)
+
 	trainer.Status.Phase = phase
 	trainer.Status.ObservedGeneration = trainer.Generation
+
+	releases, err := r.getComponentReleases()
+	if err != nil {
+		log.V(1).Info("Failed to read component releases", "error", err)
+	} else {
+		trainer.Status.Releases = releases
+	}
 
 	return r.Status().Update(ctx, trainer)
 }

@@ -54,6 +54,8 @@ func TestControllerPodRunning(t *testing.T) {
 
 const (
 	trainerNamespace = "opendatahub"
+	trainerPartOf    = "trainer"
+	platformPartOf   = "platform.opendatahub.io/part-of"
 
 	jobSetCRDName      = "jobsets.jobset.x-k8s.io"
 	jobSetVersion      = "v1alpha2"
@@ -81,15 +83,15 @@ func TestTrainerReconciliation(t *testing.T) {
 
 	ns, err := k8sClient.CoreV1().Namespaces().Get(ctx, trainerNamespace, metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred(), "Trainer namespace should exist")
-	g.Expect(ns.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", "trainer"))
+	g.Expect(ns.Labels).To(HaveKeyWithValue(platformPartOf, trainerPartOf))
 
 	deployments, err := k8sClient.AppsV1().Deployments(trainerNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "platform.opendatahub.io/part-of=trainer",
+		LabelSelector: platformPartOf + "=" + trainerPartOf,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(deployments.Items).NotTo(BeEmpty(), "Expected at least one Trainer deployment")
 
-	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, "platform.opendatahub.io/part-of=trainer")
+	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
 
