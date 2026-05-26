@@ -22,45 +22,18 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const serviceAccountName = "odh-trainer-operator-controller-manager"
 const metricsServiceName = "odh-trainer-operator-controller-manager-metrics-service"
-const metricsRoleBindingName = "odh-trainer-operator-metrics-binding"
 
 func TestMetricsEndpoint(t *testing.T) {
 	g := NewWithT(t)
 	k8sClient.RegisterDebugCleanup(t, ctx, namespace, "curl-metrics")
 
-	crb := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: metricsRoleBindingName,
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     "odh-trainer-operator-metrics-reader",
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      serviceAccountName,
-				Namespace: namespace,
-			},
-		},
-	}
-	_, err := k8sClient.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{})
-	g.Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
-
-	_, err = k8sClient.CoreV1().Services(namespace).Get(ctx, metricsServiceName, metav1.GetOptions{})
+	_, err := k8sClient.CoreV1().Services(namespace).Get(ctx, metricsServiceName, metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
-
-	token := serviceAccountToken(t)
-	g.Expect(token).NotTo(BeEmpty())
 
 	verifyMetricsEndpointReady := func(g Gomega) {
 		endpoints, err := k8sClient.CoreV1().Endpoints(namespace).Get(ctx, metricsServiceName, metav1.GetOptions{})
@@ -71,7 +44,7 @@ func TestMetricsEndpoint(t *testing.T) {
 				continue
 			}
 			for _, port := range subset.Ports {
-				if port.Port == 8443 {
+				if port.Port == 8080 {
 					found = true
 				}
 			}
@@ -97,8 +70,7 @@ func TestMetricsEndpoint(t *testing.T) {
 			Namespace: namespace,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy:      corev1.RestartPolicyNever,
-			ServiceAccountName: serviceAccountName,
+			RestartPolicy: corev1.RestartPolicyNever,
 			Containers: []corev1.Container{
 				{
 					Name:    "curl",
@@ -106,8 +78,8 @@ func TestMetricsEndpoint(t *testing.T) {
 					Command: []string{"/bin/sh", "-c"},
 					Args: []string{
 						fmt.Sprintf(
-							"curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics",
-							token, metricsServiceName, namespace,
+							"curl -v http://%s.%s.svc.cluster.local:8080/metrics",
+							metricsServiceName, namespace,
 						),
 					},
 					SecurityContext: &corev1.SecurityContext{
@@ -147,26 +119,6 @@ func TestMetricsEndpoint(t *testing.T) {
 	g.Expect(metricsOutput).To(ContainSubstring(
 		"controller_runtime_reconcile_total",
 	))
-}
-
-func serviceAccountToken(t *testing.T) string {
-	t.Helper()
-	g := NewWithT(t)
-
-	var out string
-	verifyTokenCreation := func(g Gomega) {
-		tokenReq, err := k8sClient.CoreV1().ServiceAccounts(namespace).CreateToken(
-			ctx,
-			serviceAccountName,
-			&authenticationv1.TokenRequest{},
-			metav1.CreateOptions{},
-		)
-		g.Expect(err).NotTo(HaveOccurred())
-		out = tokenReq.Status.Token
-	}
-	g.Eventually(verifyTokenCreation).Should(Succeed())
-
-	return out
 }
 
 func getMetricsOutput(t *testing.T) string {
