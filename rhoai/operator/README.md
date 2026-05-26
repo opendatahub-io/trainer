@@ -1,122 +1,115 @@
-# odh-trainer-operator
-// TODO(user): Add simple overview of use/purpose
+# trainer-operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Standalone operator for Kubeflow Trainer v2. Reconciles the `Trainer` CR (`components.platform.opendatahub.io/v1alpha1`) and deploys upstream Kubeflow Trainer resources via kustomize rendering from [opendatahub-io/trainer](https://github.com/opendatahub-io/trainer) manifests.
 
-## Getting Started
+## Architecture
+
+### Manifest Pipeline
+
+1. **Build time:** `hack/get_trainer_manifests.sh` fetches upstream manifests into `opt/manifests/`
+2. **Dockerfile:** copies manifests into the container at `/opt/manifests-template/`
+3. **Runtime:** copies to a writable work dir, applies `RELATED_IMAGE` env var overrides to `params.env`, renders `rhoai/` overlay via kustomize, applies with Server-Side Apply
+
+### Reconcile Flow
+
+- **Managed**: ensure finalizer → ensure namespace → render manifests → SSA apply → update status (Ready)
+- **Removed**: ensure finalizer → GC cleanup (label-based discovery) → update status (NotReady)
+- **Deleted**: GC cleanup → remove finalizer → CR deleted
+
+### Platform Utilities
+
+The controller uses shared utilities from [opendatahub-io/odh-platform-utilities](https://github.com/opendatahub-io/odh-platform-utilities):
+- `api/common` — PlatformObject interface, ManagementSpec, Status, Condition types
+- `pkg/controller/conditions` — Condition Manager with happiness recomputation
+- `pkg/controller/gc` — GC Collector for label-based resource cleanup via discovery API
+- `pkg/render/kustomize` — Kustomize manifest rendering
+- `pkg/resources` — Server-Side Apply
+
+## Structure
+
+```
+api/v1alpha1/        CRD types implementing common.PlatformObject
+internal/controller/ Reconciler, manifest rendering, params.env handling
+cmd/main.go          Operator entrypoint
+config/              Kustomize manifests (CRDs, RBAC, manager deployment, samples)
+hack/                Manifest collection script (get_trainer_manifests.sh)
+manifests/           Training runtimes and ImageStream definitions
+test/e2e/            End-to-end tests
+test/support/        Shared test client
+test/utils/          Shell command utilities
+```
+
+## Development
 
 ### Prerequisites
-- go version v1.24.0+
-- podman (or docker via `CONTAINER_TOOL=docker`)
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Go 1.25+
+- Podman (or Docker via `CONTAINER_TOOL=docker`)
+- kubectl v1.28+
+- Access to a Kubernetes v1.28+ cluster
 
-```sh
+### Common Commands
+
+```bash
+make manifests        # Generate CRDs and RBAC from markers
+make generate         # Generate DeepCopy methods
+make fmt              # Format code
+make vet              # Vet code
+make lint             # Run linter
+make test             # Run unit tests (envtest)
+make build            # Build the operator binary
+make run              # Run operator locally against cluster
+make docker-build     # Build container image (uses podman by default)
+make install          # Install CRDs into cluster
+make deploy IMG=<img> # Deploy operator to cluster
+```
+
+### Running Tests
+
+Unit tests (controller tests with envtest):
+```bash
+make test
+```
+
+E2E tests (requires running cluster with operator deployed):
+```bash
+make test-e2e
+```
+
+### Deploy to Cluster
+
+```bash
 make docker-build docker-push IMG=<some-registry>/odh-trainer-operator:tag
-```
-
-**NOTE:** Podman is used by default. To use Docker instead, set `CONTAINER_TOOL=docker`.
-This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
-
-```sh
 make install
-```
-
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
-```sh
 make deploy IMG=<some-registry>/odh-trainer-operator:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+### Uninstall
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
+```bash
 kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
 make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
 make undeploy
 ```
 
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/odh-trainer-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/odh-trainer-operator/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-operator-sdk edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
+### CRD Changes
 
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+1. Edit `api/v1alpha1/trainer_types.go`
+2. Run `make manifests generate` to regenerate CRDs and DeepCopy methods
+3. Update controller logic in `internal/controller/trainer_controller.go`
+
+### RBAC
+
+RBAC rules are derived from `// +kubebuilder:rbac:` markers in the controller. After adding new markers, run `make manifests` to regenerate.
+
+The controller SA must hold all permissions that upstream trainer ClusterRoles grant — Kubernetes RBAC escalation prevention blocks creating a ClusterRole with permissions the creator doesn't already have.
+
+### Before Committing
+
+Run `make lint` after any code changes.
 
 ## License
 
@@ -133,4 +126,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
