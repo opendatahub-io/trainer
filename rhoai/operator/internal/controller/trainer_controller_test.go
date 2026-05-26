@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -43,50 +45,16 @@ const (
 	testTrainerName      = "default-trainer"
 	testTrainerNamespace = "test-trainer-ns"
 	testCRDSchemaType    = "object"
+	testConfigMapName    = "trainer-test-config"
+	testAppLabel         = "app"
+	testJobSetPlural     = "jobsets"
 )
 
 func TestReconcileManaged(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
 
-	// Create JobSet CRD to satisfy CRD dependency check
-	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: jobSetCRDName,
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "jobset.x-k8s.io",
-			Scope: apiextensionsv1.NamespaceScoped,
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:   "JobSet",
-				Plural: "jobsets",
-			},
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-				{
-					Name:    jobSetVersion,
-					Served:  true,
-					Storage: true,
-					Schema: &apiextensionsv1.CustomResourceValidation{
-						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: testCRDSchemaType,
-						},
-					},
-				},
-			},
-		},
-		Status: apiextensionsv1.CustomResourceDefinitionStatus{
-			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
-				{
-					Type:   apiextensionsv1.Established,
-					Status: apiextensionsv1.ConditionTrue,
-				},
-			},
-		},
-	}
-	g.Expect(k8sClient.Create(ctx, jobSetCRD)).To(Succeed())
-	t.Cleanup(func() {
-		_ = k8sClient.Delete(ctx, jobSetCRD)
-	})
+	createJobSetCRD(ctx, t, g)
 
 	trainer := &componentsv1alpha1.Trainer{
 		ObjectMeta: metav1.ObjectMeta{
@@ -132,7 +100,7 @@ func TestReconcileManaged(t *testing.T) {
 	g.Expect(ns.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", trainerPartOf))
 
 	cm := &corev1.ConfigMap{}
-	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "trainer-test-config", Namespace: testTrainerNamespace}, cm)).To(Succeed())
+	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testConfigMapName, Namespace: testTrainerNamespace}, cm)).To(Succeed())
 	g.Expect(cm.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", trainerPartOf))
 }
 
@@ -308,43 +276,7 @@ func TestReconcileManagedPopulatesReleases(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
 
-	jobSetCRD := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: jobSetCRDName,
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "jobset.x-k8s.io",
-			Scope: apiextensionsv1.NamespaceScoped,
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:   "JobSet",
-				Plural: "jobsets",
-			},
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-				{
-					Name:    jobSetVersion,
-					Served:  true,
-					Storage: true,
-					Schema: &apiextensionsv1.CustomResourceValidation{
-						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: testCRDSchemaType,
-						},
-					},
-				},
-			},
-		},
-		Status: apiextensionsv1.CustomResourceDefinitionStatus{
-			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
-				{
-					Type:   apiextensionsv1.Established,
-					Status: apiextensionsv1.ConditionTrue,
-				},
-			},
-		},
-	}
-	g.Expect(k8sClient.Create(ctx, jobSetCRD)).To(Succeed())
-	t.Cleanup(func() {
-		_ = k8sClient.Delete(ctx, jobSetCRD)
-	})
+	createJobSetCRD(ctx, t, g)
 
 	trainer := &componentsv1alpha1.Trainer{
 		ObjectMeta: metav1.ObjectMeta{
@@ -376,6 +308,128 @@ func TestReconcileManagedPopulatesReleases(t *testing.T) {
 	g.Expect(updated.Status.Releases[0].RepoURL).To(Equal("https://github.com/kubeflow/trainer"))
 }
 
+func TestReconcileManagedToRemovedToManaged(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	createJobSetCRD(ctx, t, g)
+
+	lifecycleNS := "lifecycle-test-ns"
+	trainer := &componentsv1alpha1.Trainer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testTrainerName,
+		},
+		Spec: componentsv1alpha1.TrainerSpec{
+			ManagementState: common.Managed,
+			AppNamespace:    lifecycleNS,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
+	t.Cleanup(func() {
+		cleanupTrainer(ctx)
+		cleanupNamespace(ctx, lifecycleNS)
+	})
+
+	reconciler := newTestReconciler()
+
+	// Reach Ready state (tested in detail by TestReconcileManaged)
+	_, err := reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(getTrainer(ctx, g).Status.Phase).To(Equal(common.PhaseReady))
+
+	// Transition to Removed
+	updated := getTrainer(ctx, g)
+	updated.Spec.ManagementState = common.Removed
+	g.Expect(k8sClient.Update(ctx, updated)).To(Succeed())
+
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(getTrainer(ctx, g).Status.Phase).To(Equal(common.PhaseNotReady))
+
+	// Transition back to Managed — resources must be re-provisioned
+	updated = getTrainer(ctx, g)
+	updated.Spec.ManagementState = common.Managed
+	g.Expect(k8sClient.Update(ctx, updated)).To(Succeed())
+
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated = getTrainer(ctx, g)
+	g.Expect(updated.Status.Phase).To(Equal(common.PhaseReady))
+
+	cm := &corev1.ConfigMap{}
+	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testConfigMapName, Namespace: lifecycleNS}, cm)).To(Succeed())
+}
+
+func TestDeploymentHealthCheckSuccess(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	reconciler := newTestReconciler()
+	testNS := "deployment-health-success-test"
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+	}
+	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+	t.Cleanup(func() { cleanupNamespace(ctx, testNS) })
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "trainer-controller",
+			Namespace: testNS,
+			Labels: map[string]string{
+				"platform.opendatahub.io/part-of": trainerPartOf,
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{testAppLabel: trainerPartOf},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{testAppLabel: trainerPartOf},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: trainerPartOf, Image: trainerPartOf + ":latest"},
+					},
+				},
+			},
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, deployment) })
+
+	deployment.Status = appsv1.DeploymentStatus{
+		Replicas:      1,
+		ReadyReplicas: 1,
+	}
+	g.Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+	err := reconciler.checkDeploymentHealth(ctx, testNS)
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestEnsureNamespaceAlreadyExists(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	testNS := "preexisting-ns"
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+	}
+	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+	t.Cleanup(func() { cleanupNamespace(ctx, testNS) })
+
+	reconciler := newTestReconciler()
+	err := reconciler.ensureNamespace(ctx, testNS)
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
 func TestDeploymentHealthCheckFailure(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
@@ -394,11 +448,11 @@ func TestDeploymentHealthCheckFailure(t *testing.T) {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(1),
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"app": trainerPartOf},
+				MatchLabels: map[string]string{testAppLabel: trainerPartOf},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": trainerPartOf},
+					Labels: map[string]string{testAppLabel: trainerPartOf},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -498,4 +552,57 @@ func cleanupNamespace(ctx context.Context, name string) {
 	if err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, ns); err == nil {
 		_ = k8sClient.Delete(ctx, ns)
 	}
+}
+
+func createJobSetCRD(ctx context.Context, t *testing.T, g Gomega) {
+	t.Helper()
+
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: jobSetCRDName,
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: jobSetGroup,
+			Scope: apiextensionsv1.NamespaceScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   jobSetKind,
+				Plural: testJobSetPlural,
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    jobSetVersion,
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: testCRDSchemaType,
+						},
+					},
+				},
+			},
+		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{
+					Type:   apiextensionsv1.Established,
+					Status: apiextensionsv1.ConditionTrue,
+				},
+			},
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, crd)).To(Succeed())
+	t.Cleanup(func() {
+		deleteJobSetCRDAndWait(ctx)
+	})
+}
+
+func deleteJobSetCRDAndWait(ctx context.Context) {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: jobSetCRDName}, crd); err == nil {
+		_ = k8sClient.Delete(ctx, crd)
+	}
+	_ = wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: jobSetCRDName}, &apiextensionsv1.CustomResourceDefinition{})
+		return errors.IsNotFound(err), nil
+	})
 }

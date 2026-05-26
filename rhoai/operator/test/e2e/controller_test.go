@@ -25,6 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+
+	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
 )
 
 func TestControllerPodRunning(t *testing.T) {
@@ -64,7 +66,7 @@ const (
 	crdOpenAPI = "object"
 )
 
-func TestTrainerReconciliation(t *testing.T) {
+func TestTrainerModuleLifecycle(t *testing.T) {
 	g := NewWithT(t)
 	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
 
@@ -74,12 +76,26 @@ func TestTrainerReconciliation(t *testing.T) {
 		_ = k8sClient.DeleteTrainer(ctx)
 	})
 
-	verifyTrainerReconciled := func(g Gomega) {
+	// Phase 1: Managed → Ready
+	verifyManagedReady := func(g Gomega) {
 		trainer, err := k8sClient.GetTrainer(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(trainer.Status.ObservedGeneration).To(Equal(trainer.Generation))
+		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseReady))
+
+		readyCond := findCondition(trainer, common.ConditionTypeReady)
+		g.Expect(readyCond).NotTo(BeNil())
+		g.Expect(readyCond.Status).To(Equal(metav1.ConditionTrue))
+
+		provCond := findCondition(trainer, common.ConditionTypeProvisioningSucceeded)
+		g.Expect(provCond).NotTo(BeNil())
+		g.Expect(provCond.Status).To(Equal(metav1.ConditionTrue))
+		g.Expect(provCond.Reason).To(Equal("Provisioned"))
+
+		g.Expect(trainer.Status.Releases).NotTo(BeEmpty())
+		g.Expect(trainer.Status.Releases[0].Name).To(Equal("Kubeflow Trainer"))
 	}
-	g.Eventually(verifyTrainerReconciled).Should(Succeed())
+	g.Eventually(verifyManagedReady).Should(Succeed())
 
 	ns, err := k8sClient.CoreV1().Namespaces().Get(ctx, trainerNamespace, metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred(), "Trainer namespace should exist")
@@ -90,11 +106,63 @@ func TestTrainerReconciliation(t *testing.T) {
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(deployments.Items).NotTo(BeEmpty(), "Expected at least one Trainer deployment")
+	for _, d := range deployments.Items {
+		g.Expect(d.Status.ReadyReplicas).To(Equal(d.Status.Replicas),
+			"Deployment %s should have all replicas ready", d.Name)
+	}
 
 	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
 
+	// Phase 2: Managed → Removed
+	err = k8sClient.UpdateTrainerManagementState(ctx, common.Removed)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to update Trainer to Removed")
+
+	verifyRemoved := func(g Gomega) {
+		trainer, err := k8sClient.GetTrainer(ctx)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseNotReady))
+
+		provCond := findCondition(trainer, common.ConditionTypeProvisioningSucceeded)
+		g.Expect(provCond).NotTo(BeNil())
+		g.Expect(provCond.Status).To(Equal(metav1.ConditionFalse))
+		g.Expect(provCond.Reason).To(Equal("Removed"))
+	}
+	g.Eventually(verifyRemoved).Should(Succeed())
+
+	verifyResourcesCleanedUp := func(g Gomega) {
+		deps, err := k8sClient.ListDeployments(ctx, trainerNamespace, platformPartOf+"="+trainerPartOf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(deps).To(BeEmpty(), "Deployments should be cleaned up after Removed")
+
+		ctrs, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(ctrs).To(BeEmpty(), "ClusterTrainingRuntimes should be cleaned up after Removed")
+	}
+	g.Eventually(verifyResourcesCleanedUp).Should(Succeed())
+
+	// Phase 3: Removed → Managed (re-provisioning)
+	err = k8sClient.UpdateTrainerManagementState(ctx, common.Managed)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to update Trainer back to Managed")
+
+	g.Eventually(verifyManagedReady).Should(Succeed())
+
+	deployments, err = k8sClient.AppsV1().Deployments(trainerNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: platformPartOf + "=" + trainerPartOf,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(deployments.Items).NotTo(BeEmpty(), "Deployments should be re-created after Managed")
+	for _, d := range deployments.Items {
+		g.Expect(d.Status.ReadyReplicas).To(Equal(d.Status.Replicas),
+			"Deployment %s should have all replicas ready after re-provisioning", d.Name)
+	}
+
+	ctrNames, err = k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ctrNames).NotTo(BeEmpty(), "ClusterTrainingRuntimes should be re-created after Managed")
+
+	// Phase 4: Delete
 	err = k8sClient.DeleteTrainer(ctx)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to delete Trainer CR")
 
@@ -111,5 +179,14 @@ func TestTrainerReconciliation(t *testing.T) {
 // create a TrainJob referencing torch-distributed-cpu to trigger the
 // resource-in-use finalizer, then delete the Trainer CR and verify it completes
 // without being blocked by the stuck CTR.
+
+func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *common.Condition {
+	for i := range trainer.Status.Conditions {
+		if trainer.Status.Conditions[i].Type == string(condType) {
+			return &trainer.Status.Conditions[i]
+		}
+	}
+	return nil
+}
 
 // +kubebuilder:scaffold:e2e-webhooks-checks

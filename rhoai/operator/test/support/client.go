@@ -204,6 +204,30 @@ func (c *Client) ListClusterTrainingRuntimes(ctx context.Context, labelSelector 
 	return names, nil
 }
 
+func (c *Client) UpdateTrainerManagementState(ctx context.Context, state common.ManagementState) error {
+	trainer, err := c.GetTrainer(ctx)
+	if err != nil {
+		return err
+	}
+	trainer.Spec.ManagementState = state
+	return c.CRClient.Update(ctx, trainer)
+}
+
+func (c *Client) ListDeployments(ctx context.Context, namespace, labelSelector string) ([]string, error) {
+	deployments, err := c.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, d := range deployments.Items {
+		names = append(names, d.Name)
+	}
+	return names, nil
+}
+
 func (c *Client) DeleteTrainer(ctx context.Context) error {
 	trainer := &componentsv1alpha1.Trainer{
 		ObjectMeta: metav1.ObjectMeta{
