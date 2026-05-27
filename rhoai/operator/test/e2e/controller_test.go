@@ -26,7 +26,7 @@ import (
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 
-	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
 )
 
 func TestControllerPodRunning(t *testing.T) {

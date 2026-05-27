@@ -1,4 +1,4 @@
-module github.com/hrathina/odh-trainer-operator
+module github.com/opendatahub-io/trainer-operator
 
 go 1.25.7
 

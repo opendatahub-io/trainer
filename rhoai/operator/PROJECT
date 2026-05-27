@@ -9,7 +9,7 @@ plugins:
   manifests.sdk.operatorframework.io/v2: {}
   scorecard.sdk.operatorframework.io/v2: {}
 projectName: odh-trainer-operator
-repo: github.com/hrathina/odh-trainer-operator
+repo: github.com/opendatahub-io/trainer-operator
 resources:
 - api:
     crdVersion: v1
@@ -18,6 +18,6 @@ resources:
   domain: platform.opendatahub.io
   group: components
   kind: Trainer
-  path: github.com/hrathina/odh-trainer-operator/api/v1alpha1
+  path: github.com/opendatahub-io/trainer-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

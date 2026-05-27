@@ -38,8 +38,8 @@ import (
 
 	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 
-	componentsv1alpha1 "github.com/hrathina/odh-trainer-operator/api/v1alpha1"
-	"github.com/hrathina/odh-trainer-operator/internal/controller"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
+	"github.com/opendatahub-io/trainer-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

@@ -30,8 +30,8 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/hrathina/odh-trainer-operator/test/support"
-	"github.com/hrathina/odh-trainer-operator/test/utils"
+	"github.com/opendatahub-io/trainer-operator/test/support"
+	"github.com/opendatahub-io/trainer-operator/test/utils"
 )
 
 var (
