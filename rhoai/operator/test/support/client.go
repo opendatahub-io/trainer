@@ -27,7 +27,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -189,6 +191,12 @@ var clusterTrainingRuntimeGVR = schema.GroupVersionResource{
 	Resource: "clustertrainingruntimes",
 }
 
+var trainJobGVR = schema.GroupVersionResource{
+	Group:    trainerKubeflowAPI,
+	Version:  trainerAPIVersion,
+	Resource: "trainjobs",
+}
+
 func (c *Client) ListClusterTrainingRuntimes(ctx context.Context, labelSelector string) ([]string, error) {
 	list, err := c.DynamicClient.Resource(clusterTrainingRuntimeGVR).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
@@ -235,4 +243,35 @@ func (c *Client) DeleteTrainer(ctx context.Context) error {
 		},
 	}
 	return client.IgnoreNotFound(c.CRClient.Delete(ctx, trainer))
+}
+
+func (c *Client) GetClusterTrainingRuntime(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	return c.DynamicClient.Resource(clusterTrainingRuntimeGVR).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *Client) CreateTrainJob(ctx context.Context, name, namespace, runtimeName string) error {
+	trainJob := &unstructured.Unstructured{}
+	trainJob.SetUnstructuredContent(map[string]any{
+		"apiVersion": trainerKubeflowAPI + "/" + trainerAPIVersion,
+		"kind":       "TrainJob",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			"runtimeRef": map[string]any{
+				"name": runtimeName,
+			},
+		},
+	})
+	_, err := c.DynamicClient.Resource(trainJobGVR).Namespace(namespace).Create(ctx, trainJob, metav1.CreateOptions{})
+	return err
+}
+
+func (c *Client) DeleteTrainJob(ctx context.Context, name, namespace string) error {
+	err := c.DynamicClient.Resource(trainJobGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }

@@ -17,12 +17,15 @@ limitations under the License.
 package e2e
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 
@@ -173,12 +176,87 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g.Eventually(verifyTrainerDeleted).Should(Succeed())
 }
 
-// TODO: Convert to OpenShift e2e test. On Kind the upstream trainer controller
-// can't start without webhook certs (no service serving cert annotation), so
-// the validating webhook blocks CTR updates. On OpenShift, deploy Trainer CR,
-// create a TrainJob referencing torch-distributed-cpu to trigger the
-// resource-in-use finalizer, then delete the Trainer CR and verify it completes
-// without being blocked by the stuck CTR.
+func TestTrainerDeletionWithResourceInUseFinalizer(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
+
+	const (
+		resourceInUseFinalizer = "trainer.kubeflow.org/resource-in-use"
+		testTrainJobName       = "test-trainjob"
+		targetCTR              = "torch-distributed-cpu"
+	)
+
+	err := k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
+
+	t.Cleanup(func() {
+		_ = k8sClient.DeleteTrainer(ctx)
+		_ = k8sClient.DeleteTrainJob(ctx, testTrainJobName, trainerNamespace)
+		ctr, err := k8sClient.GetClusterTrainingRuntime(ctx, targetCTR)
+		if err == nil {
+			finalizers := ctr.GetFinalizers()
+			var filtered []string
+			for _, f := range finalizers {
+				if f != resourceInUseFinalizer {
+					filtered = append(filtered, f)
+				}
+			}
+			patch, _ := json.Marshal(map[string]any{
+				"metadata": map[string]any{"finalizers": filtered},
+			})
+			ctrGVR := schema.GroupVersionResource{
+				Group: "trainer.kubeflow.org", Version: "v1alpha1", Resource: "clustertrainingruntimes",
+			}
+			_, _ = k8sClient.DynamicClient.Resource(ctrGVR).
+				Patch(ctx, targetCTR, types.MergePatchType, patch, metav1.PatchOptions{})
+		}
+	})
+
+	verifyManagedReady := func(g Gomega) {
+		trainer, err := k8sClient.GetTrainer(ctx)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseReady))
+	}
+	g.Eventually(verifyManagedReady).Should(Succeed())
+
+	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
+
+	err = k8sClient.CreateTrainJob(ctx, testTrainJobName, trainerNamespace, targetCTR)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create TrainJob")
+
+	verifyFinalizerAdded := func(g Gomega) {
+		ctr, err := k8sClient.GetClusterTrainingRuntime(ctx, targetCTR)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(ctr.GetFinalizers()).To(ContainElement(resourceInUseFinalizer),
+			"CTR should have resource-in-use finalizer after TrainJob is created")
+	}
+	g.Eventually(verifyFinalizerAdded).Should(Succeed())
+
+	err = k8sClient.DeleteTrainer(ctx)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to delete Trainer CR")
+
+	verifyTrainerDeleted := func(g Gomega) {
+		_, err := k8sClient.GetTrainer(ctx)
+		g.Expect(errors.IsNotFound(err)).To(BeTrue(), "Trainer CR should be deleted")
+	}
+	g.Eventually(verifyTrainerDeleted).Should(Succeed())
+
+	verifyOtherCTRsDeleted := func(g Gomega) {
+		names, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(names).To(ConsistOf(targetCTR),
+			"Only the CTR with resource-in-use finalizer should remain")
+	}
+	g.Eventually(verifyOtherCTRsDeleted).Should(Succeed())
+
+	ctr, err := k8sClient.GetClusterTrainingRuntime(ctx, targetCTR)
+	g.Expect(err).NotTo(HaveOccurred(), "CTR with resource-in-use finalizer should still exist")
+	g.Expect(ctr.GetDeletionTimestamp()).NotTo(BeNil(), "CTR should be marked for deletion")
+	g.Expect(ctr.GetFinalizers()).To(ContainElement(resourceInUseFinalizer),
+		"CTR should still have resource-in-use finalizer")
+}
 
 func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *common.Condition {
 	for i := range trainer.Status.Conditions {
