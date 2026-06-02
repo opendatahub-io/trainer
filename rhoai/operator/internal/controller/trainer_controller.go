@@ -42,6 +42,7 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/conditions"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/gc"
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/predicates"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 
 	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
@@ -118,6 +119,9 @@ func (r *TrainerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&componentsv1alpha1.Trainer{}).
 		Named("trainer").
+		// Only reconcile when generation changes (spec updates) to avoid
+		// unnecessary reconciliations on status-only updates
+		WithEventFilter(predicates.GenerationChangedPredicate{}).
 		Complete(r)
 }
 
