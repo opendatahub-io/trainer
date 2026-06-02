@@ -12,6 +12,7 @@ Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reco
 - `manifests/runtimes/` - ClusterTrainingRuntime definitions (torch, training-hub)
 - `manifests/imagestreams/` - ImageStream definitions (CUDA, ROCm, CPU training images)
 - `test/e2e/` - End-to-end tests (Kind cluster)
+- `test/e2e/ocp/` - End-to-end tests (OCP/real cluster)
 - `test/support/` - Shared test client (`Client` wrapping `kubernetes.Interface`)
 - `test/utils/` - Shell command utilities (make, kind, cert-manager)
 

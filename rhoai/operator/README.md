@@ -36,6 +36,7 @@ hack/                   Manifest collection script (get_trainer_manifests.sh)
 manifests/runtimes/     ClusterTrainingRuntime definitions (torch, training-hub)
 manifests/imagestreams/ ImageStream definitions (CUDA, ROCm, CPU training images)
 test/e2e/               End-to-end tests (Kind cluster)
+test/e2e/ocp/           End-to-end tests (OCP/real cluster)
 test/support/           Shared test client (Client wrapping kubernetes.Interface)
 test/utils/             Shell command utilities (make, kind, cert-manager)
 ```
@@ -84,6 +85,11 @@ The Kind cluster can also be managed separately:
 ```bash
 make setup-test-e2e     # Create Kind cluster
 make cleanup-test-e2e   # Tear down Kind cluster
+```
+
+OCP e2e tests (requires a cluster with the operator and JobSet controller deployed):
+```bash
+make test-e2e-ocp
 ```
 
 ### Deploy to Cluster

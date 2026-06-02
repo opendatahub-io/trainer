@@ -28,6 +28,11 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Increase inotify limits
+        run: |
+          sudo sysctl fs.inotify.max_user_instances=1024
+          sudo sysctl fs.inotify.max_user_watches=1048576
+
       - name: Running Test e2e
         run: |
           go mod tidy

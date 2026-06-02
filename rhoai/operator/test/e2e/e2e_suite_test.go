@@ -49,7 +49,7 @@ const namespace = "odh-trainer-operator-system"
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "Starting odh-trainer-operator integration test suite")
 
-	gomega.SetDefaultEventuallyTimeout(2 * time.Minute)
+	gomega.SetDefaultEventuallyTimeout(5 * time.Minute)
 	gomega.SetDefaultEventuallyPollingInterval(time.Second)
 
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))

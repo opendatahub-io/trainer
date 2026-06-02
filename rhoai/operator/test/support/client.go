@@ -47,6 +47,7 @@ const (
 	trainerCRName      = "default-trainer"
 	trainerKubeflowAPI = "trainer.kubeflow.org"
 	trainerAPIVersion  = "v1alpha1"
+	fieldName          = "name"
 )
 
 type Client struct {
@@ -197,6 +198,12 @@ var trainJobGVR = schema.GroupVersionResource{
 	Resource: "trainjobs",
 }
 
+var jobSetGVR = schema.GroupVersionResource{
+	Group:    "jobset.x-k8s.io",
+	Version:  "v1alpha2",
+	Resource: "jobsets",
+}
+
 func (c *Client) ListClusterTrainingRuntimes(ctx context.Context, labelSelector string) ([]string, error) {
 	list, err := c.DynamicClient.Resource(clusterTrainingRuntimeGVR).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
@@ -255,17 +262,65 @@ func (c *Client) CreateTrainJob(ctx context.Context, name, namespace, runtimeNam
 		"apiVersion": trainerKubeflowAPI + "/" + trainerAPIVersion,
 		"kind":       "TrainJob",
 		"metadata": map[string]any{
-			"name":      name,
+			fieldName:   name,
 			"namespace": namespace,
 		},
 		"spec": map[string]any{
 			"runtimeRef": map[string]any{
-				"name": runtimeName,
+				fieldName: runtimeName,
 			},
 		},
 	})
 	_, err := c.DynamicClient.Resource(trainJobGVR).Namespace(namespace).Create(ctx, trainJob, metav1.CreateOptions{})
 	return err
+}
+
+func (c *Client) CreateTrainJobWithCommand(
+	ctx context.Context,
+	name, namespace, runtimeName string,
+	command []string,
+) error {
+	cmd := make([]any, len(command))
+	for i, c := range command {
+		cmd[i] = c
+	}
+	trainJob := &unstructured.Unstructured{}
+	trainJob.SetUnstructuredContent(map[string]any{
+		"apiVersion": trainerKubeflowAPI + "/" + trainerAPIVersion,
+		"kind":       "TrainJob",
+		"metadata": map[string]any{
+			fieldName:   name,
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			"runtimeRef": map[string]any{
+				fieldName: runtimeName,
+			},
+			"trainer": map[string]any{
+				"command": cmd,
+			},
+		},
+	})
+	_, err := c.DynamicClient.Resource(trainJobGVR).Namespace(namespace).
+		Create(ctx, trainJob, metav1.CreateOptions{})
+	return err
+}
+
+func (c *Client) GetTrainJob(ctx context.Context, name, namespace string) (*unstructured.Unstructured, error) {
+	return c.DynamicClient.Resource(trainJobGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *Client) ListJobSets(ctx context.Context, namespace string) ([]string, error) {
+	list, err := c.DynamicClient.Resource(jobSetGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, item := range list.Items {
+		names = append(names, item.GetName())
+	}
+	return names, nil
 }
 
 func (c *Client) DeleteTrainJob(ctx context.Context, name, namespace string) error {

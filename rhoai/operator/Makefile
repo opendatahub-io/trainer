@@ -124,6 +124,15 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
 	}
+	@if [ -r /proc/sys/fs/inotify/max_user_instances ]; then \
+		instances=$$(cat /proc/sys/fs/inotify/max_user_instances); \
+		if [ "$$instances" -lt 512 ]; then \
+			echo "ERROR: fs.inotify.max_user_instances=$$instances is too low (need >= 512)."; \
+			echo "The upstream trainer controller will crash with 'too many open files'."; \
+			echo "Fix: sudo sysctl fs.inotify.max_user_instances=1024"; \
+			exit 1; \
+		fi; \
+	fi
 	@case "$$($(KIND) get clusters)" in \
 		*"$(KIND_CLUSTER)"*) \
 			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
@@ -136,6 +145,10 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -timeout 30m
 	$(MAKE) cleanup-test-e2e
+
+.PHONY: test-e2e-ocp
+test-e2e-ocp: ## Run e2e tests against an existing cluster with the operator deployed.
+	go test ./test/e2e/ocp/ -v -timeout 30m
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
