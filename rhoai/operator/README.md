@@ -6,9 +6,9 @@ Standalone operator for Kubeflow Trainer v2. Reconciles the `Trainer` CR (`compo
 
 ### Manifest Pipeline
 
-1. **Build time:** `hack/get_trainer_manifests.sh` fetches upstream manifests into `opt/manifests/`
-2. **Dockerfile:** copies manifests into the container at `/opt/manifests-template/`
-3. **Runtime:** copies to a writable work dir, applies `RELATED_IMAGE` env var overrides to `params.env`, renders `rhoai/` overlay via kustomize, applies with Server-Side Apply
+1. **Build time:** `hack/get_trainer_manifests.sh` fetches upstream trainer manifests into `opt/manifests/`
+2. **Dockerfile:** copies upstream manifests into `/opt/manifests-template/`, runtimes into `/opt/runtimes-template/`, and imagestreams into `/opt/imagestreams-template/`
+3. **Runtime:** copies templates to a writable work dir, applies `RELATED_IMAGE` env var overrides to `params.env`, renders the kustomize overlay, applies with Server-Side Apply
 
 ### Reconcile Flow
 
@@ -28,15 +28,16 @@ The controller uses shared utilities from [opendatahub-io/odh-platform-utilities
 ## Structure
 
 ```
-api/v1alpha1/        CRD types implementing common.PlatformObject
-internal/controller/ Reconciler, manifest rendering, params.env handling
-cmd/main.go          Operator entrypoint
-config/              Kustomize manifests (CRDs, RBAC, manager deployment, samples)
-hack/                Manifest collection script (get_trainer_manifests.sh)
-manifests/           Training runtimes and ImageStream definitions
-test/e2e/            End-to-end tests
-test/support/        Shared test client
-test/utils/          Shell command utilities
+api/v1alpha1/           CRD types implementing common.PlatformObject
+internal/controller/    Reconciler, manifest rendering, params.env handling
+cmd/main.go             Operator entrypoint
+config/                 Kustomize manifests (CRDs, RBAC, manager deployment, samples)
+hack/                   Manifest collection script (get_trainer_manifests.sh)
+manifests/runtimes/     ClusterTrainingRuntime definitions (torch, training-hub)
+manifests/imagestreams/ ImageStream definitions (CUDA, ROCm, CPU training images)
+test/e2e/               End-to-end tests (Kind cluster)
+test/support/           Shared test client (Client wrapping kubernetes.Interface)
+test/utils/             Shell command utilities (make, kind, cert-manager)
 ```
 
 ## Development
@@ -51,18 +52,21 @@ test/utils/          Shell command utilities
 ### Common Commands
 
 ```bash
-make manifests        # Generate CRDs and RBAC from markers
-make generate         # Generate DeepCopy methods
-make fmt              # Format code
-make vet              # Vet code
-make lint             # Run linter
-make test             # Run unit tests (envtest)
-make build            # Build the operator binary
-make run              # Run operator locally against cluster
-make docker-build     # Build container image (uses podman by default)
-make install          # Install CRDs into cluster
-make deploy IMG=<img> # Deploy operator to cluster
+make manifests          # Generate CRDs and RBAC from markers
+make generate           # Generate DeepCopy methods
+make fmt                # Format code
+make vet                # Vet code
+make lint               # Run linter
+make lint-fix           # Run linter and auto-fix issues
+make test               # Run unit tests (envtest)
+make build              # Build the operator binary
+make run                # Run operator locally against cluster
+make docker-build       # Build container image (uses podman by default)
+make install            # Install CRDs into cluster
+make deploy IMG=<img>   # Deploy operator to cluster
 ```
+
+To use Docker instead of Podman, set `CONTAINER_TOOL=docker`.
 
 ### Running Tests
 
@@ -71,9 +75,15 @@ Unit tests (controller tests with envtest):
 make test
 ```
 
-E2E tests (requires running cluster with operator deployed):
+E2E tests (creates a Kind cluster, deploys the operator, runs tests, tears down):
 ```bash
 make test-e2e
+```
+
+The Kind cluster can also be managed separately:
+```bash
+make setup-test-e2e     # Create Kind cluster
+make cleanup-test-e2e   # Tear down Kind cluster
 ```
 
 ### Deploy to Cluster

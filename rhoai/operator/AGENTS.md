@@ -9,7 +9,9 @@ Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reco
 - `cmd/main.go` - Operator entrypoint
 - `config/` - Kustomize manifests (CRDs, RBAC, manager deployment, samples)
 - `hack/` - Manifest collection script (`get_trainer_manifests.sh`)
-- `test/e2e/` - End-to-end tests
+- `manifests/runtimes/` - ClusterTrainingRuntime definitions (torch, training-hub)
+- `manifests/imagestreams/` - ImageStream definitions (CUDA, ROCm, CPU training images)
+- `test/e2e/` - End-to-end tests (Kind cluster)
 - `test/support/` - Shared test client (`Client` wrapping `kubernetes.Interface`)
 - `test/utils/` - Shell command utilities (make, kind, cert-manager)
 
@@ -37,8 +39,8 @@ The controller uses shared utilities from `opendatahub-io/odh-platform-utilities
 ### Manifest Pipeline
 
 1. Build time: `get_trainer_manifests.sh` fetches upstream manifests into `opt/manifests/`
-2. Dockerfile: copies into container at `/opt/manifests-template/`
-3. Runtime: copies to writable work dir, applies RELATED_IMAGE env var overrides to params.env, renders `rhoai/` overlay via kustomize, applies with SSA
+2. Dockerfile: copies upstream manifests into `/opt/manifests-template/`, runtimes into `/opt/runtimes-template/`, imagestreams into `/opt/imagestreams-template/`
+3. Runtime: copies templates to writable work dir, applies RELATED_IMAGE env var overrides to params.env, renders kustomize overlay, applies with SSA
 
 ### Reconcile Flow
 
@@ -52,7 +54,7 @@ The controller uses shared utilities from `opendatahub-io/odh-platform-utilities
 
 - Go 1.25+
 - Podman (or Docker via `CONTAINER_TOOL=docker`)
-- kubectl v1.11.3+
+- kubectl v1.28+
 
 ### Common Commands
 
@@ -77,7 +79,7 @@ Unit tests (controller tests with envtest):
 make test
 ```
 
-E2E tests (requires running cluster with operator deployed):
+E2E tests (creates a Kind cluster, deploys the operator, runs tests, tears down):
 ```bash
 make test-e2e
 ```
