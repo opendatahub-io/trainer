@@ -223,7 +223,7 @@ replacements:
     fieldPaths:
     - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
 
-# Replace image for training-hub-universal-cpu ImageStream (2026.1)
+# Replace image for training-hub-universal-cpu ImageStream (3.4)
 - source:
     kind: ConfigMap
     name: rhoai-config
@@ -238,7 +238,7 @@ replacements:
     fieldPaths:
     - spec.tags.0.from.name
 
-# Replace image for training-hub-universal-cuda ImageStream (2026.1)
+# Replace image for training-hub-universal-cuda ImageStream (3.4)
 - source:
     kind: ConfigMap
     name: rhoai-config
@@ -253,7 +253,7 @@ replacements:
     fieldPaths:
     - spec.tags.0.from.name
 
-# Replace image for training-hub-universal-rocm ImageStream (2026.1)
+# Replace image for training-hub-universal-rocm ImageStream (3.4)
 - source:
     kind: ConfigMap
     name: rhoai-config
@@ -268,7 +268,7 @@ replacements:
     fieldPaths:
     - spec.tags.0.from.name
 
-# Replace image for training-hub-universal-cpu ImageStream (2026.2)
+# Replace image for training-hub-universal-cpu ImageStream (3.5)
 - source:
     kind: ConfigMap
     name: rhoai-config
@@ -283,7 +283,7 @@ replacements:
     fieldPaths:
     - spec.tags.1.from.name
 
-# Replace image for training-hub-universal-cuda ImageStream (2026.2)
+# Replace image for training-hub-universal-cuda ImageStream (3.5)
 - source:
     kind: ConfigMap
     name: rhoai-config
@@ -298,7 +298,7 @@ replacements:
     fieldPaths:
     - spec.tags.1.from.name
 
-# Replace image for training-hub-universal-rocm ImageStream (2026.2)
+# Replace image for training-hub-universal-rocm ImageStream (3.5)
 - source:
     kind: ConfigMap
     name: rhoai-config
