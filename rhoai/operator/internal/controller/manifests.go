@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/annotations"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/render/kustomize"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/resources"
@@ -34,7 +35,7 @@ import (
 
 const defaultOverlay = "rhoai"
 
-func renderOverlay(path, namespace string) ([]unstructured.Unstructured, error) {
+func renderOverlay(path, namespace, trainerName string) ([]unstructured.Unstructured, error) {
 	opts := []kustomize.RenderOptsFn{
 		kustomize.WithLabel(labels.PlatformPartOf, trainerPartOf),
 	}
@@ -45,6 +46,17 @@ func renderOverlay(path, namespace string) ([]unstructured.Unstructured, error) 
 	rendered, err := kustomize.Render(path, nil, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("rendering kustomize overlay: %w", err)
+	}
+
+	// Stamp instance annotations for drift correction via cluster.EnqueueOwner()
+	for i := range rendered {
+		annots := rendered[i].GetAnnotations()
+		if annots == nil {
+			annots = make(map[string]string)
+		}
+		annots[annotations.InstanceName] = trainerName
+		annots[annotations.InstanceNamespace] = "" // Trainer is cluster-scoped
+		rendered[i].SetAnnotations(annots)
 	}
 
 	return rendered, nil

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -34,8 +35,10 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
@@ -58,6 +61,7 @@ const (
 
 	trainerKubeflowGroup   = "trainer.kubeflow.org"
 	trainerKubeflowVersion = "v1alpha1"
+	clusterTrainingRuntime = "ClusterTrainingRuntime"
 
 	// dependencyCheckInterval is how often to recheck for missing dependencies
 	dependencyCheckInterval = 60 * time.Second
@@ -115,13 +119,45 @@ type TrainerReconciler struct {
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=jobsetoperators,verbs=get;list
 
 func (r *TrainerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// TODO(RHOAIENG-62940): add Watches for downstream resources to detect drift
+	// Label selector to filter only Trainer-managed resources
+	selector := metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			labels.PlatformPartOf: trainerPartOf,
+		},
+	}
+	labelSelector, err := metav1.LabelSelectorAsSelector(&selector)
+	if err != nil {
+		return fmt.Errorf("failed to create label selector: %w", err)
+	}
+	managedResourcePredicate := predicates.LabelSelectorPredicate{
+		Selector: labelSelector,
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&componentsv1alpha1.Trainer{}).
+		For(&componentsv1alpha1.Trainer{}, builder.WithPredicates(predicates.GenerationChangedPredicate{})).
 		Named("trainer").
-		// Only reconcile when generation changes (spec updates) to avoid
-		// unnecessary reconciliations on status-only updates
-		WithEventFilter(predicates.GenerationChangedPredicate{}).
+		// Watch downstream namespaced resources for drift correction
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(cluster.EnqueueOwner()),
+			builder.WithPredicates(managedResourcePredicate),
+		).
+		Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(cluster.EnqueueOwner()),
+			builder.WithPredicates(managedResourcePredicate),
+		).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(cluster.EnqueueOwner()),
+			builder.WithPredicates(managedResourcePredicate),
+		).
+		// Watch ValidatingWebhookConfiguration (cluster-scoped)
+		Watches(
+			&admissionv1.ValidatingWebhookConfiguration{},
+			handler.EnqueueRequestsFromMapFunc(cluster.EnqueueOwner()),
+			builder.WithPredicates(managedResourcePredicate),
+		).
 		Complete(r)
 }
 
@@ -192,7 +228,7 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
 
-	if err := r.renderAndApply(ctx, namespace, clusterType); err != nil {
+	if err := r.renderAndApply(ctx, trainer.Name, namespace, clusterType); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("ProvisioningFailed"), conditions.WithError(err))
 		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
 	}
@@ -357,8 +393,8 @@ type resourceSet struct {
 	filterConfigMaps bool
 }
 
-func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string, clusterType cluster.ClusterType) error {
-	if err := r.renderAndApplyResourceSet(ctx, resourceSet{
+func (r *TrainerReconciler) renderAndApply(ctx context.Context, trainerName, namespace string, clusterType cluster.ClusterType) error {
+	if err := r.renderAndApplyResourceSet(ctx, trainerName, resourceSet{
 		name:         "manifests",
 		subDir:       "manifests",
 		templatePath: r.ManifestsPath,
@@ -369,7 +405,7 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 		return fmt.Errorf("applying Trainer manifests: %w", err)
 	}
 
-	if err := r.renderAndApplyResourceSet(ctx, resourceSet{
+	if err := r.renderAndApplyResourceSet(ctx, trainerName, resourceSet{
 		name:             "runtimes",
 		subDir:           "runtimes",
 		templatePath:     r.RuntimesPath,
@@ -380,7 +416,7 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 	}
 
 	if clusterType == cluster.ClusterTypeOpenShift {
-		if err := r.renderAndApplyResourceSet(ctx, resourceSet{
+		if err := r.renderAndApplyResourceSet(ctx, trainerName, resourceSet{
 			name:             "imagestreams",
 			subDir:           "imagestreams",
 			templatePath:     r.ImageStreamsPath,
@@ -395,7 +431,7 @@ func (r *TrainerReconciler) renderAndApply(ctx context.Context, namespace string
 	return nil
 }
 
-func (r *TrainerReconciler) renderAndApplyResourceSet(ctx context.Context, rs resourceSet) error {
+func (r *TrainerReconciler) renderAndApplyResourceSet(ctx context.Context, trainerName string, rs resourceSet) error {
 	log := logf.FromContext(ctx)
 
 	workDir := filepath.Join(r.WorkDir, rs.subDir)
@@ -413,7 +449,7 @@ func (r *TrainerReconciler) renderAndApplyResourceSet(ctx context.Context, rs re
 		return fmt.Errorf("resolving %s params: %w", rs.name, err)
 	}
 
-	rendered, err := renderOverlay(renderPath, rs.namespace)
+	rendered, err := renderOverlay(renderPath, rs.namespace, trainerName)
 	if err != nil {
 		return fmt.Errorf("rendering %s: %w", rs.name, err)
 	}
