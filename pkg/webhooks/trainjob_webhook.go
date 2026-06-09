@@ -76,3 +76,4 @@ func (w *TrainJobWebhook) ValidateUpdate(ctx context.Context, oldObj apiruntime.
 func (w *TrainJobWebhook) ValidateDelete(context.Context, apiruntime.Object) (admission.Warnings, error) {
 	return nil, nil
 }
+
