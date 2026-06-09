@@ -46,28 +46,8 @@ components:
         name: kubeflow-trainer-config
         namespace: opendatahub
 
-      # Public ConfigMap advertises the trainer version to SDK clients.
-      - apiVersion: v1
-        kind: ConfigMap
-        name: kubeflow-trainer-public
-        namespace: opendatahub
-
-      - apiVersion: rbac.authorization.k8s.io/v1
-        kind: Role
-        name: kubeflow-trainer-public
-        namespace: opendatahub
-
-      - apiVersion: rbac.authorization.k8s.io/v1
-        kind: RoleBinding
-        name: kubeflow-trainer-public
-        namespace: opendatahub
-
       # Webhook configurations — same binary serves both controller and webhooks.
       # failurePolicy: Fail means any downtime here blocks TrainJob admission.
-      - apiVersion: admissionregistration.k8s.io/v1
-        kind: MutatingWebhookConfiguration
-        name: mutating-webhook-configuration
-
       - apiVersion: admissionregistration.k8s.io/v1
         kind: ValidatingWebhookConfiguration
         name: validating-webhook-configuration
