@@ -1,0 +1,190 @@
+name: Operator Chaos
+
+on:
+  pull_request:
+    paths:
+      - "pkg/apis/trainer/v1alpha1/**"
+      - "pkg/controller/**"
+      - "pkg/runtime/**"
+      - "manifests/base/crds/**"
+      - "manifests/base/rbac/**"
+      - "manifests/base/webhook/**"
+      - "manifests/rhoai/**"
+      - "chaos/knowledge/**"
+      - ".github/workflows/operator-chaos.yml"
+
+env:
+  OPERATOR_CHAOS_VERSION: "9e6ac9668b9aaca2f0f2ddf169867862b7925b80"
+
+jobs:
+  operator-chaos:
+    name: Operator Chaos
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # operator-chaos requires go >= 1.25; repo go.mod targets 1.24.
+          # Pin explicitly to avoid GOTOOLCHAIN auto-download in CI.
+          go-version: "1.25"
+
+      - name: Install operator-chaos
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/bin"
+          GOBIN="${RUNNER_TEMP}/bin" go install "github.com/opendatahub-io/operator-chaos/cmd/operator-chaos@${OPERATOR_CHAOS_VERSION}"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Verify operator-chaos binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v operator-chaos &>/dev/null; then
+            echo "operator-chaos binary not found in PATH after install."
+            exit 1
+          fi
+          operator-chaos version
+
+      - name: Checkout base branch assets
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-branch
+          persist-credentials: false
+          sparse-checkout: |
+            chaos/knowledge
+            manifests/base/crds/trainer.kubeflow.org_trainjobs.yaml
+            manifests/base/crds/trainer.kubeflow.org_trainingruntimes.yaml
+            manifests/base/crds/trainer.kubeflow.org_clustertrainingruntimes.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Reject symlinks in base-branch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          symlinks=$(find base-branch/chaos/knowledge base-branch/manifests/base/crds \
+            -type l 2>/dev/null || true)
+          if [[ -n "${symlinks}" ]]; then
+            echo "Symlinks detected in base-branch checkout — aborting to prevent path traversal:"
+            echo "${symlinks}"
+            exit 1
+          fi
+
+      - name: Validate knowledge model
+        shell: bash
+        run: |
+          set -euo pipefail
+          operator-chaos validate --knowledge "chaos/knowledge/trainer.yaml"
+
+      - name: Run local preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          operator-chaos preflight --knowledge "chaos/knowledge/trainer.yaml" --local
+
+      - name: Diff knowledge model
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_knowledge_file="base-branch/chaos/knowledge/trainer.yaml"
+          if [[ ! -f "${base_knowledge_file}" ]]; then
+            echo "No base knowledge model found; skipping knowledge diff for bootstrap PR."
+            exit 0
+          fi
+
+          output_dir="${RUNNER_TEMP}/operator-chaos"
+          mkdir -p "${output_dir}"
+          knowledge_diff_json="${output_dir}/knowledge-diff.json"
+
+          operator-chaos diff \
+            --source "base-branch/chaos/knowledge" \
+            --target "chaos/knowledge" \
+            --breaking \
+            --format json > "${knowledge_diff_json}"
+          operator-chaos diff \
+            --source "base-branch/chaos/knowledge" \
+            --target "chaos/knowledge" \
+            --breaking
+
+          knowledge_breaking=$(jq -r '.summary.breakingChanges // 0' "${knowledge_diff_json}")
+          if (( knowledge_breaking > 0 )); then
+            echo "operator-chaos detected ${knowledge_breaking} breaking knowledge change(s)."
+            exit 1
+          fi
+
+      - name: Diff CRD schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_dir="${RUNNER_TEMP}/operator-chaos"
+          mkdir -p "${output_dir}"
+          total_breaking=0
+
+          for crd_name in \
+            "trainer.kubeflow.org_trainjobs.yaml" \
+            "trainer.kubeflow.org_trainingruntimes.yaml" \
+            "trainer.kubeflow.org_clustertrainingruntimes.yaml"; do
+
+            source_crd="base-branch/manifests/base/crds/${crd_name}"
+            target_crd="manifests/base/crds/${crd_name}"
+
+            if [[ ! -f "${source_crd}" || ! -f "${target_crd}" ]]; then
+              echo "Skipping ${crd_name}: not present in base or PR branch (bootstrap PR)."
+              continue
+            fi
+
+            source_dir="${output_dir}/${crd_name}-source"
+            target_dir="${output_dir}/${crd_name}-target"
+            crd_diff_json="${output_dir}/${crd_name}-diff.json"
+            rm -rf "${source_dir}" "${target_dir}"
+            mkdir -p "${source_dir}" "${target_dir}"
+            cp "${source_crd}" "${source_dir}/"
+            cp "${target_crd}" "${target_dir}/"
+
+            operator-chaos diff-crds \
+              --source-crds "${source_dir}" \
+              --target-crds "${target_dir}" \
+              --format json > "${crd_diff_json}"
+            operator-chaos diff-crds \
+              --source-crds "${source_dir}" \
+              --target-crds "${target_dir}"
+
+            crd_breaking=$(jq -r '
+              reduce ((.crds // [])[]?.apiVersions[]?.schemaChanges[]?) as $change
+              (0; if ($change.severity | ascii_downcase) == "breaking" then . + 1 else . end)
+            ' "${crd_diff_json}")
+
+            if (( crd_breaking > 0 )); then
+              echo "operator-chaos detected ${crd_breaking} breaking schema change(s) in ${crd_name}."
+              total_breaking=$(( total_breaking + crd_breaking ))
+            fi
+          done
+
+          if (( total_breaking > 0 )); then
+            echo "Total breaking CRD schema changes across all 3 CRDs: ${total_breaking}"
+            exit 1
+          fi
+
+      - name: Preview upgrade simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_knowledge_file="base-branch/chaos/knowledge/trainer.yaml"
+          if [[ ! -f "${base_knowledge_file}" ]]; then
+            echo "No base knowledge model found; skipping simulate-upgrade for bootstrap PR."
+            exit 0
+          fi
+
+          operator-chaos simulate-upgrade \
+            --source "base-branch/chaos/knowledge" \
+            --target "chaos/knowledge" \
+            --dry-run
