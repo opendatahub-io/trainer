@@ -73,6 +73,14 @@ make install          # Install CRDs into cluster
 make deploy IMG=<img> # Deploy operator to cluster
 ```
 
+### Single-File / Single-Package Checks
+
+```bash
+golangci-lint run ./internal/controller/...  # Lint a single package
+go vet ./internal/controller/...             # Vet a single package
+go build ./internal/controller/...           # Compile-check a single package
+```
+
 ### Running Tests
 
 Unit tests (controller tests with envtest):

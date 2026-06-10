@@ -5,6 +5,7 @@ linters:
   default: none
   enable:
     - copyloopvar
+    - depguard
     - dupl
     - errcheck
     - ginkgolinter
@@ -22,6 +23,20 @@ linters:
     - unparam
     - unused
   settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: "io/ioutil"
+              desc: "Deprecated: use os and io packages directly"
+            - pkg: "github.com/pkg/errors"
+              desc: "Use fmt.Errorf with %w or errors.Join from stdlib"
+        test-only:
+          files:
+            - "!**_test.go"
+          deny:
+            - pkg: "github.com/opendatahub-io/trainer-operator/test"
+              desc: "Test support packages must not be imported from production code"
     revive:
       rules:
         - name: comment-spacings
