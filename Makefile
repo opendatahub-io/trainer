@@ -167,7 +167,7 @@ vet: ## Run go vet against the code.
 # TODO(robell): re-enable golangci-lint-kal once we've pulled in upstream v2.2.
 # golangci-lint: golangci-lint-install golangci-lint-kal ## Run golangci-lint to verify Go files.
 golangci-lint: golangci-lint-install
-	golangci-lint run --timeout 5m --go 1.24 ./...
+	golangci-lint run --timeout 5m --go 1.25 ./...
 	#$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml #
 
 # Instructions to run tests.
