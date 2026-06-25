@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATHS\" | grep -q '\\.go$'; then gofmt -w $CLAUDE_FILE_PATHS; fi"
+          },
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATHS\" | grep -q '\\.py$'; then black --quiet $CLAUDE_FILE_PATHS 2>/dev/null; fi"
+          },
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATHS\" | grep -q '\\.rs$'; then cargo fmt --manifest-path pkg/data_cache/Cargo.toml 2>/dev/null; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
