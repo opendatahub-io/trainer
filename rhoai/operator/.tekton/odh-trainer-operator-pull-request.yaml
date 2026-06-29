@@ -27,8 +27,8 @@ spec:
   - name: dockerfile
     value: Dockerfile
   - name: path-context
-    value: ./
-  # additional params
+    value: .
+  #add these additional params
   - name: additional-tags
     value:
     - 'odh-pr-{{revision}}'
