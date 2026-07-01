@@ -1,0 +1,65 @@
+name: Sync Trainer Manifests
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Trainer ref to sync (branch, tag, or commit SHA)"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Sync trainer manifests
+        env:
+          REF: ${{ github.event.inputs.ref || 'main' }}
+        run: |
+          rm -rf manifests/trainer/*
+          git clone --depth 1 --branch "${REF}" https://github.com/opendatahub-io/trainer.git /tmp/trainer
+          cp -rf /tmp/trainer/manifests/* manifests/trainer/
+          rm -rf /tmp/trainer
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.event.inputs.ref || 'main' }}
+        run: |
+          branch="chore/sync-trainer-manifests"
+
+          if git diff --quiet manifests/trainer/; then
+            echo "No changes detected, skipping PR."
+            exit 0
+          fi
+
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}"
+          git add manifests/trainer/
+          git commit -m "chore: sync trainer manifests"
+          git push -f origin "${branch}"
+
+          existing_pr=$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')
+          if [ -n "${existing_pr}" ]; then
+            echo "PR already exists (#${existing_pr}), updated branch."
+          else
+            body=$(printf 'Automated sync of manifests from [opendatahub-io/trainer](https://github.com/opendatahub-io/trainer).\n\nTrainer ref: `%s`' "${REF}")
+            gh pr create \
+              --title "chore: sync trainer manifests" \
+              --body "${body}" \
+              --head "${branch}" \
+              --base main
+          fi

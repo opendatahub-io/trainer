@@ -16,15 +16,12 @@ COPY . .
 USER root
 RUN CGO_ENABLED=1 GOEXPERIMENT=strictfipsruntime GOOS=linux go build -a -o manager cmd/main.go
 
-# Collect trainer manifests
-RUN bash hack/get_trainer_manifests.sh
-
 # Runtime
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 WORKDIR /
 COPY --from=builder /workspace/manager .
-COPY --from=builder /workspace/opt/manifests/ /opt/manifests-template/
+COPY manifests/trainer/ /opt/manifests-template/
 COPY manifests/runtimes/ /opt/runtimes-template/
 COPY manifests/imagestreams/ /opt/imagestreams-template/
 USER 65532:65532
