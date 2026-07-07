@@ -1,6 +1,6 @@
-namespace: odh-trainer-operator-system
+namespace: trainer-operator-system
 
-namePrefix: odh-trainer-operator-
+namePrefix: trainer-operator-
 
 resources:
 - ../crd

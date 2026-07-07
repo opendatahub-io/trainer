@@ -35,7 +35,7 @@ var (
 	ctx       = context.Background()
 )
 
-const namespace = "odh-trainer-operator-system"
+const namespace = "trainer-operator-system"
 
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "Starting OCP e2e test suite")

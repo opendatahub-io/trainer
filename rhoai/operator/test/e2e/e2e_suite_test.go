@@ -44,7 +44,7 @@ var (
 	ctx       = context.Background()
 )
 
-const namespace = "odh-trainer-operator-system"
+const namespace = "trainer-operator-system"
 
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "Starting odh-trainer-operator integration test suite")
@@ -124,7 +124,7 @@ func TestMain(m *testing.M) {
 	_ = k8sClient.CoreV1().Namespaces().Delete(ctx, "opendatahub", metav1.DeleteOptions{})
 	_ = k8sClient.CoreV1().Pods(namespace).Delete(ctx, "curl-metrics", metav1.DeleteOptions{})
 	_ = k8sClient.RbacV1().ClusterRoleBindings().Delete(
-		ctx, "odh-trainer-operator-metrics-binding", metav1.DeleteOptions{})
+		ctx, "trainer-operator-metrics-binding", metav1.DeleteOptions{})
 
 	cmd = exec.Command("make", "undeploy")
 	_, _ = utils.Run(cmd)
