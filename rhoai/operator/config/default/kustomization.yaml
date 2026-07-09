@@ -12,3 +12,22 @@ patches:
 - path: manager_metrics_patch.yaml
   target:
     kind: Deployment
+
+configMapGenerator:
+  - name: params
+    envs:
+      - params.env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: params
+      fieldPath: data.TRAINER_OPERATOR_IMAGE
+    targets:
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - spec.template.spec.containers.[name=manager].image
