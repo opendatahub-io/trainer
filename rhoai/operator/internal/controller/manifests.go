@@ -22,7 +22,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -81,13 +83,33 @@ func applyResources(ctx context.Context, c client.Client, rendered []unstructure
 		res := &rendered[i]
 
 		if err := resources.Apply(ctx, c, res, fieldOwner, client.ForceOwnership); err != nil {
-			return fmt.Errorf("applying %s %s/%s: %w", res.GetKind(), res.GetNamespace(), res.GetName(), err)
+			if isImmutableFieldError(err) && res.GetKind() == "Deployment" {
+				log.Info("Deployment has immutable field change, deleting for re-creation on next reconcile",
+					"name", res.GetName(), "namespace", res.GetNamespace())
+
+				toDelete := &unstructured.Unstructured{}
+				toDelete.SetGroupVersionKind(res.GroupVersionKind())
+				toDelete.SetName(res.GetName())
+				toDelete.SetNamespace(res.GetNamespace())
+
+				if delErr := c.Delete(ctx, toDelete); delErr != nil && !k8serr.IsNotFound(delErr) {
+					return fmt.Errorf("deleting %s %s/%s for recreation: %w", res.GetKind(), res.GetNamespace(), res.GetName(), delErr)
+				}
+
+				return fmt.Errorf("deleted %s %s/%s due to immutable field change, will recreate on next reconcile", res.GetKind(), res.GetNamespace(), res.GetName())
+			} else {
+				return fmt.Errorf("applying %s %s/%s: %w", res.GetKind(), res.GetNamespace(), res.GetName(), err)
+			}
 		}
 
 		log.V(1).Info("Applied resource", "kind", res.GetKind(), "name", res.GetName(), "namespace", res.GetNamespace())
 	}
 
 	return nil
+}
+
+func isImmutableFieldError(err error) bool {
+	return k8serr.IsInvalid(err) && strings.Contains(err.Error(), "field is immutable")
 }
 
 func ensureWorkDir(templatePath, workPath string) error {
