@@ -25,9 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -77,6 +75,12 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	var cacheNamespaces map[string]cache.Config
+	if appNS := os.Getenv("APPLICATIONS_NAMESPACE"); appNS != "" {
+		cacheNamespaces = map[string]cache.Config{appNS: {}}
+		setupLog.Info("scoping cache to applications namespace", "namespace", appNS)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
@@ -85,17 +89,15 @@ func main() {
 		},
 		HealthProbeBindAddress: probeAddr,
 		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				// Strip managedFields and kubectl annotations from cached resources
-				// to reduce memory footprint. These fields are unnecessary when
-				// using server-side apply.
-				&appsv1.Deployment{}:         {Transform: platformcache.StripUnusedFields()},
-				&corev1.ServiceAccount{}:     {Transform: platformcache.StripUnusedFields()},
-				&corev1.Service{}:            {Transform: platformcache.StripUnusedFields()},
-				&rbacv1.Role{}:               {Transform: platformcache.StripUnusedFields()},
-				&rbacv1.RoleBinding{}:        {Transform: platformcache.StripUnusedFields()},
-				&rbacv1.ClusterRole{}:        {Transform: platformcache.StripUnusedFields()},
-				&rbacv1.ClusterRoleBinding{}: {Transform: platformcache.StripUnusedFields()},
+			DefaultTransform:  platformcache.StripUnusedFields(),
+			DefaultNamespaces: cacheNamespaces,
+		},
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{
+					&corev1.ConfigMap{},
+					&corev1.Secret{},
+				},
 			},
 		},
 	})
