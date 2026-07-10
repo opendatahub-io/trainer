@@ -25,8 +25,11 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
@@ -41,11 +44,14 @@ import (
 
 	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	platformcache "github.com/opendatahub-io/odh-platform-utilities/pkg/cache"
+	platformlabels "github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 
 	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
 	"github.com/opendatahub-io/trainer-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
+
+const trainerPartOf = "trainer"
 
 var (
 	scheme   = runtime.NewScheme()
@@ -75,6 +81,9 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	// Scope the cache to the applications namespace to avoid watching
+	// resources cluster-wide. Injected by the ODH platform operator.
+	// When unset (standalone/dev), nil falls back to all namespaces.
 	var cacheNamespaces map[string]cache.Config
 	if appNS := os.Getenv("APPLICATIONS_NAMESPACE"); appNS != "" {
 		cacheNamespaces = map[string]cache.Config{appNS: {}}
@@ -88,15 +97,36 @@ func main() {
 			SecureServing: false,
 		},
 		HealthProbeBindAddress: probeAddr,
+		// Cache hardening: without label selectors, informer caches store
+		// every object of each watched type — even those unrelated to this
+		// operator. A user with edit permissions can create enough large
+		// objects to OOMKill the operator. Label selectors ensure only
+		// trainer-managed resources are cached.
+		// See: https://developers.redhat.com/articles/2026/06/01/protect-your-kubernetes-operator-oomkill
 		Cache: cache.Options{
 			DefaultTransform:  platformcache.StripUnusedFields(),
 			DefaultNamespaces: cacheNamespaces,
+			ByObject: map[client.Object]cache.ByObject{
+				&appsv1.Deployment{}: {
+					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
+				},
+				&corev1.Service{}: {
+					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
+				},
+				&corev1.ConfigMap{}: {
+					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
+				},
+				&admissionv1.ValidatingWebhookConfiguration{}: {
+					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
+				},
+			},
 		},
+		// Disable cache for Namespace to prevent an implicit cluster-wide
+		// informer from the ensureNamespace() Get call (anti-pattern 3).
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{
-					&corev1.ConfigMap{},
-					&corev1.Secret{},
+					&corev1.Namespace{},
 				},
 			},
 		},
