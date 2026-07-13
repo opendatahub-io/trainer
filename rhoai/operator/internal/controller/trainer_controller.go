@@ -65,6 +65,10 @@ const (
 
 	// dependencyCheckInterval is how often to recheck for missing dependencies
 	dependencyCheckInterval = 60 * time.Second
+
+	platformConfigMapName = "odh-trainer-config"
+	platformVersionKey    = "platformVersion"
+	platformReleaseName   = "platform"
 )
 
 type componentRelease struct {
@@ -203,7 +207,7 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 		cm.MarkTrue(degradedCondition,
 			conditions.WithReason("ClusterDetectionFailed"),
 			conditions.WithMessage("Failed to detect cluster type: %v", err))
-		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady, ""))
 	}
 
 	log.V(1).Info("Detected cluster type", "clusterType", clusterType)
@@ -225,22 +229,38 @@ func (r *TrainerReconciler) reconcileManaged(ctx context.Context, trainer *compo
 
 	if err := r.ensureNamespace(ctx, namespace); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("NamespaceFailed"), conditions.WithError(err))
-		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady, ""))
+	}
+
+	platformVersion, err := r.getPlatformVersion(ctx, namespace)
+	if err != nil {
+		cm.MarkFalse(provisioningCondition, conditions.WithReason("PlatformConfigError"), conditions.WithError(err))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady, ""))
+	}
+	if platformVersion != "" {
+		currentVersion := currentPlatformVersion(trainer)
+		if currentVersion != platformVersion {
+			// Perform any version-specific upgrade logic here (e.g.
+			// schema migrations, operand pre-rollout checks). While
+			// upgrade work is in progress, return an error so the
+			// version is not advanced in status.
+			log.Info("Platform version changed", "from", currentVersion, "to", platformVersion)
+		}
 	}
 
 	if err := r.renderAndApply(ctx, trainer.Name, namespace, clusterType); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("ProvisioningFailed"), conditions.WithError(err))
-		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady, ""))
 	}
 
 	if err := r.checkDeploymentHealth(ctx, namespace); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("DeploymentNotReady"), conditions.WithError(err))
-		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady, ""))
 	}
 
 	cm.MarkTrue(provisioningCondition, conditions.WithReason("Provisioned"), conditions.WithMessage("Trainer resources provisioned successfully"))
 
-	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseReady)
+	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseReady, platformVersion)
 }
 
 func (r *TrainerReconciler) reconcileRemoved(ctx context.Context, trainer *componentsv1alpha1.Trainer) (ctrl.Result, error) {
@@ -251,12 +271,12 @@ func (r *TrainerReconciler) reconcileRemoved(ctx context.Context, trainer *compo
 
 	if err := r.runGC(ctx, trainer); err != nil {
 		cm.MarkFalse(provisioningCondition, conditions.WithReason("CleanupFailed"), conditions.WithError(err))
-		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady))
+		return ctrl.Result{}, stderrors.Join(err, r.updateStatus(ctx, trainer, common.PhaseNotReady, ""))
 	}
 
 	cm.MarkFalse(provisioningCondition, conditions.WithReason("Removed"), conditions.WithMessage("Trainer has been removed"))
 
-	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseNotReady)
+	return ctrl.Result{}, r.updateStatus(ctx, trainer, common.PhaseNotReady, "")
 }
 
 func (r *TrainerReconciler) reconcileDelete(ctx context.Context, trainer *componentsv1alpha1.Trainer) (ctrl.Result, error) {
@@ -382,7 +402,7 @@ func (r *TrainerReconciler) handleMissingDependency(
 		conditions.WithReason(reason),
 		conditions.WithMessage("%s", waitingMessage))
 
-	if err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
+	if err := r.updateStatus(ctx, trainer, common.PhaseNotReady, ""); err != nil {
 		log.Error(err, "Failed to update Trainer status")
 	}
 	return ctrl.Result{RequeueAfter: dependencyCheckInterval}, true
@@ -571,6 +591,18 @@ func (r *TrainerReconciler) ensureNamespace(ctx context.Context, name string) er
 	return nil
 }
 
+func (r *TrainerReconciler) getPlatformVersion(ctx context.Context, namespace string) (string, error) {
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, client.ObjectKey{Name: platformConfigMapName, Namespace: namespace}, cm); err != nil {
+		if errors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get platform config ConfigMap: %w", err)
+	}
+
+	return cm.Data[platformVersionKey], nil
+}
+
 func (r *TrainerReconciler) getComponentReleases() ([]common.ComponentRelease, error) {
 	metadataPath := filepath.Join(r.ManifestsPath, "component_metadata.yaml")
 
@@ -596,7 +628,7 @@ func (r *TrainerReconciler) getComponentReleases() ([]common.ComponentRelease, e
 	return releases, nil
 }
 
-func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *componentsv1alpha1.Trainer, phase common.Phase) error {
+func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *componentsv1alpha1.Trainer, phase common.Phase, platformVersion string) error {
 	log := logf.FromContext(ctx)
 
 	trainer.Status.Phase = phase
@@ -606,10 +638,38 @@ func (r *TrainerReconciler) updateStatus(ctx context.Context, trainer *component
 	if err != nil {
 		log.V(1).Info("Failed to read component releases", "error", err)
 	} else {
-		trainer.Status.Releases = releases
+		for _, release := range releases {
+			trainer.Status.Releases = appendOrUpdateRelease(trainer.Status.Releases, release)
+		}
+	}
+
+	if platformVersion != "" {
+		trainer.Status.Releases = appendOrUpdateRelease(trainer.Status.Releases, common.ComponentRelease{
+			Name:    platformReleaseName,
+			Version: platformVersion,
+		})
 	}
 
 	return r.Status().Update(ctx, trainer)
+}
+
+func currentPlatformVersion(trainer *componentsv1alpha1.Trainer) string {
+	for _, r := range trainer.Status.Releases {
+		if r.Name == platformReleaseName {
+			return r.Version
+		}
+	}
+	return ""
+}
+
+func appendOrUpdateRelease(releases []common.ComponentRelease, release common.ComponentRelease) []common.ComponentRelease {
+	for i, r := range releases {
+		if r.Name == release.Name {
+			releases[i] = release
+			return releases
+		}
+	}
+	return append(releases, release)
 }
 
 func newConditionManager(trainer *componentsv1alpha1.Trainer) *conditions.Manager {

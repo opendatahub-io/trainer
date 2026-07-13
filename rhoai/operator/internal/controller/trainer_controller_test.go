@@ -272,6 +272,96 @@ func TestGetComponentReleases(t *testing.T) {
 	g.Expect(releases[0].RepoURL).NotTo(BeEmpty(), "RepoURL should not be empty")
 }
 
+func TestPlatformVersionHandshake(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	createJobSetCRD(ctx, t, g)
+
+	handshakeNS := "handshake-test-ns"
+	platformVersion := "2.20.0"
+
+	trainer := &componentsv1alpha1.Trainer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testTrainerName,
+		},
+		Spec: componentsv1alpha1.TrainerSpec{
+			ManagementState: common.Managed,
+			AppNamespace:    handshakeNS,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
+	t.Cleanup(func() {
+		cleanupTrainer(ctx)
+		cleanupNamespace(ctx, handshakeNS)
+	})
+
+	reconciler := newTestReconciler()
+
+	// First reconcile: no platform ConfigMap exists — handshake skipped
+	_, err := reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated := getTrainer(ctx, g)
+	for _, r := range updated.Status.Releases {
+		g.Expect(r.Name).NotTo(Equal(platformReleaseName), "platform release should not exist without ConfigMap")
+	}
+
+	// Create the platform config ConfigMap
+	platformCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      platformConfigMapName,
+			Namespace: handshakeNS,
+			Labels: map[string]string{
+				labels.PlatformPartOf: trainerPartOf,
+			},
+		},
+		Data: map[string]string{
+			platformVersionKey: platformVersion,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, platformCM)).To(Succeed())
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, platformCM)
+	})
+
+	// Reconcile again — platform version should appear in releases
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated = getTrainer(ctx, g)
+	var platformRelease *common.ComponentRelease
+	for i, r := range updated.Status.Releases {
+		if r.Name == platformReleaseName {
+			platformRelease = &updated.Status.Releases[i]
+			break
+		}
+	}
+	g.Expect(platformRelease).NotTo(BeNil(), "platform release entry should exist")
+	g.Expect(platformRelease.Version).To(Equal(platformVersion))
+
+	// Simulate platform upgrade: update ConfigMap to new version
+	upgradedVersion := "2.21.0"
+	platformCM.Data[platformVersionKey] = upgradedVersion
+	g.Expect(k8sClient.Update(ctx, platformCM)).To(Succeed())
+
+	_, err = reconciler.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated = getTrainer(ctx, g)
+	platformRelease = nil
+	for i, r := range updated.Status.Releases {
+		if r.Name == platformReleaseName {
+			platformRelease = &updated.Status.Releases[i]
+			break
+		}
+	}
+	g.Expect(platformRelease).NotTo(BeNil(), "platform release entry should exist after upgrade")
+	g.Expect(platformRelease.Version).To(Equal(upgradedVersion))
+}
+
 func TestReconcileManagedPopulatesReleases(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
