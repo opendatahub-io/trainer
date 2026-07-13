@@ -22,51 +22,6 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 )
 
-func TestGetManagementState(t *testing.T) {
-	tests := []struct {
-		name     string
-		trainer  *Trainer
-		expected common.ManagementState
-	}{
-		{
-			name: "defaults to Managed when unset",
-			trainer: &Trainer{
-				Spec: TrainerSpec{
-					ManagementState: "",
-				},
-			},
-			expected: common.Managed,
-		},
-		{
-			name: "returns Managed when explicitly set",
-			trainer: &Trainer{
-				Spec: TrainerSpec{
-					ManagementState: common.Managed,
-				},
-			},
-			expected: common.Managed,
-		},
-		{
-			name: "returns Removed when set",
-			trainer: &Trainer{
-				Spec: TrainerSpec{
-					ManagementState: common.Removed,
-				},
-			},
-			expected: common.Removed,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.trainer.GetManagementState()
-			if got != tt.expected {
-				t.Errorf("GetManagementState() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestPlatformObjectInterface(t *testing.T) {
 	trainer := &Trainer{}
 

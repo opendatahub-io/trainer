@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
@@ -46,10 +47,14 @@ func TestDriftCorrection(t *testing.T) {
 	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
 
 	// Create Trainer CR
-	err := k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
+	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 	t.Cleanup(func() {
 		_ = k8sClient.DeleteTrainer(ctx)
+		g.Eventually(func(g Gomega) {
+			_, err := k8sClient.GetTrainer(ctx)
+			g.Expect(errors.IsNotFound(err)).To(BeTrue())
+		}).WithTimeout(30 * time.Second).Should(Succeed())
 	})
 
 	// Wait for Trainer to reach Ready state and resources to be created

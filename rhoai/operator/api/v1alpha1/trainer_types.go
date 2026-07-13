@@ -28,10 +28,6 @@ type ControllerResources struct {
 }
 
 type TrainerSpec struct {
-	// +kubebuilder:validation:Enum=Managed;Removed
-	// +kubebuilder:default=Managed
-	ManagementState common.ManagementState `json:"managementState,omitempty"`
-
 	AppNamespace string `json:"appNamespace,omitempty"`
 
 	// +optional
@@ -96,11 +92,4 @@ func (t *Trainer) GetReleaseStatus() *common.ComponentReleaseStatus {
 
 func (t *Trainer) SetReleaseStatus(status common.ComponentReleaseStatus) {
 	t.Status.ComponentReleaseStatus = status
-}
-
-func (t *Trainer) GetManagementState() common.ManagementState {
-	if t.Spec.ManagementState == "" {
-		return common.Managed
-	}
-	return t.Spec.ManagementState
 }

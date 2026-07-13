@@ -21,7 +21,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 	"github.com/opendatahub-io/odh-platform-utilities/api/common/validation"
 )
 
@@ -38,9 +37,6 @@ func TestTrainer_PlatformObjectContract(t *testing.T) {
 	obj := &Trainer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default-trainer",
-		},
-		Spec: TrainerSpec{
-			ManagementState: common.Managed,
 		},
 	}
 

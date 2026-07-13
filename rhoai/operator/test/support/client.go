@@ -38,8 +38,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
-
 	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
 )
 
@@ -167,14 +165,13 @@ func (c *Client) GetControllerLogs(ctx context.Context, ns string) (string, erro
 	return c.GetPodLogs(ctx, pods.Items[0].Name, ns)
 }
 
-func (c *Client) CreateTrainer(ctx context.Context, managementState common.ManagementState, appNamespace string) error {
+func (c *Client) CreateTrainer(ctx context.Context, appNamespace string) error {
 	trainer := &componentsv1alpha1.Trainer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: trainerCRName,
 		},
 		Spec: componentsv1alpha1.TrainerSpec{
-			ManagementState: managementState,
-			AppNamespace:    appNamespace,
+			AppNamespace: appNamespace,
 		},
 	}
 	return c.CRClient.Create(ctx, trainer)
@@ -217,15 +214,6 @@ func (c *Client) ListClusterTrainingRuntimes(ctx context.Context, labelSelector 
 		names = append(names, item.GetName())
 	}
 	return names, nil
-}
-
-func (c *Client) UpdateTrainerManagementState(ctx context.Context, state common.ManagementState) error {
-	trainer, err := c.GetTrainer(ctx)
-	if err != nil {
-		return err
-	}
-	trainer.Spec.ManagementState = state
-	return c.CRClient.Update(ctx, trainer)
 }
 
 func (c *Client) ListDeployments(ctx context.Context, namespace, labelSelector string) ([]string, error) {

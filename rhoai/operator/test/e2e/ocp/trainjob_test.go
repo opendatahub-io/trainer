@@ -39,7 +39,7 @@ func TestTrainJobWithClusterTrainingRuntime(t *testing.T) {
 		targetCTR        = "torch-distributed-cpu"
 	)
 
-	err := k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
+	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 	t.Cleanup(func() {
 		_ = k8sClient.DeleteTrainJob(

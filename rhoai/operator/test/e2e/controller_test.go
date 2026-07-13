@@ -74,13 +74,17 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g := NewWithT(t)
 	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
 
-	err := k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
+	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 	t.Cleanup(func() {
 		_ = k8sClient.DeleteTrainer(ctx)
+		g.Eventually(func(g Gomega) {
+			_, err := k8sClient.GetTrainer(ctx)
+			g.Expect(errors.IsNotFound(err)).To(BeTrue())
+		}).WithTimeout(30 * time.Second).Should(Succeed())
 	})
 
-	// Phase 1: Managed → Ready
+	// Phase 1: CR created → Ready
 	verifyManagedReady := func(g Gomega) {
 		trainer, err := k8sClient.GetTrainer(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
@@ -119,54 +123,7 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
 
-	// Phase 2: Managed → Removed
-	err = k8sClient.UpdateTrainerManagementState(ctx, common.Removed)
-	g.Expect(err).NotTo(HaveOccurred(), "Failed to update Trainer to Removed")
-
-	verifyRemoved := func(g Gomega) {
-		trainer, err := k8sClient.GetTrainer(ctx)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseNotReady))
-
-		provCond := findCondition(trainer, common.ConditionTypeProvisioningSucceeded)
-		g.Expect(provCond).NotTo(BeNil())
-		g.Expect(provCond.Status).To(Equal(metav1.ConditionFalse))
-		g.Expect(provCond.Reason).To(Equal("Removed"))
-	}
-	g.Eventually(verifyRemoved).Should(Succeed())
-
-	verifyResourcesCleanedUp := func(g Gomega) {
-		deps, err := k8sClient.ListDeployments(ctx, trainerNamespace, platformPartOf+"="+trainerPartOf)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(deps).To(BeEmpty(), "Deployments should be cleaned up after Removed")
-
-		ctrs, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(ctrs).To(BeEmpty(), "ClusterTrainingRuntimes should be cleaned up after Removed")
-	}
-	g.Eventually(verifyResourcesCleanedUp).Should(Succeed())
-
-	// Phase 3: Removed → Managed (re-provisioning)
-	err = k8sClient.UpdateTrainerManagementState(ctx, common.Managed)
-	g.Expect(err).NotTo(HaveOccurred(), "Failed to update Trainer back to Managed")
-
-	g.Eventually(verifyManagedReady).Should(Succeed())
-
-	deployments, err = k8sClient.AppsV1().Deployments(trainerNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: platformPartOf + "=" + trainerPartOf,
-	})
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(deployments.Items).NotTo(BeEmpty(), "Deployments should be re-created after Managed")
-	for _, d := range deployments.Items {
-		g.Expect(d.Status.ReadyReplicas).To(Equal(d.Status.Replicas),
-			"Deployment %s should have all replicas ready after re-provisioning", d.Name)
-	}
-
-	ctrNames, err = k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(ctrNames).NotTo(BeEmpty(), "ClusterTrainingRuntimes should be re-created after Managed")
-
-	// Phase 4: Delete
+	// Phase 2: Delete CR (platform removes module)
 	err = k8sClient.DeleteTrainer(ctx)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to delete Trainer CR")
 
@@ -175,6 +132,37 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 		g.Expect(errors.IsNotFound(err)).To(BeTrue(), "Trainer CR should be deleted")
 	}
 	g.Eventually(verifyTrainerDeleted).Should(Succeed())
+
+	verifyResourcesCleanedUp := func(g Gomega) {
+		deps, err := k8sClient.ListDeployments(ctx, trainerNamespace, platformPartOf+"="+trainerPartOf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(deps).To(BeEmpty(), "Deployments should be cleaned up after deletion")
+
+		ctrs, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(ctrs).To(BeEmpty(), "ClusterTrainingRuntimes should be cleaned up after deletion")
+	}
+	g.Eventually(verifyResourcesCleanedUp).Should(Succeed())
+
+	// Phase 3: Recreate CR (platform re-enables module)
+	err = k8sClient.CreateTrainer(ctx, trainerNamespace)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to recreate Trainer CR")
+
+	g.Eventually(verifyManagedReady).Should(Succeed())
+
+	deployments, err = k8sClient.AppsV1().Deployments(trainerNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: platformPartOf + "=" + trainerPartOf,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(deployments.Items).NotTo(BeEmpty(), "Deployments should be re-created after recreate")
+	for _, d := range deployments.Items {
+		g.Expect(d.Status.ReadyReplicas).To(Equal(d.Status.Replicas),
+			"Deployment %s should have all replicas ready after re-provisioning", d.Name)
+	}
+
+	ctrNames, err = k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ctrNames).NotTo(BeEmpty(), "ClusterTrainingRuntimes should be re-created after recreate")
 }
 
 func TestTrainerDeletionWithResourceInUseFinalizer(t *testing.T) {
@@ -187,7 +175,7 @@ func TestTrainerDeletionWithResourceInUseFinalizer(t *testing.T) {
 		targetCTR              = "torch-distributed-cpu"
 	)
 
-	err := k8sClient.CreateTrainer(ctx, common.Managed, trainerNamespace)
+	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 
 	t.Cleanup(func() {
