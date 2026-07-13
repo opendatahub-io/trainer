@@ -286,6 +286,7 @@ func (r *TrainerReconciler) checkOpenShiftDependencies(ctx context.Context, trai
 	if !r.checkJobSetOperatorInstalled(ctx) {
 		return r.handleMissingDependency(ctx, trainer, cm,
 			"JobSet Operator",
+			"JobSetOperatorNotInstalled",
 			getJobSetOperatorNotInstalledMessage(),
 			"Waiting for JobSet Operator to be installed")
 	}
@@ -293,6 +294,7 @@ func (r *TrainerReconciler) checkOpenShiftDependencies(ctx context.Context, trai
 	if !r.checkJobSetOperatorCR(ctx) {
 		return r.handleMissingDependency(ctx, trainer, cm,
 			"JobSetOperator CR",
+			"JobSetOperatorCRNotFound",
 			getJobSetOperatorCRMissingMessage(),
 			"Waiting for JobSetOperator CR to be created")
 	}
@@ -300,6 +302,7 @@ func (r *TrainerReconciler) checkOpenShiftDependencies(ctx context.Context, trai
 	if !r.checkJobSetAvailable(ctx) {
 		return r.handleMissingDependency(ctx, trainer, cm,
 			"JobSet CRD",
+			"JobSetCRDNotFound",
 			getJobSetMissingMessageOpenShift(),
 			"Waiting for JobSet CRD to be installed")
 	}
@@ -311,6 +314,7 @@ func (r *TrainerReconciler) checkKubernetesDependencies(ctx context.Context, tra
 	if !r.checkJobSetAvailable(ctx) {
 		return r.handleMissingDependency(ctx, trainer, cm,
 			"JobSet CRD",
+			"JobSetCRDNotFound",
 			getJobSetMissingMessage(),
 			"Waiting for JobSet CRD to be installed")
 	}
@@ -364,6 +368,7 @@ func (r *TrainerReconciler) handleMissingDependency(
 	trainer *componentsv1alpha1.Trainer,
 	cm *conditions.Manager,
 	dependencyName string,
+	reason string,
 	errorMessage string,
 	waitingMessage string,
 ) (ctrl.Result, bool) {
@@ -371,10 +376,10 @@ func (r *TrainerReconciler) handleMissingDependency(
 	log.Info(dependencyName+" not available, will recheck", "recheckAfter", dependencyCheckInterval)
 
 	cm.MarkTrue(degradedCondition,
-		conditions.WithReason("DependencyMissing"),
+		conditions.WithReason(reason),
 		conditions.WithMessage("%s", errorMessage))
 	cm.MarkFalse(provisioningCondition,
-		conditions.WithReason("DependencyMissing"),
+		conditions.WithReason(reason),
 		conditions.WithMessage("%s", waitingMessage))
 
 	if err := r.updateStatus(ctx, trainer, common.PhaseNotReady); err != nil {
