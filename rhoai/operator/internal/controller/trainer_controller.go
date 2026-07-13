@@ -83,6 +83,7 @@ type componentMetadata struct {
 
 type TrainerReconciler struct {
 	client.Client
+	APIReader        client.Reader
 	Scheme           *runtime.Scheme
 	ManifestsPath    string
 	RuntimesPath     string
@@ -593,7 +594,7 @@ func (r *TrainerReconciler) ensureNamespace(ctx context.Context, name string) er
 
 func (r *TrainerReconciler) getPlatformVersion(ctx context.Context, namespace string) (string, error) {
 	cm := &corev1.ConfigMap{}
-	if err := r.Get(ctx, client.ObjectKey{Name: platformConfigMapName, Namespace: namespace}, cm); err != nil {
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: platformConfigMapName, Namespace: namespace}, cm); err != nil {
 		if errors.IsNotFound(err) {
 			return "", nil
 		}

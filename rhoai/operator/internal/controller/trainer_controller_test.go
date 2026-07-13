@@ -597,6 +597,7 @@ func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, objLab
 func newTestReconciler() *TrainerReconciler {
 	return &TrainerReconciler{
 		Client:           k8sClient,
+		APIReader:        k8sClient,
 		Scheme:           k8sClient.Scheme(),
 		ManifestsPath:    testManifestsPath,
 		RuntimesPath:     testRuntimesPath,

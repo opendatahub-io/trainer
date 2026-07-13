@@ -183,6 +183,7 @@ func main() {
 
 	if err := (&controller.TrainerReconciler{
 		Client:           mgr.GetClient(),
+		APIReader:        mgr.GetAPIReader(),
 		Scheme:           mgr.GetScheme(),
 		ManifestsPath:    manifestsPath,
 		RuntimesPath:     runtimesPath,
