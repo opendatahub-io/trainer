@@ -91,6 +91,7 @@ func NewTrainJobReconciler(client client.Client, apiReader client.Reader, record
 	}
 }
 
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;watch;update;patch
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs/status,verbs=get;update;patch

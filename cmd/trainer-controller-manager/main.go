@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"net/http"
@@ -42,6 +43,7 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/controller"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 	runtimecore "github.com/kubeflow/trainer/v2/pkg/runtime/core"
+	pkgtls "github.com/kubeflow/trainer/v2/pkg/tls"
 	"github.com/kubeflow/trainer/v2/pkg/util/cert"
 	"github.com/kubeflow/trainer/v2/pkg/webhooks"
 )
@@ -97,6 +99,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	restCfg := ctrl.GetConfigOrDie()
+
+	tlsResult, tlsErr := pkgtls.Resolve(context.Background(), restCfg)
+	if tlsErr != nil {
+		setupLog.Error(tlsErr, "Unable to resolve cluster TLS profile")
+		os.Exit(1)
+	}
+	options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, tlsResult.TLSOpts...)
+
 	// Set client cache options
 	options.Client = client.Options{
 		Cache: &client.CacheOptions{
@@ -105,7 +116,7 @@ func main() {
 	}
 
 	setupLog.Info("Creating manager")
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
+	mgr, err := ctrl.NewManager(restCfg, options)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
