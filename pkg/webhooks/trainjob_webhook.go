@@ -111,6 +111,10 @@ func (w *TrainJobValidator) ValidateCreate(ctx context.Context, obj *trainer.Tra
 	log := ctrl.LoggerFrom(ctx).WithName("trainJob-webhook")
 	log.V(5).Info("Validating create", "TrainJob", klog.KObj(obj))
 
+	if errs := validateRHOAISecurity(obj); len(errs) > 0 {
+		return nil, errs.ToAggregate()
+	}
+
 	runtimeRefGK := runtime.RuntimeRefToRuntimeRegistryKey(obj.Spec.RuntimeRef)
 	runtime, ok := w.runtimes[runtimeRefGK]
 	if !ok {
@@ -123,6 +127,10 @@ func (w *TrainJobValidator) ValidateCreate(ctx context.Context, obj *trainer.Tra
 func (w *TrainJobValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *trainer.TrainJob) (admission.Warnings, error) {
 	log := ctrl.LoggerFrom(ctx).WithName("trainJob-webhook")
 	log.V(5).Info("Validating update", "TrainJob", klog.KObj(newObj))
+
+	if errs := validateRHOAISecurity(newObj); len(errs) > 0 {
+		return nil, errs.ToAggregate()
+	}
 
 	runtimeRefGK := runtime.RuntimeRefToRuntimeRegistryKey(newObj.Spec.RuntimeRef)
 	runtime, ok := w.runtimes[runtimeRefGK]
