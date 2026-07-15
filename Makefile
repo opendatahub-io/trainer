@@ -17,6 +17,9 @@ TRAINER_CHART_DIR := $(PROJECT_DIR)/charts/kubeflow-trainer
 # Location to install tool binaries
 LOCALBIN ?= $(PROJECT_DIR)/bin
 
+# Ensure Go auto-downloads the toolchain version required by go.mod
+export GOTOOLCHAIN := auto
+
 # Tool versions
 K8S_VERSION ?= 1.34.0
 GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
