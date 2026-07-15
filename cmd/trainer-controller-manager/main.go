@@ -33,6 +33,7 @@ import (
 	ctrlpkg "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
@@ -68,20 +69,11 @@ func init() {
 
 func main() {
 	var configFile string
-	var enableHTTP2 bool
 
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
 			"Command-line flags override configuration from this file.")
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities. More specifically, disabling http/2 will
-	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
-	// Rapid Reset CVEs. For more information see:
-	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
-	// - https://github.com/advisories/GHSA-4374-p667-p6c8
-	flag.BoolVar(&enableHTTP2, "enable-http2", false,
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 
 	zapOpts := zap.Options{
 		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
@@ -93,7 +85,7 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 
 	setupLog.Info("Loading configuration", "configFile", configFile)
-	options, cfg, err := config.Load(scheme, configFile, enableHTTP2)
+	options, cfg, err := config.Load(scheme, configFile)
 	if err != nil {
 		setupLog.Error(err, "Unable to load configuration")
 		os.Exit(1)
@@ -107,6 +99,16 @@ func main() {
 		os.Exit(1)
 	}
 	options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, tlsResult.TLSOpts...)
+	webhookOpts := webhook.Options{
+		TLSOpts: tlsResult.TLSOpts,
+	}
+	if cfg.Webhook.Port != nil {
+		webhookOpts.Port = int(*cfg.Webhook.Port)
+		if cfg.Webhook.Host != nil {
+			webhookOpts.Host = *cfg.Webhook.Host
+		}
+	}
+	options.WebhookServer = webhook.NewServer(webhookOpts)
 
 	// Set client cache options
 	options.Client = client.Options{

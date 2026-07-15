@@ -17,7 +17,6 @@ limitations under the License.
 package config
 
 import (
-	"crypto/tls"
 	"fmt"
 	"os"
 
@@ -48,29 +47,18 @@ func fromFile(path string, scheme *runtime.Scheme, cfg *configapi.Configuration)
 }
 
 // addTo applies the configuration to controller runtime Options.
-func addTo(o *ctrl.Options, cfg *configapi.Configuration, enableHTTP2 bool) {
-	// Set metrics server options
-	var tlsOpts []func(*tls.Config)
-	if !enableHTTP2 {
-		// Disable http/2 for security reasons (CVE-2023-44487, CVE-2023-39325)
-		tlsOpts = append(tlsOpts, func(c *tls.Config) {
-			c.NextProtos = []string{"http/1.1"}
-		})
-	}
-
+func addTo(o *ctrl.Options, cfg *configapi.Configuration) {
 	o.Metrics = metricsserver.Options{
 		BindAddress:   cfg.Metrics.BindAddress,
 		SecureServing: cfg.Metrics.SecureServing != nil && *cfg.Metrics.SecureServing,
-		TLSOpts:       tlsOpts,
 	}
 
-	// Set webhook server options
 	if cfg.Webhook.Port != nil {
-		o.WebhookServer = webhook.NewServer(webhook.Options{
-			Port:    int(*cfg.Webhook.Port),
-			Host:    *cfg.Webhook.Host,
-			TLSOpts: tlsOpts,
-		})
+		webhookOpts := webhook.Options{Port: int(*cfg.Webhook.Port)}
+		if cfg.Webhook.Host != nil {
+			webhookOpts.Host = *cfg.Webhook.Host
+		}
+		o.WebhookServer = webhook.NewServer(webhookOpts)
 	}
 
 	// Set health probe bind address
@@ -102,7 +90,7 @@ func addTo(o *ctrl.Options, cfg *configapi.Configuration, enableHTTP2 bool) {
 
 // Load loads configuration from file and returns controller Options and Configuration.
 // If configFile is empty, default configuration is used.
-func Load(scheme *runtime.Scheme, configFile string, enableHTTP2 bool) (ctrl.Options, configapi.Configuration, error) {
+func Load(scheme *runtime.Scheme, configFile string) (ctrl.Options, configapi.Configuration, error) {
 	options := ctrl.Options{
 		Scheme: scheme,
 	}
@@ -125,7 +113,7 @@ func Load(scheme *runtime.Scheme, configFile string, enableHTTP2 bool) (ctrl.Opt
 	}
 
 	// Apply configuration to options
-	addTo(&options, &cfg, enableHTTP2)
+	addTo(&options, &cfg)
 
 	return options, cfg, nil
 }

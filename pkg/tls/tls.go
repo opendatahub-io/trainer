@@ -110,6 +110,7 @@ func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
 			log.Info("APIServer resource not found, using hardened defaults")
 		case apierrors.IsServiceUnavailable(err),
 			apierrors.IsTimeout(err),
+			apierrors.IsServerTimeout(err),
 			apierrors.IsTooManyRequests(err),
 			errors.Is(err, context.DeadlineExceeded):
 			log.Info("Transient API error reading TLS profile, using hardened defaults", "error", err)
