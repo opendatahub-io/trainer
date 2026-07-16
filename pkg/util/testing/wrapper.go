@@ -650,6 +650,14 @@ func (t *TrainJobWrapper) ManagedBy(m string) *TrainJobWrapper {
 	return t
 }
 
+func (t *TrainJobWrapper) Annotation(key, value string) *TrainJobWrapper {
+	if t.Annotations == nil {
+		t.Annotations = make(map[string]string)
+	}
+	t.Annotations[key] = value
+	return t
+}
+
 func (t *TrainJobWrapper) Obj() *trainer.TrainJob {
 	return &t.TrainJob
 }
@@ -681,6 +689,11 @@ func (t *TrainJobTrainerWrapper) Container(image string, command []string, args 
 	t.ResourcesPerNode = &corev1.ResourceRequirements{
 		Requests: resRequests,
 	}
+	return t
+}
+
+func (t *TrainJobTrainerWrapper) WithResourcesPerNode(resources corev1.ResourceRequirements) *TrainJobTrainerWrapper {
+	t.Trainer.ResourcesPerNode = &resources
 	return t
 }
 
