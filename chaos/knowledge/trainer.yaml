@@ -1,0 +1,91 @@
+operator:
+  name: kubeflow-trainer
+  namespace: opendatahub
+  repository: https://github.com/opendatahub-io/trainer
+
+components:
+  - name: kubeflow-trainer-controller-manager
+    controller: TrainJobReconciler
+    managedResources:
+      - apiVersion: apps/v1
+        kind: Deployment
+        name: kubeflow-trainer-controller-manager
+        namespace: opendatahub
+        labels:
+          app.kubernetes.io/name: trainer
+          app.kubernetes.io/component: controller
+          app.kubernetes.io/part-of: kubeflow
+        expectedSpec:
+          replicas: 1
+
+      - apiVersion: v1
+        kind: ServiceAccount
+        name: kubeflow-trainer-controller-manager
+        namespace: opendatahub
+
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        name: kubeflow-trainer-controller-manager
+
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        name: kubeflow-trainer-controller-manager
+
+      - apiVersion: v1
+        kind: Service
+        name: kubeflow-trainer-controller-manager
+        namespace: opendatahub
+
+      - apiVersion: v1
+        kind: Secret
+        name: kubeflow-trainer-webhook-cert
+        namespace: opendatahub
+
+      - apiVersion: v1
+        kind: ConfigMap
+        name: kubeflow-trainer-config
+        namespace: opendatahub
+
+      # Webhook configurations — same binary serves both controller and webhooks.
+      # failurePolicy: Fail means any downtime here blocks TrainJob admission.
+      - apiVersion: admissionregistration.k8s.io/v1
+        kind: ValidatingWebhookConfiguration
+        name: validating-webhook-configuration
+
+      # Leader election lease — resourceName from controller_manager_config.yaml.
+      - apiVersion: coordination.k8s.io/v1
+        kind: Lease
+        name: trainer.kubeflow.org
+        namespace: opendatahub
+
+      # RHOAI/ODH: aggregated RBAC roles for OpenShift user access management.
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        name: training-edit
+
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        name: training-admin
+
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        name: training-view
+
+      # RHOAI/ODH: PodMonitor for Prometheus metrics scraping.
+      - apiVersion: monitoring.coreos.com/v1
+        kind: PodMonitor
+        name: kubeflow-trainer-controller-manager-metrics-monitor
+        namespace: opendatahub
+
+    steadyState:
+      checks:
+        - type: conditionTrue
+          apiVersion: apps/v1
+          kind: Deployment
+          name: kubeflow-trainer-controller-manager
+          namespace: opendatahub
+          conditionType: Available
+
+recovery:
+  reconcileTimeout: "300s"
+  maxReconcileCycles: 10
