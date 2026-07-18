@@ -115,6 +115,8 @@ jobs:
         if: steps.check_diff.outputs.has_diff == 'true' && (steps.check_pr.outputs.pr_exists == 'false' || steps.check_pr.outputs.pr_current == 'false')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_COMMIT_SHORT: ${{ steps.check_diff.outputs.latest_commit_short }}
+          LATEST_COMMIT_MSG: ${{ steps.check_diff.outputs.latest_commit_msg }}
         run: |
           # Create timestamp-based branch name
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
@@ -125,10 +127,6 @@ jobs:
           # Create and push new branch from main
           git checkout -b "$BRANCH_NAME" origin/main
           git push origin "$BRANCH_NAME"
-
-          # Create PR with detailed description
-          LATEST_COMMIT_SHORT="${{ steps.check_diff.outputs.latest_commit_short }}"
-          LATEST_COMMIT_MSG="${{ steps.check_diff.outputs.latest_commit_msg }}"
 
           PR_BODY=$(cat <<EOF
           ## Sync Stream (main) to Lake (stable)
