@@ -300,6 +300,14 @@ func (r *TrainerReconciler) checkOpenShiftDependencies(ctx context.Context, trai
 			"Waiting for JobSetOperator CR to be created")
 	}
 
+	if _, err := r.checkJobSetOperatorHealth(ctx); err != nil {
+		return r.handleMissingDependency(ctx, trainer, cm,
+			"JobSetOperator health",
+			"JobSetOperatorDegraded",
+			err.Error(),
+			"Waiting for JobSetOperator to recover from degraded state")
+	}
+
 	if !r.checkJobSetAvailable(ctx) {
 		return r.handleMissingDependency(ctx, trainer, cm,
 			"JobSet CRD",

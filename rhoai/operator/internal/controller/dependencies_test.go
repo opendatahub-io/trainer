@@ -33,6 +33,19 @@ import (
 const (
 	testObjectType        = "object"
 	jobSetOperatorCRDName = "jobsetoperators.operator.openshift.io"
+
+	condDegraded                              = "Degraded"
+	condAvailable                             = "Available"
+	condTargetConfigControllerDegraded        = "TargetConfigControllerDegraded"
+	condJobSetOperatorStaticResourcesDegraded = "JobSetOperatorStaticResourcesDegraded"
+
+	statusTrue  = "True"
+	statusFalse = "False"
+
+	condFieldType   = "type"
+	condFieldStatus = "status"
+	condFieldReason = "reason"
+	pluralJobSetOps = "jobsetoperators"
 )
 
 func TestCheckJobSetAvailableWhenCRDExistsAndEstablished(t *testing.T) {
@@ -154,7 +167,7 @@ func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
 			Scope: apiextensionsv1.ClusterScoped,
 			Names: apiextensionsv1.CustomResourceDefinitionNames{
 				Kind:   jobSetOperatorKind,
-				Plural: "jobsetoperators",
+				Plural: pluralJobSetOps,
 			},
 			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
 				{
@@ -212,7 +225,7 @@ func TestCheckJobSetOperatorCRWhenCRDAndCRExist(t *testing.T) {
 			Scope: apiextensionsv1.ClusterScoped,
 			Names: apiextensionsv1.CustomResourceDefinitionNames{
 				Kind:   jobSetOperatorKind,
-				Plural: "jobsetoperators",
+				Plural: pluralJobSetOps,
 			},
 			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
 				{
@@ -302,6 +315,164 @@ func TestGetJobSetOperatorNotInstalledMessage(t *testing.T) {
 	g.Expect(message).To(ContainSubstring("JobSet Operator"))
 	g.Expect(message).To(ContainSubstring("not installed"))
 	g.Expect(message).To(ContainSubstring("OLM"))
+}
+
+func TestCheckJobSetOperatorHealthWhenHealthy(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	cr := newJobSetOperatorCR([]map[string]interface{}{
+		{condFieldType: condDegraded, condFieldStatus: statusFalse, condFieldReason: "AsExpected"},
+		{condFieldType: condAvailable, condFieldStatus: statusTrue, condFieldReason: "AsExpected"},
+	})
+
+	reconciler := newReconcilerWithJobSetOperatorCR(cr)
+	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	g.Expect(healthy).To(BeTrue())
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestCheckJobSetOperatorHealthWhenNoConditions(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	cr := newJobSetOperatorCR(nil)
+
+	reconciler := newReconcilerWithJobSetOperatorCR(cr)
+	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	g.Expect(healthy).To(BeFalse())
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("no status conditions"))
+}
+
+func TestCheckJobSetOperatorHealthWhenDegradedTrue(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	cr := newJobSetOperatorCR([]map[string]interface{}{
+		{condFieldType: condDegraded, condFieldStatus: statusTrue, condFieldReason: "SomethingBroke", "message": "controller failed"},
+	})
+
+	reconciler := newReconcilerWithJobSetOperatorCR(cr)
+	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	g.Expect(healthy).To(BeFalse())
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("Degraded=True"))
+	g.Expect(err.Error()).To(ContainSubstring("SomethingBroke"))
+	g.Expect(err.Error()).To(ContainSubstring("controller failed"))
+}
+
+func TestCheckJobSetOperatorHealthWhenAvailableFalse(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	cr := newJobSetOperatorCR([]map[string]interface{}{
+		{condFieldType: condAvailable, condFieldStatus: statusFalse, condFieldReason: "NotReady"},
+	})
+
+	reconciler := newReconcilerWithJobSetOperatorCR(cr)
+	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	g.Expect(healthy).To(BeFalse())
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("Available=False"))
+}
+
+func TestCheckJobSetOperatorHealthWithMultipleDegradedConditions(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	cr := newJobSetOperatorCR([]map[string]interface{}{
+		{condFieldType: condDegraded, condFieldStatus: statusTrue, condFieldReason: "Broken"},
+		{condFieldType: condAvailable, condFieldStatus: statusFalse, condFieldReason: "Down"},
+	})
+
+	reconciler := newReconcilerWithJobSetOperatorCR(cr)
+	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	g.Expect(healthy).To(BeFalse())
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("Degraded=True"))
+	g.Expect(err.Error()).To(ContainSubstring("Available=False"))
+}
+
+func TestIsJobSetOperatorConditionDegraded(t *testing.T) {
+	tests := []struct {
+		condType   string
+		condStatus string
+		want       bool
+	}{
+		{condDegraded, statusTrue, true},
+		{condDegraded, statusFalse, false},
+		{condTargetConfigControllerDegraded, statusTrue, true},
+		{condTargetConfigControllerDegraded, statusFalse, false},
+		{condJobSetOperatorStaticResourcesDegraded, statusTrue, true},
+		{condAvailable, statusFalse, true},
+		{condAvailable, statusTrue, false},
+		{"Progressing", statusTrue, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.condType+"="+tt.condStatus, func(t *testing.T) {
+			g := NewWithT(t)
+			g.Expect(isJobSetOperatorConditionDegraded(tt.condType, tt.condStatus)).To(Equal(tt.want))
+		})
+	}
+}
+
+func newJobSetOperatorCR(conditions []map[string]interface{}) *unstructured.Unstructured {
+	cr := &unstructured.Unstructured{}
+	cr.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   jobSetOperatorGroup,
+		Version: jobSetOperatorAPIVersion,
+		Kind:    jobSetOperatorKind,
+	})
+	cr.SetName(jobSetOperatorCRName)
+
+	if conditions != nil {
+		condSlice := make([]interface{}, len(conditions))
+		for i, c := range conditions {
+			condSlice[i] = c
+		}
+		_ = unstructured.SetNestedSlice(cr.Object, condSlice, "status", "conditions")
+	}
+
+	return cr
+}
+
+func newReconcilerWithJobSetOperatorCR(cr *unstructured.Unstructured) *TrainerReconciler {
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: jobSetOperatorCRDName},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: jobSetOperatorGroup,
+			Scope: apiextensionsv1.ClusterScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   jobSetOperatorKind,
+				Plural: pluralJobSetOps,
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name: jobSetOperatorAPIVersion, Served: true, Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{Type: testObjectType},
+					},
+				},
+			},
+		},
+		Status: apiextensionsv1.CustomResourceDefinitionStatus{
+			Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+				{Type: apiextensionsv1.Established, Status: apiextensionsv1.ConditionTrue},
+			},
+		},
+	}
+
+	s := runtime.NewScheme()
+	_ = apiextensionsv1.AddToScheme(s)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(crd, cr).
+		Build()
+
+	return &TrainerReconciler{Client: fakeClient}
 }
 
 func init() {
