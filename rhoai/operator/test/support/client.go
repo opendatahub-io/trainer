@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -112,6 +113,22 @@ func (c *Client) GetPodLogs(ctx context.Context, name, ns string) (string, error
 
 func (c *Client) RegisterDebugCleanup(t *testing.T, ctx context.Context, ns string, extraPods ...string) {
 	t.Helper()
+
+	// Registered first so it runs last (LIFO) — after debug logs are captured.
+	t.Cleanup(func() {
+		_, err := c.GetTrainer(ctx)
+		if errors.IsNotFound(err) {
+			return
+		}
+
+		_ = c.DeleteTrainer(ctx)
+		g := gomega.NewWithT(t)
+		g.Eventually(func(g gomega.Gomega) {
+			_, err := c.GetTrainer(ctx)
+			g.Expect(errors.IsNotFound(err)).To(gomega.BeTrue())
+		}).WithTimeout(2 * time.Minute).Should(gomega.Succeed())
+	})
+
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return

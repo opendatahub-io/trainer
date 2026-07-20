@@ -44,7 +44,6 @@ func TestTrainJobWithClusterTrainingRuntime(t *testing.T) {
 	t.Cleanup(func() {
 		_ = k8sClient.DeleteTrainJob(
 			ctx, testTrainJobName, trainerNamespace)
-		_ = k8sClient.DeleteTrainer(ctx)
 	})
 
 	g.Eventually(func(g Gomega) {

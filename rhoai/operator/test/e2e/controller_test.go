@@ -19,7 +19,6 @@ package e2e
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -76,13 +75,6 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 
 	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
-	t.Cleanup(func() {
-		_ = k8sClient.DeleteTrainer(ctx)
-		g.Eventually(func(g Gomega) {
-			_, err := k8sClient.GetTrainer(ctx)
-			g.Expect(errors.IsNotFound(err)).To(BeTrue())
-		}).WithTimeout(30 * time.Second).Should(Succeed())
-	})
 
 	// Phase 1: CR created → Ready
 	verifyManagedReady := func(g Gomega) {
@@ -178,7 +170,6 @@ func TestTrainerDeletionWithResourceInUseFinalizer(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 
 	t.Cleanup(func() {
-		_ = k8sClient.DeleteTrainer(ctx)
 		_ = k8sClient.DeleteTrainJob(ctx, testTrainJobName, trainerNamespace)
 		ctr, err := k8sClient.GetClusterTrainingRuntime(ctx, targetCTR)
 		if err == nil {
@@ -198,13 +189,6 @@ func TestTrainerDeletionWithResourceInUseFinalizer(t *testing.T) {
 			_, _ = k8sClient.DynamicClient.Resource(ctrGVR).
 				Patch(ctx, targetCTR, types.MergePatchType, patch, metav1.PatchOptions{})
 		}
-
-		// Wait for Trainer to be fully deleted before next test
-		waitForTrainerDeleted := func(g Gomega) {
-			_, err := k8sClient.GetTrainer(ctx)
-			g.Expect(err).To(HaveOccurred(), "Trainer should be fully deleted")
-		}
-		g.Eventually(waitForTrainerDeleted).WithTimeout(30 * time.Second).Should(Succeed())
 	})
 
 	verifyManagedReady := func(g Gomega) {
