@@ -17,27 +17,20 @@ limitations under the License.
 package controller
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
-	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/annotations"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/render/kustomize"
-	"github.com/opendatahub-io/odh-platform-utilities/pkg/resources"
 )
 
 const defaultOverlay = "rhoai"
 
-func renderOverlay(path, namespace, trainerName string) ([]unstructured.Unstructured, error) {
+func renderOverlay(path, namespace string) ([]unstructured.Unstructured, error) {
 	opts := []kustomize.RenderOptsFn{
 		kustomize.WithLabel(labels.PlatformPartOf, trainerPartOf),
 	}
@@ -48,17 +41,6 @@ func renderOverlay(path, namespace, trainerName string) ([]unstructured.Unstruct
 	rendered, err := kustomize.Render(path, nil, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("rendering kustomize overlay: %w", err)
-	}
-
-	// Stamp instance annotations for drift correction via cluster.EnqueueOwner()
-	for i := range rendered {
-		annots := rendered[i].GetAnnotations()
-		if annots == nil {
-			annots = make(map[string]string)
-		}
-		annots[annotations.InstanceName] = trainerName
-		annots[annotations.InstanceNamespace] = "" // Trainer is cluster-scoped
-		rendered[i].SetAnnotations(annots)
 	}
 
 	return rendered, nil
@@ -72,44 +54,6 @@ func filterConfigMaps(items []unstructured.Unstructured) []unstructured.Unstruct
 		}
 	}
 	return filtered
-}
-
-const fieldOwner = client.FieldOwner("trainer-module-controller")
-
-func applyResources(ctx context.Context, c client.Client, rendered []unstructured.Unstructured) error {
-	log := logf.FromContext(ctx)
-
-	for i := range rendered {
-		res := &rendered[i]
-
-		if err := resources.Apply(ctx, c, res, fieldOwner, client.ForceOwnership); err != nil {
-			if isImmutableFieldError(err) && res.GetKind() == "Deployment" {
-				log.Info("Deployment has immutable field change, deleting for re-creation on next reconcile",
-					"name", res.GetName(), "namespace", res.GetNamespace())
-
-				toDelete := &unstructured.Unstructured{}
-				toDelete.SetGroupVersionKind(res.GroupVersionKind())
-				toDelete.SetName(res.GetName())
-				toDelete.SetNamespace(res.GetNamespace())
-
-				if delErr := c.Delete(ctx, toDelete); delErr != nil && !k8serr.IsNotFound(delErr) {
-					return fmt.Errorf("deleting %s %s/%s for recreation: %w", res.GetKind(), res.GetNamespace(), res.GetName(), delErr)
-				}
-
-				return fmt.Errorf("deleted %s %s/%s due to immutable field change, will recreate on next reconcile", res.GetKind(), res.GetNamespace(), res.GetName())
-			} else {
-				return fmt.Errorf("applying %s %s/%s: %w", res.GetKind(), res.GetNamespace(), res.GetName(), err)
-			}
-		}
-
-		log.V(1).Info("Applied resource", "kind", res.GetKind(), "name", res.GetName(), "namespace", res.GetNamespace())
-	}
-
-	return nil
-}
-
-func isImmutableFieldError(err error) bool {
-	return k8serr.IsInvalid(err) && strings.Contains(err.Error(), "field is immutable")
 }
 
 func ensureWorkDir(templatePath, workPath string) error {

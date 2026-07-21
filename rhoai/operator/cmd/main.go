@@ -32,8 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/dynamic"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -169,29 +167,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
-	if err != nil {
-		setupLog.Error(err, "unable to create dynamic client")
-		os.Exit(1)
-	}
+	ctx := ctrl.SetupSignalHandler()
 
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
-	if err != nil {
-		setupLog.Error(err, "unable to create discovery client")
-		os.Exit(1)
-	}
-
-	if err := (&controller.TrainerReconciler{
-		Client:           mgr.GetClient(),
-		APIReader:        mgr.GetAPIReader(),
-		Scheme:           mgr.GetScheme(),
+	if _, err := controller.NewReconciler(ctx, mgr, &controller.ReconcilerConfig{
 		ManifestsPath:    manifestsPath,
 		RuntimesPath:     runtimesPath,
 		ImageStreamsPath: imageStreamsPath,
 		WorkDir:          workDir,
-		DynamicClient:    dynamicClient,
-		DiscoveryClient:  discoveryClient,
-	}).SetupWithManager(mgr); err != nil {
+	}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Trainer")
 		os.Exit(1)
 	}
@@ -207,7 +190,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

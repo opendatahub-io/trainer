@@ -98,7 +98,6 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 		provCond := findCondition(trainer, common.ConditionTypeProvisioningSucceeded)
 		g.Expect(provCond).NotTo(BeNil())
 		g.Expect(provCond.Status).To(Equal(metav1.ConditionTrue))
-		g.Expect(provCond.Reason).To(Equal("Provisioned"))
 
 		g.Expect(trainer.Status.Releases).NotTo(BeEmpty())
 		g.Expect(trainer.Status.Releases[0].Name).To(Equal("Kubeflow Trainer"))

@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
@@ -43,7 +44,7 @@ const (
 )
 
 // checkJobSetAvailable verifies that the JobSet CRD exists and is established.
-func (r *TrainerReconciler) checkJobSetAvailable(ctx context.Context) bool {
+func checkJobSetAvailable(ctx context.Context, c client.Client) bool {
 	log := logf.FromContext(ctx)
 
 	jobSetGK := schema.GroupKind{
@@ -51,7 +52,7 @@ func (r *TrainerReconciler) checkJobSetAvailable(ctx context.Context) bool {
 		Kind:  jobSetKind,
 	}
 
-	if err := cluster.CustomResourceDefinitionExists(ctx, r.Client, jobSetGK); err != nil {
+	if err := cluster.CustomResourceDefinitionExists(ctx, c, jobSetGK); err != nil {
 		log.Error(err, "JobSet CRD not available", "crd", jobSetCRDName, "version", jobSetVersion)
 		return false
 	}
@@ -60,10 +61,10 @@ func (r *TrainerReconciler) checkJobSetAvailable(ctx context.Context) bool {
 	return true
 }
 
-func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bool {
+func checkJobSetOperatorInstalled(ctx context.Context, c client.Client) bool {
 	log := logf.FromContext(ctx)
 
-	operatorInfo, err := olm.OperatorExists(ctx, r.Client, jobSetOperatorName)
+	operatorInfo, err := olm.OperatorExists(ctx, c, jobSetOperatorName)
 	if err != nil {
 		log.Error(err, "Failed to verify JobSet Operator installation")
 		return false
@@ -74,7 +75,7 @@ func (r *TrainerReconciler) checkJobSetOperatorInstalled(ctx context.Context) bo
 }
 
 // checkJobSetOperatorCR checks that JobSetOperator CR exists with name "cluster".
-func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
+func checkJobSetOperatorCR(ctx context.Context, c client.Client) bool {
 	log := logf.FromContext(ctx)
 
 	jobSetOperatorCR := &unstructured.Unstructured{}
@@ -84,7 +85,7 @@ func (r *TrainerReconciler) checkJobSetOperatorCR(ctx context.Context) bool {
 		Kind:    jobSetOperatorKind,
 	})
 
-	if err := cluster.GetSingleton(ctx, r.Client, jobSetOperatorCR); err != nil {
+	if err := cluster.GetSingleton(ctx, c, jobSetOperatorCR); err != nil {
 		log.Error(err, "Failed to verify JobSetOperator CR", "expectedName", jobSetOperatorCRName)
 		return false
 	}
@@ -110,7 +111,7 @@ func isJobSetOperatorConditionDegraded(condType, condStatus string) bool {
 
 // checkJobSetOperatorHealth fetches the JobSetOperator CR and inspects its
 // status conditions for degraded state.
-func (r *TrainerReconciler) checkJobSetOperatorHealth(ctx context.Context) (bool, error) {
+func checkJobSetOperatorHealth(ctx context.Context, c client.Client) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	cr := &unstructured.Unstructured{}
@@ -120,7 +121,7 @@ func (r *TrainerReconciler) checkJobSetOperatorHealth(ctx context.Context) (bool
 		Kind:    jobSetOperatorKind,
 	})
 
-	if err := cluster.GetSingleton(ctx, r.Client, cr); err != nil {
+	if err := cluster.GetSingleton(ctx, c, cr); err != nil {
 		return false, fmt.Errorf("failed to fetch JobSetOperator CR for health check: %w", err)
 	}
 

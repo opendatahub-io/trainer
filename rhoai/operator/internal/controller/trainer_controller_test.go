@@ -18,11 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	. "github.com/onsi/gomega"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -38,6 +38,10 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 
+	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/actions"
+	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/reconciler"
+	fwtypes "github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
+
 	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
 )
 
@@ -45,8 +49,6 @@ const (
 	testTrainerName      = "default-trainer"
 	testTrainerNamespace = "test-trainer-ns"
 	testCRDSchemaType    = "object"
-	testConfigMapName    = "trainer-test-config"
-	testAppLabel         = "app"
 	testJobSetPlural     = "jobsets"
 )
 
@@ -70,19 +72,13 @@ func TestReconcileManaged(t *testing.T) {
 		cleanupNamespace(ctx, testTrainerNamespace)
 	})
 
-	reconciler := newTestReconciler()
+	r := newTestReconciler(t)
 
-	_, err := reconciler.Reconcile(ctx, testRequest())
+	_, err := r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated := getTrainer(ctx, g)
 	g.Expect(controllerutil.ContainsFinalizer(updated, finalizerName)).To(BeTrue())
-
-	_, err = reconciler.Reconcile(ctx, testRequest())
-	g.Expect(err).NotTo(HaveOccurred())
-
-	updated = getTrainer(ctx, g)
-	g.Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
 	g.Expect(updated.Status.Phase).To(Equal(common.PhaseReady))
 
 	readyCond := findCondition(updated, common.ConditionTypeReady)
@@ -92,20 +88,17 @@ func TestReconcileManaged(t *testing.T) {
 	provCond := findCondition(updated, common.ConditionTypeProvisioningSucceeded)
 	g.Expect(provCond).NotTo(BeNil())
 	g.Expect(provCond.Status).To(Equal(metav1.ConditionTrue))
-	g.Expect(provCond.Reason).To(Equal("Provisioned"))
 
 	ns := &corev1.Namespace{}
 	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testTrainerNamespace}, ns)).To(Succeed())
 	g.Expect(ns.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", trainerPartOf))
-
-	cm := &corev1.ConfigMap{}
-	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testConfigMapName, Namespace: testTrainerNamespace}, cm)).To(Succeed())
-	g.Expect(cm.Labels).To(HaveKeyWithValue("platform.opendatahub.io/part-of", trainerPartOf))
 }
 
 func TestReconcileDelete(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
+
+	createJobSetCRD(ctx, t, g)
 
 	trainer := &componentsv1alpha1.Trainer{
 		ObjectMeta: metav1.ObjectMeta{
@@ -113,10 +106,11 @@ func TestReconcileDelete(t *testing.T) {
 		},
 	}
 	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
+	t.Cleanup(func() { cleanupTrainer(ctx) })
 
-	reconciler := newTestReconciler()
+	r := newTestReconciler(t)
 
-	_, err := reconciler.Reconcile(ctx, testRequest())
+	_, err := r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated := getTrainer(ctx, g)
@@ -124,7 +118,7 @@ func TestReconcileDelete(t *testing.T) {
 
 	g.Expect(k8sClient.Delete(ctx, updated)).To(Succeed())
 
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	_, err = r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	deleted := &componentsv1alpha1.Trainer{}
@@ -136,9 +130,9 @@ func TestReconcileNotFound(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
 
-	reconciler := newTestReconciler()
+	r := newTestReconciler(t)
 
-	result, err := reconciler.Reconcile(ctx, reconcile.Request{
+	result, err := r.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "nonexistent"},
 	})
 	g.Expect(err).NotTo(HaveOccurred())
@@ -202,8 +196,7 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 		_ = dynamicClient.Resource(trGVR).Namespace("tr-test-ns").Delete(ctx, "labeled-tr", metav1.DeleteOptions{})
 	})
 
-	reconciler := newTestReconciler()
-	reconciler.cleanupTrainerResources(ctx)
+	cleanupTrainerResources(ctx, dynamicClient)
 
 	_, err = dynamicClient.Resource(ctrGVR).Get(ctx, "labeled-ctr", metav1.GetOptions{})
 	g.Expect(errors.IsNotFound(err)).To(BeTrue(), "labeled CTR should be deleted")
@@ -218,18 +211,47 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 func TestGetComponentReleases(t *testing.T) {
 	g := NewWithT(t)
 
-	reconciler := newTestReconciler()
+	m := newTestActions()
 
-	releases, err := reconciler.getComponentReleases()
+	releases, err := m.getComponentReleases()
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(releases).NotTo(BeEmpty())
 
-	t.Logf("Parsed release: Name=%q, Version=%q, RepoURL=%q",
-		releases[0].Name, releases[0].Version, releases[0].RepoURL)
-
 	g.Expect(releases[0].Name).To(Equal("Kubeflow Trainer"))
 	g.Expect(releases[0].Version).To(Equal("2.1.0"))
-	g.Expect(releases[0].RepoURL).NotTo(BeEmpty(), "RepoURL should not be empty")
+	g.Expect(releases[0].RepoURL).NotTo(BeEmpty())
+}
+
+func TestReconcileManagedPopulatesReleases(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	createJobSetCRD(ctx, t, g)
+
+	trainer := &componentsv1alpha1.Trainer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testTrainerName,
+		},
+		Spec: componentsv1alpha1.TrainerSpec{
+			AppNamespace: testTrainerNamespace,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
+	t.Cleanup(func() {
+		cleanupTrainer(ctx)
+		cleanupNamespace(ctx, testTrainerNamespace)
+	})
+
+	r := newTestReconciler(t)
+
+	_, err := r.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated := getTrainer(ctx, g)
+	g.Expect(updated.Status.Releases).NotTo(BeEmpty(), "Releases array should be populated")
+	g.Expect(updated.Status.Releases[0].Name).To(Equal("Kubeflow Trainer"))
+	g.Expect(updated.Status.Releases[0].Version).To(Equal("2.1.0"))
+	g.Expect(updated.Status.Releases[0].RepoURL).To(Equal("https://github.com/kubeflow/trainer"))
 }
 
 func TestPlatformVersionHandshake(t *testing.T) {
@@ -255,17 +277,15 @@ func TestPlatformVersionHandshake(t *testing.T) {
 		cleanupNamespace(ctx, handshakeNS)
 	})
 
-	reconciler := newTestReconciler()
+	r := newTestReconciler(t)
 
-	// First reconcile: no platform ConfigMap exists — handshake skipped
-	_, err := reconciler.Reconcile(ctx, testRequest())
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	// First reconcile: no platform ConfigMap exists
+	_, err := r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated := getTrainer(ctx, g)
-	for _, r := range updated.Status.Releases {
-		g.Expect(r.Name).NotTo(Equal(platformReleaseName), "platform release should not exist without ConfigMap")
+	for _, rel := range updated.Status.Releases {
+		g.Expect(rel.Name).NotTo(Equal(platformReleaseName), "platform release should not exist without ConfigMap")
 	}
 
 	// Create the platform config ConfigMap
@@ -282,18 +302,16 @@ func TestPlatformVersionHandshake(t *testing.T) {
 		},
 	}
 	g.Expect(k8sClient.Create(ctx, platformCM)).To(Succeed())
-	t.Cleanup(func() {
-		_ = k8sClient.Delete(ctx, platformCM)
-	})
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, platformCM) })
 
 	// Reconcile again — platform version should appear in releases
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	_, err = r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated = getTrainer(ctx, g)
 	var platformRelease *common.ComponentRelease
-	for i, r := range updated.Status.Releases {
-		if r.Name == platformReleaseName {
+	for i, rel := range updated.Status.Releases {
+		if rel.Name == platformReleaseName {
 			platformRelease = &updated.Status.Releases[i]
 			break
 		}
@@ -301,59 +319,24 @@ func TestPlatformVersionHandshake(t *testing.T) {
 	g.Expect(platformRelease).NotTo(BeNil(), "platform release entry should exist")
 	g.Expect(platformRelease.Version).To(Equal(platformVersion))
 
-	// Simulate platform upgrade: update ConfigMap to new version
+	// Simulate platform upgrade
 	upgradedVersion := "2.21.0"
 	platformCM.Data[platformVersionKey] = upgradedVersion
 	g.Expect(k8sClient.Update(ctx, platformCM)).To(Succeed())
 
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	_, err = r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated = getTrainer(ctx, g)
 	platformRelease = nil
-	for i, r := range updated.Status.Releases {
-		if r.Name == platformReleaseName {
+	for i, rel := range updated.Status.Releases {
+		if rel.Name == platformReleaseName {
 			platformRelease = &updated.Status.Releases[i]
 			break
 		}
 	}
-	g.Expect(platformRelease).NotTo(BeNil(), "platform release entry should exist after upgrade")
+	g.Expect(platformRelease).NotTo(BeNil(), "platform release should exist after upgrade")
 	g.Expect(platformRelease.Version).To(Equal(upgradedVersion))
-}
-
-func TestReconcileManagedPopulatesReleases(t *testing.T) {
-	g := NewWithT(t)
-	ctx := context.Background()
-
-	createJobSetCRD(ctx, t, g)
-
-	trainer := &componentsv1alpha1.Trainer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: testTrainerName,
-		},
-		Spec: componentsv1alpha1.TrainerSpec{
-			AppNamespace: testTrainerNamespace,
-		},
-	}
-	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
-	t.Cleanup(func() {
-		cleanupTrainer(ctx)
-		cleanupNamespace(ctx, testTrainerNamespace)
-	})
-
-	reconciler := newTestReconciler()
-
-	_, err := reconciler.Reconcile(ctx, testRequest())
-	g.Expect(err).NotTo(HaveOccurred())
-
-	_, err = reconciler.Reconcile(ctx, testRequest())
-	g.Expect(err).NotTo(HaveOccurred())
-
-	updated := getTrainer(ctx, g)
-	g.Expect(updated.Status.Releases).NotTo(BeEmpty(), "Releases array should be populated")
-	g.Expect(updated.Status.Releases[0].Name).To(Equal("Kubeflow Trainer"))
-	g.Expect(updated.Status.Releases[0].Version).To(Equal("2.1.0"))
-	g.Expect(updated.Status.Releases[0].RepoURL).To(Equal("https://github.com/kubeflow/trainer"))
 }
 
 func TestReconcileDeleteAndRecreate(t *testing.T) {
@@ -377,26 +360,23 @@ func TestReconcileDeleteAndRecreate(t *testing.T) {
 		cleanupNamespace(ctx, lifecycleNS)
 	})
 
-	reconciler := newTestReconciler()
+	r := newTestReconciler(t)
 
-	// Reach Ready state
-	_, err := reconciler.Reconcile(ctx, testRequest())
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	_, err := r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(getTrainer(ctx, g).Status.Phase).To(Equal(common.PhaseReady))
 
-	// Delete the CR (platform removes it when module is disabled)
+	// Delete the CR
 	updated := getTrainer(ctx, g)
 	g.Expect(k8sClient.Delete(ctx, updated)).To(Succeed())
 
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	_, err = r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	err = k8sClient.Get(ctx, types.NamespacedName{Name: testTrainerName}, &componentsv1alpha1.Trainer{})
 	g.Expect(errors.IsNotFound(err)).To(BeTrue(), "Trainer should be deleted")
 
-	// Recreate the CR (platform re-enables the module)
+	// Recreate the CR
 	trainer = &componentsv1alpha1.Trainer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: testTrainerName,
@@ -407,67 +387,17 @@ func TestReconcileDeleteAndRecreate(t *testing.T) {
 	}
 	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
 
-	_, err = reconciler.Reconcile(ctx, testRequest())
+	// First reconcile: adds finalizer + runs pipeline. The addFinalizer Update
+	// changes the resource version, so a second reconcile is needed for the
+	// framework's status SSA to apply cleanly.
+	_, err = r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
-	_, err = reconciler.Reconcile(ctx, testRequest())
+
+	_, err = r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated = getTrainer(ctx, g)
 	g.Expect(updated.Status.Phase).To(Equal(common.PhaseReady))
-
-	cm := &corev1.ConfigMap{}
-	g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testConfigMapName, Namespace: lifecycleNS}, cm)).To(Succeed())
-}
-
-func TestDeploymentHealthCheckSuccess(t *testing.T) {
-	g := NewWithT(t)
-	ctx := context.Background()
-
-	reconciler := newTestReconciler()
-	testNS := "deployment-health-success-test"
-
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: testNS},
-	}
-	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
-	t.Cleanup(func() { cleanupNamespace(ctx, testNS) })
-
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "trainer-controller",
-			Namespace: testNS,
-			Labels: map[string]string{
-				"platform.opendatahub.io/part-of": trainerPartOf,
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(1),
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{testAppLabel: trainerPartOf},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{testAppLabel: trainerPartOf},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{Name: trainerPartOf, Image: trainerPartOf + ":latest"},
-					},
-				},
-			},
-		},
-	}
-	g.Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, deployment) })
-
-	deployment.Status = appsv1.DeploymentStatus{
-		Replicas:      1,
-		ReadyReplicas: 1,
-	}
-	g.Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
-
-	err := reconciler.checkDeploymentHealth(ctx, testNS)
-	g.Expect(err).NotTo(HaveOccurred())
 }
 
 func TestEnsureNamespaceAlreadyExists(t *testing.T) {
@@ -481,96 +411,61 @@ func TestEnsureNamespaceAlreadyExists(t *testing.T) {
 	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 	t.Cleanup(func() { cleanupNamespace(ctx, testNS) })
 
-	reconciler := newTestReconciler()
-	err := reconciler.ensureNamespace(ctx, testNS)
+	m := newTestActions()
+	err := m.ensureNamespace(ctx, &fwtypes.ReconciliationRequest{
+		Client:   k8sClient,
+		Instance: &componentsv1alpha1.Trainer{Spec: componentsv1alpha1.TrainerSpec{AppNamespace: testNS}},
+	})
 	g.Expect(err).NotTo(HaveOccurred())
 }
 
-func TestDeploymentHealthCheckFailure(t *testing.T) {
+func TestIsImmutableFieldError(t *testing.T) {
 	g := NewWithT(t)
-	ctx := context.Background()
 
-	reconciler := newTestReconciler()
-	testNS := "deployment-health-test"
-
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "trainer-controller",
-			Namespace: testNS,
-			Labels: map[string]string{
-				"platform.opendatahub.io/part-of": trainerPartOf,
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(1),
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{testAppLabel: trainerPartOf},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{testAppLabel: trainerPartOf},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{Name: trainerPartOf, Image: trainerPartOf + ":latest"},
-					},
-				},
-			},
-		},
-		Status: appsv1.DeploymentStatus{
-			Replicas:      1,
-			ReadyReplicas: 0,
-		},
-	}
-
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: testNS,
-		},
-	}
-	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
-	t.Cleanup(func() {
-		cleanupNamespace(ctx, testNS)
-	})
-
-	g.Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
-	t.Cleanup(func() {
-		_ = k8sClient.Delete(ctx, deployment)
-	})
-
-	err := reconciler.checkDeploymentHealth(ctx, testNS)
-	g.Expect(err).To(HaveOccurred())
-	g.Expect(err.Error()).To(ContainSubstring("0/1 deployments ready"))
+	g.Expect(isImmutableFieldError(fmt.Errorf("field is immutable"))).To(BeTrue())
+	g.Expect(isImmutableFieldError(fmt.Errorf("apply failed: field is immutable; 2 more failed"))).To(BeTrue())
+	g.Expect(isImmutableFieldError(fmt.Errorf("not found"))).To(BeFalse())
+	g.Expect(isImmutableFieldError(nil)).To(BeFalse())
 }
 
-func int32Ptr(i int32) *int32 {
-	return &i
+// --- Helpers ---
+
+func newTestReconciler(t *testing.T) *reconciler.Reconciler {
+	t.Helper()
+
+	m := newTestActions()
+	// Only register ProvisioningSucceeded as dependent — the test pipeline
+	// omits deployments.NewAction, so DeploymentsAvailable would never be set
+	// and CleanupStaleConditions would mark it as an error.
+	r, err := reconciler.NewReconciler(testMgr, "trainer", &componentsv1alpha1.Trainer{},
+		reconciler.WithFinalizerName(finalizerName),
+		reconciler.WithConditionsManagerFactory("Ready", "ProvisioningSucceeded"),
+	)
+	if err != nil {
+		t.Fatalf("failed to create reconciler: %v", err)
+	}
+
+	r.Client = k8sClient
+	m.reconciler = r
+
+	r.Actions = []actions.Fn{
+		m.checkDependencies,
+		m.ensureNamespace,
+		m.updateReleases,
+		m.renderManifests,
+	}
+	r.Finalizer = []actions.Fn{m.cleanup}
+
+	return r
 }
 
-func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, objLabels map[string]string) *unstructured.Unstructured {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(gvk)
-	obj.SetName(name)
-	if namespace != "" {
-		obj.SetNamespace(namespace)
-	}
-	if objLabels != nil {
-		obj.SetLabels(objLabels)
-	}
-	return obj
-}
-
-func newTestReconciler() *TrainerReconciler {
-	return &TrainerReconciler{
-		Client:           k8sClient,
-		APIReader:        k8sClient,
-		Scheme:           k8sClient.Scheme(),
-		ManifestsPath:    testManifestsPath,
-		RuntimesPath:     testRuntimesPath,
-		ImageStreamsPath: testImageStreamsPath,
-		WorkDir:          testWorkDir,
-		DynamicClient:    dynamicClient,
-		DiscoveryClient:  discoveryClient,
+func newTestActions() *trainerActions {
+	return &trainerActions{
+		apiReader:        k8sClient,
+		manifestsPath:    testManifestsPath,
+		runtimesPath:     testRuntimesPath,
+		imageStreamsPath: testImageStreamsPath,
+		workDir:          testWorkDir,
 	}
 }
 
@@ -597,11 +492,18 @@ func findCondition(trainer *componentsv1alpha1.Trainer, condType common.Conditio
 
 func cleanupTrainer(ctx context.Context) {
 	resource := &componentsv1alpha1.Trainer{}
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: testTrainerName}, resource); err == nil {
-		controllerutil.RemoveFinalizer(resource, finalizerName)
-		_ = k8sClient.Update(ctx, resource)
-		_ = k8sClient.Delete(ctx, resource)
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: testTrainerName}, resource); err != nil {
+		return
 	}
+
+	controllerutil.RemoveFinalizer(resource, finalizerName)
+	_ = k8sClient.Update(ctx, resource)
+	_ = k8sClient.Delete(ctx, resource)
+
+	_ = wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: testTrainerName}, &componentsv1alpha1.Trainer{})
+		return errors.IsNotFound(err), nil
+	})
 }
 
 func cleanupNamespace(ctx context.Context, name string) {
@@ -662,4 +564,17 @@ func deleteJobSetCRDAndWait(ctx context.Context) {
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: jobSetCRDName}, &apiextensionsv1.CustomResourceDefinition{})
 		return errors.IsNotFound(err), nil
 	})
+}
+
+func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, objLabels map[string]string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName(name)
+	if namespace != "" {
+		obj.SetNamespace(namespace)
+	}
+	if objLabels != nil {
+		obj.SetLabels(objLabels)
+	}
+	return obj
 }

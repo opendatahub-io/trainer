@@ -28,10 +28,12 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 
@@ -47,6 +49,7 @@ var (
 	k8sClient            client.Client
 	dynamicClient        dynamic.Interface
 	discoveryClient      discovery.DiscoveryInterface
+	testMgr              manager.Manager
 	testManifestsPath    string
 	testRuntimesPath     string
 	testImageStreamsPath string
@@ -110,6 +113,17 @@ func TestMain(m *testing.M) {
 	discoveryClient, err = discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
 		logf.Log.Error(err, "failed to create discovery client")
+		os.Exit(1)
+	}
+
+	testMgr, err = ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme.Scheme,
+	})
+	if err != nil {
+		logf.Log.Error(err, "failed to create manager")
+		if stopErr := testEnv.Stop(); stopErr != nil {
+			logf.Log.Error(stopErr, "failed to stop test environment after manager creation failure")
+		}
 		os.Exit(1)
 	}
 

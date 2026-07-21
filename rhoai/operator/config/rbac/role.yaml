@@ -97,6 +97,7 @@ rules:
   - get
   - list
   - patch
+  - update
   - watch
 - apiGroups:
   - components.platform.opendatahub.io
@@ -128,6 +129,13 @@ rules:
   - get
   - list
   - update
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - image.openshift.io
   resources:
@@ -189,6 +197,7 @@ rules:
   verbs:
   - get
   - list
+  - watch
 - apiGroups:
   - operators.coreos.com
   resources:

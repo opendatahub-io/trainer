@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -77,11 +78,9 @@ func TestCheckJobSetAvailableWhenCRDExistsAndEstablished(t *testing.T) {
 		WithObjects(jobSetCRD).
 		Build()
 
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
+	c := fakeClient
 
-	available := reconciler.checkJobSetAvailable(ctx)
+	available := checkJobSetAvailable(ctx, c)
 	g.Expect(available).To(BeTrue())
 }
 
@@ -98,11 +97,9 @@ func TestCheckJobSetAvailableWhenCRDDoesNotExist(t *testing.T) {
 		WithScheme(s).
 		Build()
 
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
+	c := fakeClient
 
-	available := reconciler.checkJobSetAvailable(ctx)
+	available := checkJobSetAvailable(ctx, c)
 	g.Expect(available).To(BeFalse())
 }
 
@@ -135,11 +132,9 @@ func TestCheckJobSetAvailableWhenCRDNotEstablished(t *testing.T) {
 		WithObjects(jobSetCRD).
 		Build()
 
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
+	c := fakeClient
 
-	available := reconciler.checkJobSetAvailable(ctx)
+	available := checkJobSetAvailable(ctx, c)
 	g.Expect(available).To(BeFalse())
 }
 
@@ -202,12 +197,10 @@ func TestCheckJobSetOperatorCRWhenCRDExistsButCRDoesNotExist(t *testing.T) {
 		WithObjects(jobSetOperatorCRD).
 		Build()
 
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
+	c := fakeClient
 
 	// Should return false when CRD exists but CR doesn't
-	available := reconciler.checkJobSetOperatorCR(ctx)
+	available := checkJobSetOperatorCR(ctx, c)
 	g.Expect(available).To(BeFalse())
 }
 
@@ -269,12 +262,10 @@ func TestCheckJobSetOperatorCRWhenCRDAndCRExist(t *testing.T) {
 		WithObjects(jobSetOperatorCRD, jobSetOperatorCR).
 		Build()
 
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
+	c := fakeClient
 
 	// Should return true when both CRD and CR exist (happy path)
-	available := reconciler.checkJobSetOperatorCR(ctx)
+	available := checkJobSetOperatorCR(ctx, c)
 	g.Expect(available).To(BeTrue())
 }
 
@@ -300,11 +291,9 @@ func TestCheckJobSetOperatorInstalledWhenNoOperatorFound(t *testing.T) {
 		WithScheme(s).
 		Build()
 
-	reconciler := &TrainerReconciler{
-		Client: fakeClient,
-	}
+	c := fakeClient
 
-	installed := reconciler.checkJobSetOperatorInstalled(ctx)
+	installed := checkJobSetOperatorInstalled(ctx, c)
 	g.Expect(installed).To(BeFalse())
 }
 
@@ -326,8 +315,8 @@ func TestCheckJobSetOperatorHealthWhenHealthy(t *testing.T) {
 		{condFieldType: condAvailable, condFieldStatus: statusTrue, condFieldReason: "AsExpected"},
 	})
 
-	reconciler := newReconcilerWithJobSetOperatorCR(cr)
-	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	c := newClientWithJobSetOperatorCR(cr)
+	healthy, err := checkJobSetOperatorHealth(ctx, c)
 	g.Expect(healthy).To(BeTrue())
 	g.Expect(err).NotTo(HaveOccurred())
 }
@@ -338,8 +327,8 @@ func TestCheckJobSetOperatorHealthWhenNoConditions(t *testing.T) {
 
 	cr := newJobSetOperatorCR(nil)
 
-	reconciler := newReconcilerWithJobSetOperatorCR(cr)
-	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	c := newClientWithJobSetOperatorCR(cr)
+	healthy, err := checkJobSetOperatorHealth(ctx, c)
 	g.Expect(healthy).To(BeFalse())
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("no status conditions"))
@@ -353,8 +342,8 @@ func TestCheckJobSetOperatorHealthWhenDegradedTrue(t *testing.T) {
 		{condFieldType: condDegraded, condFieldStatus: statusTrue, condFieldReason: "SomethingBroke", "message": "controller failed"},
 	})
 
-	reconciler := newReconcilerWithJobSetOperatorCR(cr)
-	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	c := newClientWithJobSetOperatorCR(cr)
+	healthy, err := checkJobSetOperatorHealth(ctx, c)
 	g.Expect(healthy).To(BeFalse())
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("Degraded=True"))
@@ -370,8 +359,8 @@ func TestCheckJobSetOperatorHealthWhenAvailableFalse(t *testing.T) {
 		{condFieldType: condAvailable, condFieldStatus: statusFalse, condFieldReason: "NotReady"},
 	})
 
-	reconciler := newReconcilerWithJobSetOperatorCR(cr)
-	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	c := newClientWithJobSetOperatorCR(cr)
+	healthy, err := checkJobSetOperatorHealth(ctx, c)
 	g.Expect(healthy).To(BeFalse())
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("Available=False"))
@@ -386,8 +375,8 @@ func TestCheckJobSetOperatorHealthWithMultipleDegradedConditions(t *testing.T) {
 		{condFieldType: condAvailable, condFieldStatus: statusFalse, condFieldReason: "Down"},
 	})
 
-	reconciler := newReconcilerWithJobSetOperatorCR(cr)
-	healthy, err := reconciler.checkJobSetOperatorHealth(ctx)
+	c := newClientWithJobSetOperatorCR(cr)
+	healthy, err := checkJobSetOperatorHealth(ctx, c)
 	g.Expect(healthy).To(BeFalse())
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("Degraded=True"))
@@ -438,7 +427,7 @@ func newJobSetOperatorCR(conditions []map[string]interface{}) *unstructured.Unst
 	return cr
 }
 
-func newReconcilerWithJobSetOperatorCR(cr *unstructured.Unstructured) *TrainerReconciler {
+func newClientWithJobSetOperatorCR(cr *unstructured.Unstructured) client.Client {
 	crd := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: jobSetOperatorCRDName},
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
@@ -467,12 +456,10 @@ func newReconcilerWithJobSetOperatorCR(cr *unstructured.Unstructured) *TrainerRe
 	s := runtime.NewScheme()
 	_ = apiextensionsv1.AddToScheme(s)
 
-	fakeClient := fake.NewClientBuilder().
+	return fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(crd, cr).
 		Build()
-
-	return &TrainerReconciler{Client: fakeClient}
 }
 
 func init() {
