@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubeflow Authors.
+Copyright The Kubeflow Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -27,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/klog/v2/ktesting"
 	"k8s.io/utils/ptr"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
@@ -38,6 +38,41 @@ import (
 	jobsetplgconsts "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset/constants"
 	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
+
+func torchTuneResWithCPU(gpu string) corev1.ResourceList {
+	return corev1.ResourceList{
+		corev1.ResourceCPU: resource.MustParse("1"),
+		"example.com/gpu":  resource.MustParse(gpu),
+	}
+}
+
+func wantJobSetWithMergedGPU(ns, name, uid string, requests corev1.ResourceList, gpu string) *jobsetv1alpha2.JobSet {
+	jobSet := testingutil.MakeJobSetWrapper(ns, name).
+		ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), name, uid).
+		Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node, constants.Launcher).
+		Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+		Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+		NumNodes(1).
+		Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, requests).
+		Obj()
+	for i := range jobSet.Spec.ReplicatedJobs {
+		if jobSet.Spec.ReplicatedJobs[i].Name != constants.Node {
+			continue
+		}
+		for j := range jobSet.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers {
+			container := &jobSet.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers[j]
+			if container.Name != constants.Node {
+				continue
+			}
+			if container.Resources.Limits == nil {
+				container.Resources.Limits = corev1.ResourceList{}
+			}
+			container.Resources.Limits["nvidia.com/gpu"] = resource.MustParse(gpu)
+			return jobSet
+		}
+	}
+	return jobSet
+}
 
 func TestTrainingRuntimeNewObjects(t *testing.T) {
 	resRequests := corev1.ResourceList{
@@ -74,8 +109,17 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 				Suspend(true).
 				UID("uid").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
-				SpecLabel("conflictLabel", "override").
-				SpecAnnotation("conflictAnnotation", "override").
+				RuntimePatches([]trainer.RuntimePatch{{
+					Manager: "test.io/manager",
+					TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+						Template: &trainer.JobSetTemplatePatch{
+							Metadata: &metav1.ObjectMeta{
+								Labels:      map[string]string{"conflictLabel": "override"},
+								Annotations: map[string]string{"conflictAnnotation": "override"},
+							},
+						},
+					},
+				}}).
 				Trainer(
 					testingutil.MakeTrainJobTrainerWrapper().
 						NumNodes(30).
@@ -179,7 +223,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with TrainJob's PodTemplateOverrides.": {
+		"succeeded to build JobSet with TrainJob's RuntimePatches.": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					WithMLPolicy(
@@ -235,86 +279,103 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 						Obj(),
 				).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							InitContainers: []trainer.ContainerOverride{
-								{
-									Name: "override-init-container",
-									Env: []corev1.EnvVar{
+						Manager: "manager-1",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
 										{
-											Name:  "INIT_ENV",
-											Value: "override_init",
-										},
-										{
-											Name:  "NEW_VALUE",
-											Value: "from_overrides",
-										},
-									},
-								},
-							},
-							Containers: []trainer.ContainerOverride{
-								{
-									Name: constants.DatasetInitializer,
-									VolumeMounts: []corev1.VolumeMount{
-										{
-											Name:      "initializer_secret",
-											MountPath: "initializer_secret_mount_path",
-										},
-										{
-											Name:      "initializer_claim",
-											MountPath: "initializer_claim_mount_path",
-										},
-									},
-								},
-							},
-							Affinity: &corev1.Affinity{
-								NodeAffinity: &corev1.NodeAffinity{
-									RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-										NodeSelectorTerms: []corev1.NodeSelectorTerm{
-											{
-												MatchExpressions: []corev1.NodeSelectorRequirement{
-													{
-														Key:      "topology.kubernetes.io/zone",
-														Operator: corev1.NodeSelectorOpIn,
-														Values:   []string{"antarctica-east1", "antarctica-west1"},
+											Name: constants.DatasetInitializer,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															InitContainers: []trainer.ContainerPatch{
+																{
+																	Name: "override-init-container",
+																	Env: []corev1.EnvVar{
+																		{
+																			Name:  "INIT_ENV",
+																			Value: "override_init",
+																		},
+																		{
+																			Name:  "NEW_VALUE",
+																			Value: "from_overrides",
+																		},
+																	},
+																},
+															},
+															Containers: []trainer.ContainerPatch{
+																{
+																	Name: constants.DatasetInitializer,
+																	VolumeMounts: []corev1.VolumeMount{
+																		{
+																			Name:      "initializer_secret",
+																			MountPath: "initializer_secret_mount_path",
+																		},
+																		{
+																			Name:      "initializer_claim",
+																			MountPath: "initializer_claim_mount_path",
+																		},
+																	},
+																},
+															},
+															Affinity: &corev1.Affinity{
+																NodeAffinity: &corev1.NodeAffinity{
+																	RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+																		NodeSelectorTerms: []corev1.NodeSelectorTerm{
+																			{
+																				MatchExpressions: []corev1.NodeSelectorRequirement{
+																					{
+																						Key:      "topology.kubernetes.io/zone",
+																						Operator: corev1.NodeSelectorOpIn,
+																						Values:   []string{"antarctica-east1", "antarctica-west1"},
+																					},
+																				},
+																			},
+																		},
+																	},
+																},
+															},
+															NodeSelector: map[string]string{
+																"node.kubernetes.io/instance-type": "p5.48xlarge",
+															},
+															SchedulingGates: []corev1.PodSchedulingGate{
+																{
+																	Name: "kueue.x-k8s.io/admission",
+																},
+															},
+															Tolerations: []corev1.Toleration{
+																{
+																	Key:      "example.com/gpu",
+																	Operator: corev1.TolerationOpExists,
+																	Effect:   corev1.TaintEffectNoSchedule,
+																},
+															},
+															Volumes: []corev1.Volume{
+																{
+																	Name: "initializer_secret",
+																	VolumeSource: corev1.VolumeSource{
+																		Secret: &corev1.SecretVolumeSource{
+																			SecretName: "initializer_secret_name",
+																		},
+																	},
+																},
+																{
+																	Name: "initializer_claim",
+																	VolumeSource: corev1.VolumeSource{
+																		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+																			ClaimName: "initializer_claim_name",
+																		},
+																	},
+																},
+															},
+														},
 													},
 												},
 											},
-										},
-									},
-								},
-							},
-							NodeSelector: map[string]string{
-								"node.kubernetes.io/instance-type": "p5.48xlarge",
-							},
-							SchedulingGates: []corev1.PodSchedulingGate{
-								{
-									Name: "kueue.x-k8s.io/admission",
-								},
-							},
-							Tolerations: []corev1.Toleration{
-								{
-									Key:      "example.com/gpu",
-									Operator: corev1.TolerationOpExists,
-									Effect:   corev1.TaintEffectNoSchedule,
-								},
-							},
-							Volumes: []corev1.Volume{
-								{
-									Name: "initializer_secret",
-									VolumeSource: corev1.VolumeSource{
-										Secret: &corev1.SecretVolumeSource{
-											SecretName: "initializer_secret_name",
-										},
-									},
-								},
-								{
-									Name: "initializer_claim",
-									VolumeSource: corev1.VolumeSource{
-										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-											ClaimName: "initializer_claim_name",
 										},
 									},
 								},
@@ -322,93 +383,111 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						},
 					},
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("override-sa"),
-							InitContainers: []trainer.ContainerOverride{
-								{
-									Name: "override-init-container",
-									Env: []corev1.EnvVar{
+						Manager: "manager-2",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
 										{
-											Name:  "INIT_ENV",
-											Value: "override_init",
-										},
-									},
-								},
-							},
-							Containers: []trainer.ContainerOverride{
-								{
-									Name: constants.Node,
-									VolumeMounts: []corev1.VolumeMount{
-										{
-											Name:      "node_secret",
-											MountPath: "node_secret_mount_path",
-										},
-										{
-											Name:      "node_claim",
-											MountPath: "node_claim_mount_path",
-										},
-									},
-								},
-								{
-									Name: "override-container",
-									Env: []corev1.EnvVar{
-										{
-											Name:  "CONTAINER_ENV",
-											Value: "override_container",
-										},
-									},
-								},
-							},
-							Affinity: &corev1.Affinity{
-								NodeAffinity: &corev1.NodeAffinity{
-									RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-										NodeSelectorTerms: []corev1.NodeSelectorTerm{
-											{
-												MatchExpressions: []corev1.NodeSelectorRequirement{
-													{
-														Key:      "topology.kubernetes.io/zone",
-														Operator: corev1.NodeSelectorOpIn,
-														Values:   []string{"antarctica-east1", "antarctica-west1"},
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															ServiceAccountName: ptr.To("override-sa"),
+															InitContainers: []trainer.ContainerPatch{
+																{
+																	Name: "override-init-container",
+																	Env: []corev1.EnvVar{
+																		{
+																			Name:  "INIT_ENV",
+																			Value: "override_init",
+																		},
+																	},
+																},
+															},
+															Containers: []trainer.ContainerPatch{
+																{
+																	Name: constants.Node,
+																	VolumeMounts: []corev1.VolumeMount{
+																		{
+																			Name:      "node_secret",
+																			MountPath: "node_secret_mount_path",
+																		},
+																		{
+																			Name:      "node_claim",
+																			MountPath: "node_claim_mount_path",
+																		},
+																	},
+																},
+																{
+																	Name: "override-container",
+																	Env: []corev1.EnvVar{
+																		{
+																			Name:  "CONTAINER_ENV",
+																			Value: "override_container",
+																		},
+																	},
+																},
+															},
+															Affinity: &corev1.Affinity{
+																NodeAffinity: &corev1.NodeAffinity{
+																	RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+																		NodeSelectorTerms: []corev1.NodeSelectorTerm{
+																			{
+																				MatchExpressions: []corev1.NodeSelectorRequirement{
+																					{
+																						Key:      "topology.kubernetes.io/zone",
+																						Operator: corev1.NodeSelectorOpIn,
+																						Values:   []string{"antarctica-east1", "antarctica-west1"},
+																					},
+																				},
+																			},
+																		},
+																	},
+																},
+															},
+															ImagePullSecrets: []corev1.LocalObjectReference{
+																{Name: "registry-credential"},
+															},
+															NodeSelector: map[string]string{
+																"node.kubernetes.io/instance-type": "p5.48xlarge",
+															},
+															SchedulingGates: []corev1.PodSchedulingGate{
+																{
+																	Name: "kueue.x-k8s.io/admission",
+																},
+															},
+															Tolerations: []corev1.Toleration{
+																{
+																	Key:      "example.com/gpu",
+																	Operator: corev1.TolerationOpExists,
+																	Effect:   corev1.TaintEffectNoSchedule,
+																},
+															},
+															TerminationGracePeriodSeconds: ptr.To(int64(300)),
+															Volumes: []corev1.Volume{
+																{
+																	Name: "node_secret",
+																	VolumeSource: corev1.VolumeSource{
+																		Secret: &corev1.SecretVolumeSource{
+																			SecretName: "node_secret_name",
+																		},
+																	},
+																},
+																{
+																	Name: "node_claim",
+																	VolumeSource: corev1.VolumeSource{
+																		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+																			ClaimName: "node_claim_name",
+																		},
+																	},
+																},
+															},
+														},
 													},
 												},
 											},
-										},
-									},
-								},
-							},
-							ImagePullSecrets: []corev1.LocalObjectReference{
-								{Name: "registry-credential"},
-							},
-							NodeSelector: map[string]string{
-								"node.kubernetes.io/instance-type": "p5.48xlarge",
-							},
-							SchedulingGates: []corev1.PodSchedulingGate{
-								{
-									Name: "kueue.x-k8s.io/admission",
-								},
-							},
-							Tolerations: []corev1.Toleration{
-								{
-									Key:      "example.com/gpu",
-									Operator: corev1.TolerationOpExists,
-									Effect:   corev1.TaintEffectNoSchedule,
-								},
-							},
-							Volumes: []corev1.Volume{
-								{
-									Name: "node_secret",
-									VolumeSource: corev1.VolumeSource{
-										Secret: &corev1.SecretVolumeSource{
-											SecretName: "node_secret_name",
-										},
-									},
-								},
-								{
-									Name: "node_claim",
-									VolumeSource: corev1.VolumeSource{
-										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-											ClaimName: "node_claim_name",
 										},
 									},
 								},
@@ -532,6 +611,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							Operator: corev1.TolerationOpExists,
 							Effect:   corev1.TaintEffectNoSchedule,
 						}).
+					TerminationGracePeriodSeconds(constants.Node, 300).
 					Volumes(constants.DatasetInitializer,
 						corev1.Volume{
 							Name: "initializer_claim",
@@ -591,7 +671,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with nil affinity overrides from the TrainJob's PodTemplateOverrides.": {
+		"succeeded to build JobSet with nil affinity overrides from the TrainJob's RuntimePatches.": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					WithMLPolicy(
@@ -613,17 +693,51 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 						Obj(),
 				).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							Affinity: nil,
+						Manager: "manager-1",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.DatasetInitializer,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															Affinity: nil,
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
 						},
 					},
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							Affinity: nil,
+						Manager: "manager-2",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															Affinity: nil,
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
 						},
 					},
 				}).
@@ -642,7 +756,89 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with labels and annotations overrides from the TrainJob's PodTemplateOverrides.": {
+		"succeeded to build JobSet with securityContext overrides from the TrainJob's RuntimePatches.": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
+					WithMLPolicy(
+						testingutil.MakeMLPolicyWrapper().
+							WithNumNodes(100).
+							Obj(),
+					).
+					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					Container(constants.Node, "sidecar", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					Obj(),
+			).Obj(),
+			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				UID("uid").
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
+				Trainer(
+					testingutil.MakeTrainJobTrainerWrapper().
+						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+						Obj(),
+				).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "security-manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															SecurityContext: &corev1.PodSecurityContext{
+																FSGroup:      ptr.To(int64(2000)),
+																RunAsUser:    ptr.To(int64(1000)),
+																RunAsGroup:   ptr.To(int64(3000)),
+																RunAsNonRoot: ptr.To(true),
+															},
+															Containers: []trainer.ContainerPatch{
+																{
+																	Name: "sidecar",
+																	SecurityContext: &corev1.SecurityContext{
+																		AllowPrivilegeEscalation: ptr.To(false),
+																		ReadOnlyRootFilesystem:   ptr.To(true),
+																	},
+																},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			wantObjs: []runtime.Object{
+				testingutil.MakeJobSetWrapper(metav1.NamespaceDefault, "test-job").
+					ControllerReference(trainer.SchemeGroupVersion.WithKind(trainer.TrainJobKind), "test-job", "uid").
+					Replicas(1, constants.DatasetInitializer, constants.ModelInitializer, constants.Node).
+					Parallelism(1, constants.DatasetInitializer, constants.ModelInitializer).
+					Completions(1, constants.DatasetInitializer, constants.ModelInitializer).
+					NumNodes(100).
+					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
+					Container(constants.Node, "sidecar", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					PodSecurityContext(constants.Node, corev1.PodSecurityContext{
+						FSGroup:      ptr.To(int64(2000)),
+						RunAsUser:    ptr.To(int64(1000)),
+						RunAsGroup:   ptr.To(int64(3000)),
+						RunAsNonRoot: ptr.To(true),
+					}).
+					ContainerSecurityContext(constants.Node, "sidecar", corev1.SecurityContext{
+						AllowPrivilegeEscalation: ptr.To(false),
+						ReadOnlyRootFilesystem:   ptr.To(true),
+					}).
+					Obj(),
+			},
+		},
+		"succeeded to build JobSet with labels and annotations overrides from the TrainJob's RuntimePatches.": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					WithMLPolicy(
@@ -664,19 +860,59 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						Container("test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 						Obj(),
 				).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.DatasetInitializer}},
-						Metadata: &metav1.ObjectMeta{
-							Labels:      map[string]string{"k1": "v1"},
-							Annotations: map[string]string{"a1": "v1"},
+						Manager: "manager-1",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.DatasetInitializer,
+											Template: &trainer.JobTemplatePatch{
+												Metadata: &metav1.ObjectMeta{
+													Labels: map[string]string{"job-k1": "job-v1"},
+												},
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Metadata: &metav1.ObjectMeta{
+															Labels:      map[string]string{"k1": "v1"},
+															Annotations: map[string]string{"a1": "v1"},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
 						},
 					},
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Metadata: &metav1.ObjectMeta{
-							Labels:      map[string]string{"k2": "v2"},
-							Annotations: map[string]string{"a2": "v2"},
+						Manager: "manager-2",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Metadata: &metav1.ObjectMeta{
+													Labels: map[string]string{"job-k2": "job-v2"},
+												},
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Metadata: &metav1.ObjectMeta{
+															Labels:      map[string]string{"k2": "v2"},
+															Annotations: map[string]string{"a2": "v2"},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
 						},
 					},
 				}).
@@ -692,14 +928,16 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					InitContainer(constants.Node, "override-init-container", "test:runtime").
 					Container(constants.Node, constants.Node, "test:trainjob", []string{"trainjob"}, []string{"trainjob"}, resRequests).
 					Container(constants.Node, "override-container", "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					ReplicatedJobLabel("job-k1", "job-v1", constants.DatasetInitializer).
 					PodLabelForJobs("k1", "v1", constants.DatasetInitializer).
 					PodAnnotationForJobs("a1", "v1", constants.DatasetInitializer).
+					ReplicatedJobLabel("job-k2", "job-v2", constants.Node).
 					PodLabelForJobs("k2", "v2", constants.Node).
 					PodAnnotationForJobs("a2", "v2", constants.Node).
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with TrainJob's PodTemplateOverrides containing duplicate TargetJobs": {
+		"succeeded to build JobSet with TrainJob's RuntimePatches containing duplicate patches for same job": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
@@ -708,19 +946,53 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
 				UID("uid").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							NodeSelector: map[string]string{
-								"node.kubernetes.io/instance-type": "p5.48xlarge",
+						Manager: "manager-1",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															NodeSelector: map[string]string{
+																"node.kubernetes.io/instance-type": "p5.48xlarge",
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
 							},
 						},
 					},
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("test-sa"),
+						Manager: "manager-1-dup",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															ServiceAccountName: ptr.To("test-sa"),
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
 						},
 					},
 				}).
@@ -740,7 +1012,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 					Obj(),
 			},
 		},
-		"succeeded to build JobSet with TrainJob's PodTemplateOverrides targeting the same job with different values": {
+		"succeeded to build JobSet with TrainJob's RuntimePatches targeting the same job with different values": {
 			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
 				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
 					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
@@ -749,20 +1021,54 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 			trainJob: testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
 				UID("uid").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							NodeSelector: map[string]string{
-								"node.kubernetes.io/instance-type": "p5.48xlarge",
+						Manager: "manager-1",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															NodeSelector: map[string]string{
+																"node.kubernetes.io/instance-type": "p5.48xlarge",
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
 							},
 						},
 					},
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							NodeSelector: map[string]string{
-								"node.kubernetes.io/instance-type": "p5en.48xlarge",
+						Manager: "manager-2",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{
+										{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															NodeSelector: map[string]string{
+																"node.kubernetes.io/instance-type": "p5en.48xlarge",
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
 							},
 						},
 					},
@@ -902,7 +1208,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						testingutil.MakeMLPolicyWrapper().
 							WithNumNodes(100).
 							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								TorchPolicy().
 								Obj(),
 							).
 							Obj(),
@@ -933,7 +1239,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 				Trainer(
 					testingutil.MakeTrainJobTrainerWrapper().
 						NumNodes(30).
-						NumProcPerNode(intstr.FromInt32(3)).
+						NumProcPerNode(3).
 						Obj(),
 				).
 				Obj(),
@@ -996,7 +1302,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						testingutil.MakeMLPolicyWrapper().
 							WithNumNodes(100).
 							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								TorchPolicy().
 								Obj(),
 							).
 							Obj(),
@@ -1096,7 +1402,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						testingutil.MakeMLPolicyWrapper().
 							WithNumNodes(100).
 							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								TorchPolicy().
 								Obj(),
 							).
 							Obj(),
@@ -1153,7 +1459,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							},
 							resRequests).
 						NumNodes(30).
-						NumProcPerNode(intstr.FromInt32(3)).
+						NumProcPerNode(3).
 						Obj(),
 				).
 				Obj(),
@@ -1230,7 +1536,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						testingutil.MakeMLPolicyWrapper().
 							WithNumNodes(1).
 							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								TorchPolicy().
 								Obj(),
 							).
 							Obj(),
@@ -1290,10 +1596,9 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 								"dataset=torchtune.datasets.instruct_dataset",
 								"dataset.source=parquet",
 							},
-							corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+							torchTuneResWithCPU("2"),
 						).
 						NumNodes(1).
-						NumProcPerNode(intstr.FromString("auto")).
 						Obj(),
 				).
 				Obj(),
@@ -1326,7 +1631,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							"dataset=torchtune.datasets.instruct_dataset",
 							"dataset.source=parquet",
 						},
-						corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+						torchTuneResWithCPU("2"),
 					).
 					ContainerTrainerPorts([]corev1.ContainerPort{{ContainerPort: constants.ContainerTrainerPort}}).
 					Env(constants.Node, constants.Node,
@@ -1371,7 +1676,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						testingutil.MakeMLPolicyWrapper().
 							WithNumNodes(1).
 							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								TorchPolicy().
 								Obj(),
 							).
 							Obj(),
@@ -1432,10 +1737,9 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 								"dataset=torchtune.datasets.instruct_dataset",
 								"dataset.source=parquet",
 							},
-							corev1.ResourceList{"example.com/gpu": resource.MustParse("1")},
+							torchTuneResWithCPU("1"),
 						).
 						NumNodes(1).
-						NumProcPerNode(intstr.FromString("auto")).
 						Obj(),
 				).
 				Obj(),
@@ -1468,7 +1772,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							"dataset=torchtune.datasets.instruct_dataset",
 							"dataset.source=parquet",
 						},
-						corev1.ResourceList{"example.com/gpu": resource.MustParse("1")},
+						torchTuneResWithCPU("1"),
 					).
 					ContainerTrainerPorts([]corev1.ContainerPort{{ContainerPort: constants.ContainerTrainerPort}}).
 					Env(constants.Node, constants.Node,
@@ -1513,7 +1817,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 						testingutil.MakeMLPolicyWrapper().
 							WithNumNodes(1).
 							WithMLPolicySource(*testingutil.MakeMLPolicySourceWrapper().
-								TorchPolicy(ptr.To(intstr.FromString("auto")), nil).
+								TorchPolicy().
 								Obj(),
 							).
 							Obj(),
@@ -1575,10 +1879,9 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 								"dataset=torchtune.datasets.instruct_dataset",
 								"dataset.source=parquet",
 							},
-							corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+							torchTuneResWithCPU("2"),
 						).
 						NumNodes(1).
-						NumProcPerNode(intstr.FromString("auto")).
 						Obj(),
 				).
 				Obj(),
@@ -1613,7 +1916,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 							"dataset=torchtune.datasets.instruct_dataset",
 							"dataset.source=parquet",
 						},
-						corev1.ResourceList{"example.com/gpu": resource.MustParse("2")},
+						torchTuneResWithCPU("2"),
 					).
 					ContainerTrainerPorts([]corev1.ContainerPort{{ContainerPort: constants.ContainerTrainerPort}}).
 					Env(constants.Node, constants.Node,
@@ -1679,7 +1982,7 @@ func TestTrainingRuntimeNewObjects(t *testing.T) {
 				Trainer(
 					testingutil.MakeTrainJobTrainerWrapper().
 						NumNodes(2).
-						NumProcPerNode(intstr.FromInt32(8)).
+						NumProcPerNode(8).
 						Obj(),
 				).
 				Obj(),
@@ -1713,19 +2016,23 @@ test-job-node-0-1.test-job slots=8
 							Name: constants.MPISSHAuthVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
-									SecretName: fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix),
+									SecretName:  fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix),
+									DefaultMode: ptr.To(constants.MPISSHAuthDefaultMode),
 									Items: []corev1.KeyToPath{
 										{
 											Key:  corev1.SSHAuthPrivateKey,
 											Path: constants.MPISSHPrivateKeyFile,
+											Mode: ptr.To(constants.MPISSHPrivateKeyFileMode),
 										},
 										{
 											Key:  constants.MPISSHPublicKey,
 											Path: constants.MPISSHPublicKeyFile,
+											Mode: ptr.To(constants.MPISSHPublicKeyFileMode),
 										},
 										{
 											Key:  constants.MPISSHPublicKey,
 											Path: constants.MPISSHAuthorizedKeys,
+											Mode: ptr.To(constants.MPISSHPublicKeyFileMode),
 										},
 									},
 								},
@@ -1752,19 +2059,23 @@ test-job-node-0-1.test-job slots=8
 							Name: constants.MPISSHAuthVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
-									SecretName: fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix),
+									SecretName:  fmt.Sprintf("test-job%s", constants.MPISSHAuthSecretSuffix),
+									DefaultMode: ptr.To(constants.MPISSHAuthDefaultMode),
 									Items: []corev1.KeyToPath{
 										{
 											Key:  corev1.SSHAuthPrivateKey,
 											Path: constants.MPISSHPrivateKeyFile,
+											Mode: ptr.To(constants.MPISSHPrivateKeyFileMode),
 										},
 										{
 											Key:  constants.MPISSHPublicKey,
 											Path: constants.MPISSHPublicKeyFile,
+											Mode: ptr.To(constants.MPISSHPublicKeyFileMode),
 										},
 										{
 											Key:  constants.MPISSHPublicKey,
 											Path: constants.MPISSHAuthorizedKeys,
+											Mode: ptr.To(constants.MPISSHPublicKeyFileMode),
 										},
 									},
 								},
@@ -1798,6 +2109,36 @@ test-job-node-0-1.test-job slots=8
 					).
 					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
 					Obj(),
+			},
+		},
+		"merged resourcesPerNode keeps runtime resources when trainjob sets gpu only": {
+			trainingRuntime: testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").RuntimeSpec(
+				testingutil.MakeTrainingRuntimeSpecWrapper(testingutil.MakeTrainingRuntimeWrapper(metav1.NamespaceDefault, "test-runtime").Spec).
+					WithMLPolicy(
+						testingutil.MakeMLPolicyWrapper().
+							WithNumNodes(1).
+							Obj(),
+					).
+					Container(constants.Node, constants.Node, "test:runtime", []string{"runtime"}, []string{"runtime"}, resRequests).
+					Obj(),
+			).Obj(),
+			trainJob: func() *trainer.TrainJob {
+				trainerSpec := testingutil.MakeTrainJobTrainerWrapper().
+					NumNodes(1).
+					Obj()
+				trainerSpec.ResourcesPerNode = &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						"nvidia.com/gpu": resource.MustParse("4"),
+					},
+				}
+				return testingutil.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+					UID("uid").
+					RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), "test-runtime").
+					Trainer(trainerSpec).
+					Obj()
+			}(),
+			wantObjs: []runtime.Object{
+				wantJobSetWithMergedGPU(metav1.NamespaceDefault, "test-job", "uid", resRequests, "4"),
 			},
 		},
 		// Failed test cases.
@@ -1842,7 +2183,7 @@ test-job-node-0-1.test-job slots=8
 			}
 			c := clientBuilder.Build()
 
-			trainingRuntime, err := NewTrainingRuntime(ctx, c, testingutil.AsIndex(clientBuilder))
+			trainingRuntime, err := NewTrainingRuntime(ctx, c, testingutil.AsIndex(clientBuilder), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1859,6 +2200,41 @@ test-job-node-0-1.test-job slots=8
 
 			if diff := cmp.Diff(tc.wantObjs, resultObjs, append(cmpOpts, tc.ObjCmpOpts...)...); len(diff) != 0 {
 				t.Errorf("Unexpected objects (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRuntimeInfo(t *testing.T) {
+	tests := map[string]struct {
+		templateType string
+	}{
+		"invalid template type returns error": {
+			templateType: "invalid-template-type",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Using zero-value TrainingRuntime is safe here because RuntimeInfo
+			// returns early for unsupported template types before accessing internal fields.
+			rt := &TrainingRuntime{}
+
+			trainJob := &trainer.TrainJob{}
+
+			_, err := rt.RuntimeInfo(
+				trainJob,
+				tt.templateType,
+				nil,
+				nil,
+			)
+
+			if err == nil {
+				t.Fatalf("expected error for unsupported runtimeTemplateSpec, got nil")
+			}
+
+			if !strings.Contains(err.Error(), "unsupported runtimeTemplateSpec") {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}

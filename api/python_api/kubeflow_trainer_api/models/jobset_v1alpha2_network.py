@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -26,9 +40,9 @@ class JobsetV1alpha2Network(BaseModel):
     """
     JobsetV1alpha2Network
     """ # noqa: E501
-    enable_dns_hostnames: Optional[StrictBool] = Field(default=None, description="EnableDNSHostnames allows pods to be reached via their hostnames. Pods will be reachable using the fully qualified pod hostname: <jobSet.name>-<spec.replicatedJob.name>-<job-index>-<pod-index>.<subdomain>", alias="enableDNSHostnames")
-    publish_not_ready_addresses: Optional[StrictBool] = Field(default=None, description="Indicates if DNS records of pods should be published before the pods are ready. Defaults to True.", alias="publishNotReadyAddresses")
-    subdomain: Optional[StrictStr] = Field(default=None, description="Subdomain is an explicit choice for a network subdomain name When set, any replicated job in the set is added to this network. Defaults to <jobSet.name> if not set.")
+    enable_dns_hostnames: Optional[StrictBool] = Field(default=None, description="enableDNSHostnames allows pods to be reached via their hostnames. Pods will be reachable using the fully qualified pod hostname: <jobSet.name>-<spec.replicatedJob.name>-<job-index>-<pod-index>.<subdomain>", alias="enableDNSHostnames")
+    publish_not_ready_addresses: Optional[StrictBool] = Field(default=None, description="publishNotReadyAddresses indicates if DNS records of pods should be published before the pods are ready. Defaults to True.", alias="publishNotReadyAddresses")
+    subdomain: Optional[StrictStr] = Field(default=None, description="subdomain is an explicit choice for a network subdomain name When set, any replicated job in the set is added to this network. Defaults to <jobSet.name> if not set.")
     __properties: ClassVar[List[str]] = ["enableDNSHostnames", "publishNotReadyAddresses", "subdomain"]
 
     model_config = ConfigDict(

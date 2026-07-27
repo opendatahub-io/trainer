@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -21,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
 from kubeflow_trainer_api.models.io_k8s_apimachinery_pkg_apis_meta_v1_condition import IoK8sApimachineryPkgApisMetaV1Condition
 from kubeflow_trainer_api.models.trainer_v1alpha1_job_status import TrainerV1alpha1JobStatus
+from kubeflow_trainer_api.models.trainer_v1alpha1_trainer_status import TrainerV1alpha1TrainerStatus
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -30,7 +45,8 @@ class TrainerV1alpha1TrainJobStatus(BaseModel):
     """ # noqa: E501
     conditions: Optional[List[IoK8sApimachineryPkgApisMetaV1Condition]] = Field(default=None, description="conditions for the TrainJob.")
     jobs_status: Optional[List[TrainerV1alpha1JobStatus]] = Field(default=None, description="jobsStatus tracks the child Jobs in TrainJob.", alias="jobsStatus")
-    __properties: ClassVar[List[str]] = ["conditions", "jobsStatus"]
+    trainer_status: Optional[TrainerV1alpha1TrainerStatus] = Field(default=None, description="trainerStatus contains the latest observed runtime status of the Trainer step of the TrainJob. It reflects progress, remaining time, metrics, and the last update timestamp.  This field is nil if the TrainJob does not report trainer-level status, or if no status has been observed yet (for example, immediately after the TrainJob is created).  This is an alpha feature and requires enabling the TrainJobStatus feature gate.", alias="trainerStatus")
+    __properties: ClassVar[List[str]] = ["conditions", "jobsStatus", "trainerStatus"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -85,6 +101,9 @@ class TrainerV1alpha1TrainJobStatus(BaseModel):
                 if _item_jobs_status:
                     _items.append(_item_jobs_status.to_dict())
             _dict['jobsStatus'] = _items
+        # override the default output from pydantic by calling `to_dict()` of trainer_status
+        if self.trainer_status:
+            _dict['trainerStatus'] = self.trainer_status.to_dict()
         return _dict
 
     @classmethod
@@ -98,7 +117,8 @@ class TrainerV1alpha1TrainJobStatus(BaseModel):
 
         _obj = cls.model_validate({
             "conditions": [IoK8sApimachineryPkgApisMetaV1Condition.from_dict(_item) for _item in obj["conditions"]] if obj.get("conditions") is not None else None,
-            "jobsStatus": [TrainerV1alpha1JobStatus.from_dict(_item) for _item in obj["jobsStatus"]] if obj.get("jobsStatus") is not None else None
+            "jobsStatus": [TrainerV1alpha1JobStatus.from_dict(_item) for _item in obj["jobsStatus"]] if obj.get("jobsStatus") is not None else None,
+            "trainerStatus": TrainerV1alpha1TrainerStatus.from_dict(obj["trainerStatus"]) if obj.get("trainerStatus") is not None else None
         })
         return _obj
 

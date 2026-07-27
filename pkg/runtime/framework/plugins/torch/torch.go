@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	configapi "github.com/kubeflow/trainer/v2/pkg/apis/config/v1alpha1"
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/apply"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
@@ -44,7 +45,7 @@ var _ framework.CustomValidationPlugin = (*Torch)(nil)
 
 const Name = "Torch"
 
-func New(context.Context, client.Client, client.FieldIndexer) (framework.Plugin, error) {
+func New(context.Context, client.Client, client.FieldIndexer, *configapi.Configuration) (framework.Plugin, error) {
 	return &Torch{}, nil
 }
 
@@ -54,22 +55,14 @@ func (t *Torch) Name() string {
 
 func (t *Torch) Validate(_ context.Context, runtimeInfo *runtime.Info, _, newObj *trainer.TrainJob) (admission.Warnings, field.ErrorList) {
 	var allErrs field.ErrorList
-	if runtimeInfo == nil || runtimeInfo.RuntimePolicy.MLPolicySource == nil || runtimeInfo.RuntimePolicy.MLPolicySource.Torch == nil || newObj.Spec.Trainer == nil || newObj.Spec.Trainer.NumProcPerNode == nil {
+	if runtimeInfo == nil || runtimeInfo.RuntimePolicy.MLPolicySource == nil || runtimeInfo.RuntimePolicy.MLPolicySource.Torch == nil {
 		return nil, allErrs
 	}
 
 	specPath := field.NewPath("spec")
+	allErrs = append(allErrs, validateEnvInjectionTargets(runtimeInfo, specPath.Child("runtimeRef"))...)
 
 	if newObj.Spec.Trainer != nil {
-		numProcPerNodePath := specPath.Child("trainer").Child("numProcPerNode")
-		numProcPerNode := *newObj.Spec.Trainer.NumProcPerNode
-		if numProcPerNode.Type == intstr.String {
-			allowed := sets.New("auto", "cpu", "gpu")
-			if !allowed.Has(numProcPerNode.StrVal) {
-				allErrs = append(allErrs, field.Invalid(numProcPerNodePath, numProcPerNode, fmt.Sprintf("must have an int value or %v", sets.List(allowed))))
-			}
-		}
-
 		// Check reserved envs.
 		torchEnvs := sets.New[string]()
 		for _, env := range newObj.Spec.Trainer.Env {
@@ -93,6 +86,26 @@ func (t *Torch) Validate(_ context.Context, runtimeInfo *runtime.Info, _, newObj
 	return nil, allErrs
 }
 
+func validateEnvInjectionTargets(info *runtime.Info, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if info.RuntimePolicy.MLPolicySource.Torch.EnvInjection == nil {
+		return allErrs
+	}
+	for _, target := range info.RuntimePolicy.MLPolicySource.Torch.EnvInjection.Targets {
+		for _, containerName := range target.ContainerNames {
+			if info.FindContainerByPodSetName(target.JobName, containerName) != nil {
+				continue
+			}
+			allErrs = append(allErrs, field.Invalid(
+				fldPath,
+				target,
+				fmt.Sprintf("envInjection target podSet %q container %q not found in runtime template", target.JobName, containerName),
+			))
+		}
+	}
+	return allErrs
+}
+
 // TODO (andreyvelich): Add support for PyTorch elastic when JobSet supports Elastic Jobs.
 func (t *Torch) EnforceMLPolicy(info *runtime.Info, trainJob *trainer.TrainJob) error {
 	if info == nil || info.RuntimePolicy.MLPolicySource == nil || info.RuntimePolicy.MLPolicySource.Torch == nil {
@@ -105,9 +118,9 @@ func (t *Torch) EnforceMLPolicy(info *runtime.Info, trainJob *trainer.TrainJob) 
 		*trainerPS.Count = *trainJob.Spec.Trainer.NumNodes
 	}
 
-	numProcPerNode := ptr.Deref(info.RuntimePolicy.MLPolicySource.Torch.NumProcPerNode, intstr.FromString("auto"))
+	numProcPerNode := intstr.FromString("auto")
 	if trainJob.Spec.Trainer != nil && trainJob.Spec.Trainer.NumProcPerNode != nil {
-		numProcPerNode = ptr.Deref(trainJob.Spec.Trainer.NumProcPerNode, intstr.FromString("auto"))
+		numProcPerNode = intstr.FromInt32(*trainJob.Spec.Trainer.NumProcPerNode)
 	}
 
 	// Determine numProcPerNode based on the resourcesPerNode.
@@ -116,8 +129,8 @@ func (t *Torch) EnforceMLPolicy(info *runtime.Info, trainJob *trainer.TrainJob) 
 		resourcesPerNode = ptr.Deref(jobTrainer.ResourcesPerNode, corev1.ResourceRequirements{})
 	}
 	gpuQ := runtime.GetNumGPUPerNode(&resourcesPerNode)
-	// If numProcPerNode is "cpu" or no GPU is set in resource, we calculate numProcPerNode based on CPU.
-	if numProcPerNode.String() == "cpu" || numProcPerNode.String() == "auto" && gpuQ == 0 {
+	// If no GPU is set in resource, calculate numProcPerNode based on CPU.
+	if numProcPerNode.String() == "auto" && gpuQ == 0 {
 		numProcPerNode = intstr.FromInt(max(1, getNumCPUPerNode(&resourcesPerNode)))
 	}
 
@@ -128,37 +141,42 @@ func (t *Torch) EnforceMLPolicy(info *runtime.Info, trainJob *trainer.TrainJob) 
 			apply.UpsertEnvVars(&trainerContainer.Env, apply.EnvVars(trainJob.Spec.Trainer.Env...)...)
 		}
 	}
+
+	petEnvs := []corev1ac.EnvVarApplyConfiguration{
+		*corev1ac.EnvVar().
+			WithName(constants.TorchEnvNumNodes).
+			WithValue(fmt.Sprintf("%d", ptr.Deref(ptr.Deref(trainerPS, runtime.PodSet{}).Count, 1))),
+		*corev1ac.EnvVar().
+			WithName(constants.TorchEnvNumProcPerNode).
+			WithValue(numProcPerNode.String()),
+		*corev1ac.EnvVar().
+			WithName(constants.TorchEnvNodeRank).
+			WithValueFrom(corev1ac.EnvVarSource().
+				WithFieldRef(corev1ac.ObjectFieldSelector().
+					WithFieldPath(constants.JobCompletionIndexFieldPath))),
+	}
+
+	masterEnvVars := []corev1ac.EnvVarApplyConfiguration{
+		*corev1ac.EnvVar().
+			WithName(constants.TorchEnvMasterAddr).
+			WithValue(fmt.Sprintf("%s-%s-0-0.%s", trainJob.Name, constants.Node, trainJob.Name)),
+		*corev1ac.EnvVar().
+			WithName(constants.TorchEnvMasterPort).
+			WithValue(fmt.Sprintf("%d", constants.ContainerTrainerPort)),
+	}
+
+	// Inject PET_* envs into trainer main container (always).
 	if trainerContainer != nil {
 		// Add PyTorch distributed "PET_" values for torchrun and torchtune.
 		// TODO (andreyvelich): We should validate that envs from different plugins don't conflict with each other.
 		// Ref: https://github.com/kubeflow/trainer/pull/2308#discussion_r1823229940
-		apply.UpsertEnvVars(&trainerContainer.Env,
-			*corev1ac.EnvVar().
-				WithName(constants.TorchEnvNumNodes).
-				WithValue(fmt.Sprintf("%d", ptr.Deref(ptr.Deref(trainerPS, runtime.PodSet{}).Count, 1))),
-			*corev1ac.EnvVar().
-				WithName(constants.TorchEnvNumProcPerNode).
-				WithValue(numProcPerNode.String()),
-			*corev1ac.EnvVar().
-				WithName(constants.TorchEnvNodeRank).
-				WithValueFrom(corev1ac.EnvVarSource().
-					WithFieldRef(corev1ac.ObjectFieldSelector().
-						WithFieldPath(constants.JobCompletionIndexFieldPath))),
-		)
+		apply.UpsertEnvVars(&trainerContainer.Env, petEnvs...)
 
 		if !slices.Equal(trainJob.Spec.Trainer.Command, constants.TorchTuneEntrypoint) {
-			// Add PET_MASTER_ADDR and PET_MASTER_PORT envs for torchrun.
-			apply.UpsertEnvVars(&trainerContainer.Env,
-				*corev1ac.EnvVar().
-					WithName(constants.TorchEnvMasterAddr).
-					WithValue(fmt.Sprintf("%s-%s-0-0.%s", trainJob.Name, constants.Node, trainJob.Name)),
-				*corev1ac.EnvVar().
-					WithName(constants.TorchEnvMasterPort).
-					WithValue(fmt.Sprintf("%d", constants.ContainerTrainerPort)),
-			)
+			apply.UpsertEnvVars(&trainerContainer.Env, masterEnvVars...)
 		} else {
 			// Mutate trainer command for torchtune.
-			// Ref: https://github.com/kubeflow/trainer/tree/master/docs/proposals/2401-llm-trainer-v2#complement-torch-plugin
+			// Ref: https://github.com/kubeflow/trainer/tree/master/proposals/2401-llm-trainer-v2#complement-torch-plugin
 			// 1. Add rendezvous backend arg for torchtune.
 			// Rendezvous backend is only enabled for multi-nodes or multi-devices training.
 			var newCommand []string
@@ -183,6 +201,24 @@ func (t *Torch) EnforceMLPolicy(info *runtime.Info, trainJob *trainer.TrainJob) 
 		}
 		// Add container port for the headless service.
 		apply.UpsertPort(&trainerContainer.Ports, *corev1ac.ContainerPort().WithContainerPort(constants.ContainerTrainerPort))
+	}
+
+	// Inject PET_* envs into additional containers specified by envInjection config.
+	// We always inject master envs here because envInjection targets are typically
+	// auxiliary containers (init containers, sidecars) that may need the master
+	// address for preflight checks or coordination, regardless of whether the
+	// main container uses torchtune (which uses command-line rendezvous instead).
+	if info.RuntimePolicy.MLPolicySource.Torch.EnvInjection != nil {
+		for _, target := range info.RuntimePolicy.MLPolicySource.Torch.EnvInjection.Targets {
+			for _, containerName := range target.ContainerNames {
+				container := info.FindContainerByPodSetName(target.JobName, containerName)
+				if container == nil {
+					return fmt.Errorf("envInjection target podSet %q container %q not found in runtime template", target.JobName, containerName)
+				}
+				apply.UpsertEnvVars(&container.Env, petEnvs...)
+				apply.UpsertEnvVars(&container.Env, masterEnvVars...)
+			}
+		}
 	}
 
 	return nil

@@ -11,26 +11,42 @@ endif
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
+# Setting SED allows macOS users to install GNU sed (gsed) and use it instead
+# of the default BSD sed, which the in-place edits in this Makefile require.
+ifeq ($(shell command -v gsed 2>/dev/null),)
+    SED ?= $(shell command -v sed)
+else
+    SED ?= $(shell command -v gsed)
+endif
+ifeq ($(shell ${SED} --version 2>&1 | grep -q GNU; echo $$?),1)
+    $(error !!! GNU sed is required. If on OS X, use 'brew install gnu-sed'.)
+endif
+
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
-REPO := github.com/kubeflow/trainer
-TRAINER_CHART_DIR := $(PROJECT_DIR)/charts/kubeflow-trainer
-# Location to install tool binaries
-LOCALBIN ?= $(PROJECT_DIR)/bin
 
 # Ensure Go auto-downloads the toolchain version required by go.mod
 export GOTOOLCHAIN := auto
+REPO := github.com/kubeflow/trainer
+TRAINER_CHART_DIR := $(PROJECT_DIR)/charts/kubeflow-trainer
+# Year-less copyright header prepended to generated manifests (controller-gen
+# emits none). Single source of truth shared with the boilerplate verifier.
+BOILERPLATE_HEADER := $(PROJECT_DIR)/hack/boilerplate/boilerplate.sh.txt
+HELM_BOILERPLATE_HEADER := $(PROJECT_DIR)/hack/boilerplate/boilerplate.helm.txt
+# Location to install tool binaries
+LOCALBIN ?= $(PROJECT_DIR)/bin
 
 # Tool versions
-K8S_VERSION ?= 1.34.0
+K8S_VERSION ?= 1.35.0
 GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
 ENVTEST_VERSION ?= release-0.22
 CONTROLLER_GEN_VERSION ?= v0.18.0
 KIND_VERSION ?= $(shell go list -m -f '{{.Version}}' sigs.k8s.io/kind)
-HELM_VERSION ?= v3.15.3
-HELM_UNITTEST_VERSION ?= 0.5.1
+HELM_VERSION ?= v3.18.6
+HELM_UNITTEST_VERSION ?= 1.1.1
 HELM_CHART_TESTING_VERSION ?= v3.12.0
 HELM_DOCS_VERSION ?= v1.14.2
 YQ_VERSION ?= v4.45.1
+KUBE_LINTER_VERSION ?= v0.7.1
 
 # Container runtime (docker or podman)
 CONTAINER_RUNTIME ?=
@@ -43,7 +59,10 @@ KIND ?= $(LOCALBIN)/kind
 HELM ?= $(LOCALBIN)/helm
 HELM_DOCS ?= $(LOCALBIN)/helm-docs
 YQ ?= $(LOCALBIN)/yq
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 GOLANGCI_LINT_KAL ?= $(LOCALBIN)/golangci-lint-kube-api-linter
+LINT_PKG ?= ./...
+KUBE_LINTER ?= $(LOCALBIN)/kube-linter
 
 ##@ General
 
@@ -85,8 +104,6 @@ kind: ## Download Kind binary if required.
 helm: ## Download helm locally if required.
 	GOBIN=$(LOCALBIN) go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION)
 
-GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
-
 .PHONY: golangci-lint-install
 golangci-lint-install: ## Download golangci-lint locally if required.
 	@GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.1
@@ -109,6 +126,23 @@ helm-docs-plugin: ## Download helm-docs plugin locally if required.
 .PHONY: yq
 yq: # Download yq locally if required.
 	GOBIN=$(LOCALBIN) go install github.com/mikefarah/yq/v4@$(YQ_VERSION)
+
+.PHONY: kube-linter
+kube-linter: ## Download kube-linter locally if required.
+	GOBIN=$(LOCALBIN) go install golang.stackrox.io/kube-linter/cmd/kube-linter@$(KUBE_LINTER_VERSION)
+
+.PHONY: uv
+uv: ## Install uv if it is not already installed.
+	@command -v uv > /dev/null 2>&1 || { \
+		echo "Installing uv"; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		echo "uv has been installed."; \
+	}
+
+.PHONY: lint-manifests
+lint-manifests: kube-linter ## Run kube-linter on manifests and helm charts.
+	$(KUBE_LINTER) lint manifests/base --config .kube-linter.yaml
+	$(KUBE_LINTER) lint charts/kubeflow-trainer --config .kube-linter.yaml
 
 # Download external CRDs for Go integration testings.
 EXTERNAL_CRDS_DIR ?= $(PROJECT_DIR)/manifests/external-crds
@@ -142,10 +176,25 @@ manifests: controller-gen ## Generate manifests.
 		output:crd:artifacts:config=manifests/base/crds \
 		output:rbac:artifacts:config=manifests/base/rbac \
 		output:webhook:artifacts:config=manifests/base/webhook
-	cp -f manifests/base/crds/trainer.kubeflow.org_*.yaml $(TRAINER_CHART_DIR)/crds/
+	@# controller-gen emits no license header. Prepend the year-less
+	@# boilerplate to each generated manifest. controller-gen rewrites these
+	@# files in full on every run, so prepending here once is idempotent.
+	@# Copy the header-free CRDs into the chart before adding the kustomize (#)
+	@# header, so the chart templates can use the Helm-style license block.
+	cp -f manifests/base/crds/trainer.kubeflow.org_*.yaml $(TRAINER_CHART_DIR)/templates/crd/
+	@for f in manifests/base/crds/trainer.kubeflow.org_*.yaml \
+			manifests/base/rbac/role.yaml \
+			manifests/base/webhook/manifests.yaml; do \
+		{ cat $(BOILERPLATE_HEADER); echo; cat "$$f"; } > "$$f.tmp" && mv "$$f.tmp" "$$f"; \
+	done
+	# Prepend the Helm license block and wrap the chart CRD templates so
+	# installation can be toggled via `crds.enabled`.
+	for f in $(TRAINER_CHART_DIR)/templates/crd/trainer.kubeflow.org_*.yaml; do \
+		{ cat $(HELM_BOILERPLATE_HEADER); echo; echo '{{- if .Values.crds.enabled }}'; cat $$f; echo '{{- end }}'; } > $$f.tmp && mv $$f.tmp $$f; \
+	done
 
 .PHONY: generate
-generate: go-mod-download manifests ## Generate APIs.
+generate: go-mod-download manifests helm-docs ## Generate APIs.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate/boilerplate.go.txt" paths="./pkg/apis/..."
 	hack/update-codegen.sh
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate/boilerplate.go.txt" paths="./pkg/apis/config/v1alpha1/..."
@@ -165,11 +214,13 @@ vet: ## Run go vet against the code.
 	go vet ./...
 
 .PHONY: golangci-lint
-# TODO(robell): re-enable golangci-lint-kal once we've pulled in upstream v2.2.
-# golangci-lint: golangci-lint-install golangci-lint-kal ## Run golangci-lint to verify Go files.
-golangci-lint: golangci-lint-install
-	$(GOLANGCI_LINT) run --timeout 5m ./...
-	#$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml #
+golangci-lint: golangci-lint-install golangci-lint-kal ## Run golangci-lint to verify Go files.
+	$(GOLANGCI_LINT) run --timeout 5m $(LINT_PKG)
+	$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml
+
+.PHONY: verify-boilerplate
+verify-boilerplate: ## Verify copyright boilerplate headers in source files.
+	python3 hack/boilerplate/boilerplate.py --base-ref "$(TARGET_BRANCH)"
 
 # Instructions to run tests.
 .PHONY: test
@@ -182,27 +233,26 @@ test-integration: ginkgo envtest jobset-operator-crd scheduler-plugins-crd volca
 
 .PHONY: test-python
 test-python: ## Run Python unit test.
-	pip install pytest
-	pip install -r ./cmd/initializers/dataset/requirements.txt
+	uv sync --locked --no-dev --directory ./cmd/initializers/dataset
+	uv sync --locked --no-dev --directory ./cmd/initializers/model
 
-	PYTHONPATH=$(PROJECT_DIR) pytest ./pkg/initializers/dataset
-	PYTHONPATH=$(PROJECT_DIR) pytest ./pkg/initializers/model
-	PYTHONPATH=$(PROJECT_DIR) pytest ./pkg/initializers/utils
+	PYTHONPATH=$(PROJECT_DIR) uv run --with pytest --directory ./cmd/initializers/dataset pytest $(PROJECT_DIR)/pkg/initializers/dataset
+	PYTHONPATH=$(PROJECT_DIR) uv run --with pytest --directory ./cmd/initializers/dataset pytest $(PROJECT_DIR)/pkg/initializers/model
+	PYTHONPATH=$(PROJECT_DIR) uv run --with pytest --directory ./cmd/initializers/dataset pytest $(PROJECT_DIR)/pkg/initializers/utils
 
 .PHONY: test-python-integration
 test-python-integration: ## Run Python integration test.
-	pip install pytest
-	pip install -r ./cmd/initializers/dataset/requirements.txt
+	uv sync --locked --no-dev --directory ./cmd/initializers/dataset
 
-	PYTHONPATH=$(PROJECT_DIR) pytest ./test/integration/initializers
+	PYTHONPATH=$(PROJECT_DIR) uv run --with pytest --directory ./cmd/initializers/dataset pytest $(PROJECT_DIR)/test/integration/initializers
 
 .PHONY: test-rust
 test-rust: ## Run Rust unit test.
 	cargo test --lib --bins --manifest-path ./pkg/data_cache/Cargo.toml
 
 .PHONY: test-e2e-setup-cluster
-test-e2e-setup-cluster: kind ## Setup Kind cluster for e2e test.
-	KIND=$(KIND) K8S_VERSION=$(K8S_VERSION) ./hack/e2e-setup-cluster.sh
+test-e2e-setup-cluster: kind ## Setup Kind cluster for e2e test. (Set GPU_CLUSTER=gpu for GPU nodes)
+	CLUSTER_TYPE=$(CLUSTER_TYPE) KIND=$(KIND) K8S_VERSION=$(K8S_VERSION) INSTALL_METHOD=$(INSTALL_METHOD) ./hack/e2e-setup-cluster.sh
 
 .PHONY: test-e2e-setup-gpu-cluster
 test-e2e-setup-gpu-cluster: kind ## Setup Kind cluster for GPU e2e test.
@@ -215,12 +265,33 @@ test-e2e: ginkgo ## Run Go e2e test.
 # Input and output location for Notebooks executed with Papermill.
 NOTEBOOK_INPUT=$(PROJECT_DIR)/examples/pytorch/image-classification/mnist.ipynb
 NOTEBOOK_OUTPUT=$(PROJECT_DIR)/artifacts/notebooks/trainer_output.ipynb
+PAPERMILL_PARAMS=
 PAPERMILL_TIMEOUT=900
 .PHONY: test-e2e-notebook
 test-e2e-notebook: ## Run Jupyter Notebook with Papermill.
-	NOTEBOOK_INPUT=$(NOTEBOOK_INPUT) NOTEBOOK_OUTPUT=$(NOTEBOOK_OUTPUT) PAPERMILL_TIMEOUT=$(PAPERMILL_TIMEOUT) ./hack/e2e-run-notebook.sh
+	NOTEBOOK_INPUT=$(NOTEBOOK_INPUT) NOTEBOOK_OUTPUT=$(NOTEBOOK_OUTPUT) PAPERMILL_PARAMS="$(PAPERMILL_PARAMS)" PAPERMILL_TIMEOUT=$(PAPERMILL_TIMEOUT) ./hack/e2e-run-notebook.sh
+
+##@ Documentation
+
+.PHONY: docs
+docs: ## Build HTML documentation locally
+	cd docs && $(MAKE) html
+
+.PHONY: docs-linkcheck
+docs-linkcheck: ## Check all links in documentation
+	cd docs && $(MAKE) linkcheck
+
+.PHONY: docs-clean
+docs-clean: ## Remove documentation build artifacts
+	cd docs && $(MAKE) clean
+
+.PHONY: docs-serve
+docs-serve: ## Build and serve documentation locally with live reload
+	cd docs && $(MAKE) serve
 
 ##@ Helm
+
+TARGET_BRANCH ?= master
 
 .PHONY: helm-unittest
 helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
@@ -228,11 +299,72 @@ helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
 
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint test.
-	docker run --rm --workdir /workspace --volume "$$(pwd):/workspace" quay.io/helmpack/chart-testing:$(HELM_CHART_TESTING_VERSION) ct lint --target-branch master --validate-maintainers=false
+	docker run --rm --workdir /workspace --user "$(shell id -u):$(shell id -g)" --volume "$$(pwd):/workspace" quay.io/helmpack/chart-testing:$(HELM_CHART_TESTING_VERSION) ct lint --target-branch $(TARGET_BRANCH) --validate-maintainers=false --check-version-increment=false
 
 .PHONY: helm-docs
 helm-docs: helm-docs-plugin ## Generates markdown documentation for helm charts from requirements and values files.
 	$(HELM_DOCS) --sort-values-order=file
+
+##@ Release
+
+# Release version, including the leading "v" (vX.Y.Z or vX.Y.Z-rc.N).
+VERSION ?=
+GITHUB_TOKEN ?=
+
+.PHONY: release
+release: ## Create a release commit. Usage: make release VERSION=vX.Y.Z [GITHUB_TOKEN=<token>]
+	@if [ -z "$(VERSION)" ] || ! echo "$(VERSION)" | grep -E -q '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$$'; then \
+		echo "Error: VERSION must be set in vX.Y.Z or vX.Y.Z-rc.N format. Usage: make release VERSION=vX.Y.Z[-rc.N]"; \
+		exit 1; \
+	fi
+	@echo -n "$(VERSION)" > VERSION
+	@echo "Updated VERSION to $(VERSION)"
+	@CHART_VERSION=$$(echo "$(VERSION)" | $(SED) 's/^v//'); \
+		$(SED) -i "s/^version: .*/version: $$CHART_VERSION/" charts/kubeflow-trainer/Chart.yaml; \
+		echo "Updated Helm chart version to $$CHART_VERSION"
+	@if echo "$(VERSION)" | grep -E -q '\-rc\.[0-9]+$$'; then \
+		echo "Skipping changelog generation for RC release $(VERSION)"; \
+	else \
+		git fetch upstream --tags --prune; \
+		MAJOR_MINOR=$$(echo "$(VERSION)" | $(SED) 's/^v//' | cut -d. -f1,2); \
+		CHANGELOG_PATH="CHANGELOG/CHANGELOG-$$MAJOR_MINOR.md"; \
+		RELEASE_BRANCH="release-$$MAJOR_MINOR"; \
+		RELEASE_SHA=$$(git rev-parse --verify --quiet "refs/remotes/upstream/$$RELEASE_BRANCH"); \
+		if [ -n "$$RELEASE_SHA" ]; then \
+			PREV_TAG=$$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*rc*' "$$RELEASE_SHA" 2>/dev/null || true); \
+			if [ -n "$$PREV_TAG" ]; then \
+				CLIFF_SCOPE="$$PREV_TAG..$$RELEASE_SHA"; \
+				echo "Generating changelog for $(VERSION) (range: $$PREV_TAG..$$RELEASE_BRANCH @ $$RELEASE_SHA)"; \
+			else \
+				CLIFF_SCOPE="--unreleased"; \
+				echo "Generating changelog for $(VERSION) (no prior tag on $$RELEASE_BRANCH; using --unreleased)"; \
+			fi; \
+		elif [ ! -f "$$CHANGELOG_PATH" ]; then \
+			CLIFF_SCOPE="--unreleased"; \
+			echo "Generating changelog for $(VERSION) (new release line $$MAJOR_MINOR, branch $$RELEASE_BRANCH not created yet; using --unreleased)"; \
+		else \
+			echo "Error: branch $$RELEASE_BRANCH not found locally or on upstream, but $$CHANGELOG_PATH exists. Run: git fetch upstream $$RELEASE_BRANCH"; \
+			exit 1; \
+		fi; \
+		CLIFF_CMD="docker run --rm -u $$(id -u):$$(id -g) -v $(PROJECT_DIR):/app"; \
+		if [ -n "$(GITHUB_TOKEN)" ]; then \
+			CLIFF_CMD="$$CLIFF_CMD -e GITHUB_TOKEN=$(GITHUB_TOKEN)"; \
+		fi; \
+		CLIFF_CMD="$$CLIFF_CMD -w /app ghcr.io/orhun/git-cliff/git-cliff:latest $$CLIFF_SCOPE --tag $(VERSION)"; \
+		if [ -f "$$CHANGELOG_PATH" ]; then \
+			$$CLIFF_CMD --prepend "$$CHANGELOG_PATH"; \
+		else \
+			$$CLIFF_CMD -o "$$CHANGELOG_PATH"; \
+			printf '%s\n' "$$(cat "$$CHANGELOG_PATH")" > "$$CHANGELOG_PATH"; \
+		fi; \
+		echo "Changelog generated at $$CHANGELOG_PATH"; \
+	fi
+	@echo "Regenerating files for $(VERSION)"
+	@$(MAKE) generate
+	@echo ""
+	@echo "Release commit for $(VERSION) is ready."
+	@echo "Review the changelog changes, then commit with:"
+	@echo "  git add -A && git commit -s -m 'Prepare Release $(VERSION)'"
 
 ##@ RHOAI Deployment
 

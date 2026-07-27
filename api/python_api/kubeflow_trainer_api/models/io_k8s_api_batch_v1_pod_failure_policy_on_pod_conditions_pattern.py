@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -18,7 +32,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -26,7 +40,7 @@ class IoK8sApiBatchV1PodFailurePolicyOnPodConditionsPattern(BaseModel):
     """
     PodFailurePolicyOnPodConditionsPattern describes a pattern for matching an actual pod condition type.
     """ # noqa: E501
-    status: StrictStr = Field(description="Specifies the required Pod condition status. To match a pod condition it is required that the specified status equals the pod condition status. Defaults to True.")
+    status: Optional[StrictStr] = Field(default='', description="Specifies the required Pod condition status. To match a pod condition it is required that the specified status equals the pod condition status. Defaults to True.")
     type: StrictStr = Field(description="Specifies the required Pod condition type. To match a pod condition it is required that specified type equals the pod condition type.")
     __properties: ClassVar[List[str]] = ["status", "type"]
 

@@ -1,11 +1,11 @@
 {{- /*
-Copyright 2025 The Kubeflow authors.
+Copyright 2026 The Kubeflow Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    https://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,23 +31,65 @@ This chart bootstraps a [Kubernetes Trainer]({{template "chart.homepage" . }}) d
 ## Prerequisites
 
 - Helm >= 3
-- Kubernetes >= 1.29
+- Kubernetes >= 1.31
 
 ## Usage
 
 ### Install the Helm Chart
 
-Install the released version (e.g. 2.1.0):
+Install the released version:
 
 ```bash
-helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer --version 2.1.0
+export VERSION=v2.1.0
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
+    --namespace kubeflow-system \
+    --create-namespace \
+    --version ${VERSION#v}
 ```
 
-Alternatively, you can install the latest version from the master branch (e.g. `bfccb7b` commit):
+For the latest changes run
+([where `48e7a93`](https://github.com/kubeflow/trainer/commit/48e7a93) is the desired commit):
 
 ```bash
-helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer --version 0.0.0-sha-bfccb7b
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
+    --namespace kubeflow-system \
+    --create-namespace \
+    --version 0.0.0-sha-48e7a93
 ```
+
+> [!NOTE]
+> The Trainer CRDs (`TrainJob`, `TrainingRuntime`, `ClusterTrainingRuntime`) are installed by the chart by default.
+> If you manage the CRDs out-of-band (previously via Helm's `--skip-crds` flag), set `--set crds.enabled=false` to skip
+> installing them with the chart.
+
+### Install with ClusterTrainingRuntimes
+
+You can enable the default ClusterTrainingRuntimes together with the control plane in a single
+step. A post-install Helm hook applies the runtimes once the CRDs and controller are ready:
+
+```bash
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
+    --namespace kubeflow-system \
+    --create-namespace \
+    --version ${VERSION#v} \
+    --set runtimes.defaultEnabled=true
+```
+
+To enable specific runtimes instead of all of them:
+
+```bash
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
+    --namespace kubeflow-system \
+    --create-namespace \
+    --version ${VERSION#v} \
+    --set runtimes.torchDistributed.enabled=true \
+    --set runtimes.deepspeedDistributed.enabled=true
+```
+
+You can also enable runtimes on an existing installation with `helm upgrade` using the same
+`--set` flags. The hook reconciles runtimes on every upgrade: newly enabled runtimes are applied
+and disabled ones are removed. Disabling *all* runtimes removes the installer itself, so in that
+case delete any remaining runtimes manually or with `helm uninstall`.
 
 ### Uninstall the chart
 
@@ -58,6 +100,16 @@ helm uninstall [RELEASE_NAME]
 This removes all the Kubernetes resources associated with the chart and deletes the release, except for the `crds`, those will have to be removed manually.
 
 See [helm uninstall](https://helm.sh/docs/helm/helm_uninstall) for command documentation.
+
+### Istio sidecar configuration
+
+If you are running Istio and need to exclude the manager webhook port from sidecar interception, configure the annotation via `manager.podAnnotations`:
+
+```yaml
+manager:
+  podAnnotations:
+    traffic.sidecar.istio.io/excludeInboundPorts: "9443"
+```
 
 {{ template "chart.valuesSection" . }}
 

@@ -1,9 +1,23 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import time
+from urllib.parse import urlparse
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from kubernetes.dynamic.exceptions import ConflictError
 
 import pkg.initializers.types.types as types
 import pkg.initializers.utils.utils as utils
@@ -27,6 +41,24 @@ def get_namespace() -> str:
         return "default"
 
 
+def parse_cache_storage_uri(storage_uri: str) -> tuple[str, str]:
+    """Parse cache storage URI.
+
+    Expected format: cache://<SCHEMA_NAME>/<TABLE_NAME>
+    """
+    storage_uri_parsed = urlparse(storage_uri)
+    schema_name = storage_uri_parsed.netloc
+    table_name = storage_uri_parsed.path.removeprefix("/")
+
+    if not schema_name or not table_name or "/" in table_name:
+        raise ValueError(
+            f"Invalid cache storage URI {storage_uri!r}: "
+            "expected format cache://<SCHEMA_NAME>/<TABLE_NAME>"
+        )
+
+    return schema_name, table_name
+
+
 class CacheInitializer(utils.DatasetProvider):
 
     def load_config(self):
@@ -35,12 +67,9 @@ class CacheInitializer(utils.DatasetProvider):
         config_dict = {k: v for k, v in config_dict.items() if v is not None}
         self.config = types.CacheDatasetInitializer(**config_dict)
 
-        # Parse schema_name and table_name from storage_uri
-        # Format: cache://<SCHEMA_NAME>/<TABLE_NAME>
-        uri_path = self.config.storage_uri[len("cache://") :]
-        parts = uri_path.split("/")
-        self.schema_name = parts[0]
-        self.table_name = parts[1]
+        self.schema_name, self.table_name = parse_cache_storage_uri(
+            self.config.storage_uri
+        )
 
     def download_dataset(self):
         """Bootstrap cache cluster with dataset"""
@@ -269,7 +298,7 @@ class CacheInitializer(utils.DatasetProvider):
                 core_v1.create_namespaced_service(namespace=namespace, body=service)
                 logging.info(f"Created Service {service.metadata.name}")
             except ApiException as e:
-                if e is ConflictError:
+                if e.status == 409:
                     logging.info(
                         f"Service {service.metadata.name} already exists, "
                         f"skipping creation"

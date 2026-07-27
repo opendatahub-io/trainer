@@ -1,11 +1,11 @@
 {{- /*
-Copyright 2025 The Kubeflow authors.
+Copyright 2025 The Kubeflow Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    https://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -40,8 +40,21 @@ Selector labels for the manager.
 {{ include "trainer.selectorLabels" . }}
 app.kubernetes.io/part-of: kubeflow
 app.kubernetes.io/component: manager
-{{- with .Values.manager.labels }}
+{{- with .Values.manager.selectorLabels }}
 {{- toYaml . | nindent 0 }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Pod annotations for the manager.
+*/}}
+{{- define "trainer.manager.podAnnotations" -}}
+{{- $annotations := dict -}}
+{{- with .Values.manager.podAnnotations }}
+{{- $annotations = merge $annotations . -}}
+{{- end -}}
+{{- if $annotations }}
+{{- toYaml $annotations | nindent 0 }}
 {{- end }}
 {{- end -}}
 

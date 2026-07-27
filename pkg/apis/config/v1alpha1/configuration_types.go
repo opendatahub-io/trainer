@@ -59,6 +59,19 @@ type Configuration struct {
 	// API server client.
 	// +optional
 	ClientConnection *ClientConnection `json:"clientConnection,omitempty"`
+
+	// statusServer provides configuration options for the Runtime Status Server.
+	// +optional
+	StatusServer *StatusServer `json:"statusServer,omitempty"`
+
+	// featureGates is a map of feature names to bools that allows to override the
+	// default enablement status of a feature.
+	// +optional
+	FeatureGates map[string]bool `json:"featureGates,omitempty"`
+
+	// tls contains TLS configuration for the controller manager servers.
+	// +optional
+	TLS *TLSOptions `json:"tls,omitempty"`
 }
 
 // ControllerWebhook defines the webhook server for the controller.
@@ -74,6 +87,7 @@ type ControllerWebhook struct {
 	// host is the hostname that the webhook server binds to.
 	// It is used to set webhook.Server.Host.
 	// Defaults to "" (all interfaces).
+	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	Host *string `json:"host,omitempty"`
 }
@@ -88,6 +102,7 @@ type ControllerMetrics struct {
 	// +optional
 	// +kubebuilder:default=":8443"
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
 	BindAddress string `json:"bindAddress,omitempty"`
 
 	// secureServing determines if the metrics endpoint should be served securely via HTTPS.
@@ -107,6 +122,7 @@ type ControllerHealth struct {
 	// +optional
 	// +kubebuilder:default=":8081"
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
 	HealthProbeBindAddress string `json:"healthProbeBindAddress,omitempty"`
 
 	// readinessEndpointName is the name for the readiness endpoint.
@@ -114,6 +130,7 @@ type ControllerHealth struct {
 	// +optional
 	// +kubebuilder:default="readyz"
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	ReadinessEndpointName string `json:"readinessEndpointName,omitempty"`
 
 	// livenessEndpointName is the name for the liveness endpoint.
@@ -121,6 +138,7 @@ type ControllerHealth struct {
 	// +optional
 	// +kubebuilder:default="healthz"
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	LivenessEndpointName string `json:"livenessEndpointName,omitempty"`
 }
 
@@ -158,6 +176,7 @@ type CertManagement struct {
 	// +optional
 	// +kubebuilder:default="kubeflow-trainer-controller-manager"
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	WebhookServiceName string `json:"webhookServiceName,omitempty"`
 
 	// webhookSecretName is the name of the Secret used to store the CA and server certificates.
@@ -165,6 +184,7 @@ type CertManagement struct {
 	// +optional
 	// +kubebuilder:default="kubeflow-trainer-webhook-cert"
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	WebhookSecretName string `json:"webhookSecretName,omitempty"`
 }
 
@@ -183,4 +203,61 @@ type ClientConnection struct {
 	// +optional
 	// +kubebuilder:default=100
 	Burst *int32 `json:"burst,omitempty"`
+}
+
+type StatusServer struct {
+	// port is the port that the status server serves at.
+	// Defaults to 10443.
+	// +optional
+	// +kubebuilder:default=10443
+	Port *int32 `json:"port,omitempty"`
+
+	// qps controls the number of queries per second allowed for the status server's
+	// Kubernetes client before client-side throttling.
+	// Defaults to 5.
+	// +optional
+	// +kubebuilder:default=5
+	QPS *float32 `json:"qps,omitempty"`
+
+	// burst allows extra queries to accumulate when the status server client is not
+	// using its full QPS allocation.
+	// Defaults to 10.
+	// +optional
+	// +kubebuilder:default=10
+	Burst *int32 `json:"burst,omitempty"`
+}
+
+const (
+	// TLSVersion10 is the TLS 1.0 version string.
+	TLSVersion10 = "1.0"
+	// TLSVersion11 is the TLS 1.1 version string.
+	TLSVersion11 = "1.1"
+	// TLSVersion12 is the TLS 1.2 version string.
+	TLSVersion12 = "1.2"
+	// TLSVersion13 is the TLS 1.3 version string.
+	TLSVersion13 = "1.3"
+)
+
+// TLSOptions contains TLS configuration for the controller manager.
+type TLSOptions struct {
+	// minVersion is the minimum TLS version supported.
+	// +optional
+	// +kubebuilder:validation:Enum=1.0;1.1;1.2;1.3
+	MinVersion string `json:"minVersion,omitempty"`
+
+	// cipherSuites is the list of allowed cipher suites.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:items:MaxLength=100
+	CipherSuites []string `json:"cipherSuites,omitempty"`
+
+	// nextProtos is the list of application-level protocols negotiated during
+	// the TLS handshake. Set to ["h2", "http/1.1"] to enable HTTP/2, or omit
+	// to disable it (mitigates CVE-2023-44487 and CVE-2023-39325).
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:MaxLength=32
+	NextProtos []string `json:"nextProtos,omitempty"`
 }

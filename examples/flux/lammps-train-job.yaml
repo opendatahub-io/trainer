@@ -1,0 +1,43 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This example deploys the LAMMPS Molecular Dynamic Simulator
+# with MPI orchestrated by the Flux workload manager on 4 nodes.
+# The problem size is defined by the coordinates x,y,z, and the
+# parameter file reaxc.hns.
+# The image has the application, LAMMPS, installed (no Flux)
+# A Flux view will be added on the fly by the Kubeflow trainer
+# Each pod ideally maps 1:1 to nodes, encompassing a cluster
+# The underlying abstraction is a JobSet with a headless service
+# Flux supports low-latency with Infiniband, EFA, etc., however
+# standard ethernet is used here.
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainJob
+metadata:
+  name: lammps-flux
+spec:
+  # Reference the pre-defined runtime by name
+  runtimeRef:
+    name: flux-distributed
+  trainer:
+    numNodes: 2
+    numProcPerNode: 4
+    image: ghcr.io/converged-computing/metric-lammps:latest
+    # You do not need to write "flux run, etc" here. It will be wrapped
+    command: ["lmp", "-v", "x", "4", "-v", "y", "4", "-v", "z", "4", "-in", "in.reaxc.hns", "-nocite"]
+    # See flux-interactive.yaml for running the above interactively.
+    # This is how we match the view (operating system and version) of the initContainer to install Flux
+    env:
+     - name: FLUX_VIEW_IMAGE
+       value: ghcr.io/converged-computing/flux-view-ubuntu:tag-jammy
