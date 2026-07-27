@@ -626,10 +626,10 @@ func (t *TrainJobWrapper) ActiveDeadlineSeconds(deadline int64) *TrainJobWrapper
 }
 
 func (t *TrainJobWrapper) Annotation(key, value string) *TrainJobWrapper {
-	if t.ObjectMeta.Annotations == nil {
-		t.ObjectMeta.Annotations = make(map[string]string, 1)
+	if t.Annotations == nil {
+		t.Annotations = make(map[string]string, 1)
 	}
-	t.ObjectMeta.Annotations[key] = value
+	t.Annotations[key] = value
 	return t
 }
 

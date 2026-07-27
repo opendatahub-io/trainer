@@ -273,7 +273,7 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metrics from %s: %w", metricsURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code %d from metrics endpoint", resp.StatusCode)
