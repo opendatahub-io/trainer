@@ -691,11 +691,16 @@ func (t *TrainJobTrainerWrapper) NumProcPerNode(numProcPerNode int32) *TrainJobT
 	return t
 }
 
+func (t *TrainJobTrainerWrapper) ResourcesPerNode(resources corev1.ResourceRequirements) *TrainJobTrainerWrapper {
+	t.Trainer.ResourcesPerNode = &resources
+	return t
+}
+
 func (t *TrainJobTrainerWrapper) Container(image string, command []string, args []string, resRequests corev1.ResourceList) *TrainJobTrainerWrapper {
 	t.Image = &image
 	t.Command = command
 	t.Args = args
-	t.ResourcesPerNode = &corev1.ResourceRequirements{
+	t.Trainer.ResourcesPerNode = &corev1.ResourceRequirements{
 		Requests: resRequests,
 	}
 	return t

@@ -136,16 +136,18 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !equality.Semantic.DeepEqual(trainJob.Status, prevTrainJob.Status) {
 		// TODO(astefanutti): Consider using SSA once controller-runtime client has SSA support
 		// for sub-resources. See: https://github.com/kubernetes-sigs/controller-runtime/issues/3183
-		err = errors.Join(err, r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)))
+		if statusErr := r.client.Status().Patch(ctx, &trainJob, client.MergeFrom(prevTrainJob)); statusErr != nil {
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
 	}
 
-	if deadlineResult.RequeueAfter > 0 {
+	// RHAI progression tracking (use APIReader to avoid pod watches).
+	// Progression errors must not block deadline/progression requeue.
+	result, _ := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
+	if deadlineResult.RequeueAfter > 0 && (result.RequeueAfter == 0 || deadlineResult.RequeueAfter < result.RequeueAfter) {
 		return deadlineResult, err
 	}
-
-	// RHAI progression tracking (use APIReader to avoid pod watches)
-	result, progressionErr := progression.ReconcileProgression(ctx, r.client, r.apiReader, log, &trainJob)
-	return result, errors.Join(err, progressionErr)
+	return result, err
 }
 
 func (r *TrainJobReconciler) reconcileObjects(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {
