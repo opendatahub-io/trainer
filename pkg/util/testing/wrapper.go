@@ -625,27 +625,11 @@ func (t *TrainJobWrapper) ActiveDeadlineSeconds(deadline int64) *TrainJobWrapper
 	return t
 }
 
-func (t *TrainJobWrapper) SpecLabel(key, value string) *TrainJobWrapper {
-	if t.Spec.Labels == nil {
-		t.Spec.Labels = make(map[string]string, 1)
-	}
-	t.Spec.Labels[key] = value
-	return t
-}
-
 func (t *TrainJobWrapper) Annotation(key, value string) *TrainJobWrapper {
 	if t.ObjectMeta.Annotations == nil {
 		t.ObjectMeta.Annotations = make(map[string]string, 1)
 	}
 	t.ObjectMeta.Annotations[key] = value
-	return t
-}
-
-func (t *TrainJobWrapper) SpecAnnotation(key, value string) *TrainJobWrapper {
-	if t.Spec.Annotations == nil {
-		t.Spec.Annotations = make(map[string]string, 1)
-	}
-	t.Spec.Annotations[key] = value
 	return t
 }
 
