@@ -549,8 +549,8 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 					}
 				}
 
-				// Annotation should not be created while running if metrics are unreachable
-				// (It will be synthesized after completion, which is checked later)
+				// Annotation should not be created while running if metrics are unreachable.
+				// After completion it must also remain absent (asserted below).
 				if isRunning {
 					_, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
 					g.Expect(exists).Should(gomega.BeFalse(), "trainerStatus should not be created during running when metrics are unreachable")
