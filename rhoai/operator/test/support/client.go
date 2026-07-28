@@ -97,6 +97,8 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
+const maxDebugLogBytes int64 = 1 << 20
+
 func (c *Client) GetPodLogs(ctx context.Context, name, ns string) (string, error) {
 	req := c.CoreV1().Pods(ns).GetLogs(name, &corev1.PodLogOptions{})
 	stream, err := req.Stream(ctx)
@@ -104,11 +106,19 @@ func (c *Client) GetPodLogs(ctx context.Context, name, ns string) (string, error
 		return "", err
 	}
 	defer func() { _ = stream.Close() }()
-	buf, err := io.ReadAll(stream)
+	buf, err := io.ReadAll(io.LimitReader(stream, maxDebugLogBytes))
 	if err != nil {
 		return "", err
 	}
 	return string(buf), nil
+}
+
+func (c *Client) RegisterDebugDumpOnFailure(t *testing.T, ctx context.Context, ns string, extraPods ...string) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		c.dumpDebugInfo(t, ctx, ns, extraPods...)
+	})
 }
 
 func (c *Client) RegisterDebugCleanup(t *testing.T, ctx context.Context, ns string, extraPods ...string) {
@@ -130,43 +140,49 @@ func (c *Client) RegisterDebugCleanup(t *testing.T, ctx context.Context, ns stri
 	})
 
 	t.Cleanup(func() {
-		if !t.Failed() {
-			return
-		}
-
-		controllerLogs, err := c.GetControllerLogs(ctx, ns)
-		if err == nil {
-			t.Logf("Controller logs:\n %s", controllerLogs)
-		} else {
-			t.Logf("Failed to get Controller logs: %s", err)
-		}
-
-		events, err := c.CoreV1().Events(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			sort.Slice(events.Items, func(i, j int) bool {
-				return events.Items[i].LastTimestamp.Time.Before(events.Items[j].LastTimestamp.Time)
-			})
-			var lines []string
-			for _, e := range events.Items {
-				lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
-					e.LastTimestamp.Format(time.RFC3339),
-					e.Type, e.Reason, e.InvolvedObject.Name, e.Message,
-				))
-			}
-			t.Logf("Kubernetes events:\n%s", strings.Join(lines, "\n"))
-		} else {
-			t.Logf("Failed to get Kubernetes events: %s", err)
-		}
-
-		for _, pod := range extraPods {
-			output, err := c.GetPodLogs(ctx, pod, ns)
-			if err == nil {
-				t.Logf("%s logs:\n %s", pod, output)
-			} else {
-				t.Logf("Failed to get %s logs: %s", pod, err)
-			}
-		}
+		c.dumpDebugInfo(t, ctx, ns, extraPods...)
 	})
+}
+
+func (c *Client) dumpDebugInfo(t *testing.T, ctx context.Context, ns string, extraPods ...string) {
+	t.Helper()
+
+	if !t.Failed() {
+		return
+	}
+
+	controllerLogs, err := c.GetControllerLogs(ctx, ns)
+	if err == nil {
+		t.Logf("Controller logs:\n %s", controllerLogs)
+	} else {
+		t.Logf("Failed to get Controller logs: %s", err)
+	}
+
+	events, err := c.CoreV1().Events(ns).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		sort.Slice(events.Items, func(i, j int) bool {
+			return events.Items[i].LastTimestamp.Time.Before(events.Items[j].LastTimestamp.Time)
+		})
+		var lines []string
+		for _, e := range events.Items {
+			lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+				e.LastTimestamp.Format(time.RFC3339),
+				e.Type, e.Reason, e.InvolvedObject.Name, e.Message,
+			))
+		}
+		t.Logf("Kubernetes events:\n%s", strings.Join(lines, "\n"))
+	} else {
+		t.Logf("Failed to get Kubernetes events: %s", err)
+	}
+
+	for _, pod := range extraPods {
+		output, err := c.GetPodLogs(ctx, pod, ns)
+		if err == nil {
+			t.Logf("%s logs:\n %s", pod, output)
+		} else {
+			t.Logf("Failed to get %s logs: %s", pod, err)
+		}
+	}
 }
 
 func (c *Client) GetControllerLogs(ctx context.Context, ns string) (string, error) {

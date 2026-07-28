@@ -150,6 +150,14 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 test-e2e-ocp: ## Run e2e tests against an existing cluster with the operator deployed.
 	go test ./test/e2e/ocp/ -v -timeout 30m
 
+.PHONY: test-e2e-upgrade-pre
+test-e2e-upgrade-pre: ## Run pre-upgrade smoke tests (operator must be deployed).
+	go test ./test/e2e/upgrade/pre/ -v -timeout 10m
+
+.PHONY: test-e2e-upgrade-post
+test-e2e-upgrade-post: ## Run post-upgrade smoke tests (operator must be upgraded).
+	go test ./test/e2e/upgrade/post/ -v -timeout 10m
+
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
