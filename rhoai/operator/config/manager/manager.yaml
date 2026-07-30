@@ -40,7 +40,7 @@ spec:
         args:
           - --health-probe-bind-address=:8081
           - --zap-log-level=info
-        image: controller:latest
+        image: REPLACED_BY_KUSTOMIZE
         name: manager
         ports: []
         securityContext:

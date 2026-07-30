@@ -17,7 +17,7 @@ USER root
 RUN CGO_ENABLED=1 GOEXPERIMENT=strictfipsruntime GOOS=linux go build -a -o manager cmd/main.go
 
 # Runtime
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8
 
 WORKDIR /
 COPY --from=builder /workspace/manager .

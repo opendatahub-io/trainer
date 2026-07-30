@@ -282,9 +282,12 @@ func (m *trainerActions) ensureNamespace(ctx context.Context, rr *types.Reconcil
 			},
 		}
 		if err := c.Create(ctx, ns); err != nil {
-			return fmt.Errorf("failed to create namespace: %w", err)
+			if !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create namespace: %w", err)
+			}
+		} else {
+			logf.FromContext(ctx).Info("Created namespace", "namespace", namespace)
 		}
-		logf.FromContext(ctx).Info("Created namespace", "namespace", namespace)
 	}
 
 	return nil

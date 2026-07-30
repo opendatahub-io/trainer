@@ -71,6 +71,10 @@ func copyDir(src, dst string) error {
 			return err
 		}
 
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
 		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return err

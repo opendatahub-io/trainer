@@ -139,8 +139,12 @@ func checkJobSetOperatorHealth(ctx context.Context, c client.Client) (bool, erro
 		if !ok {
 			continue
 		}
-		condType, _, _ := unstructured.NestedString(cond, "type")
-		condStatus, _, _ := unstructured.NestedString(cond, "status")
+		condType, found, _ := unstructured.NestedString(cond, "type")
+		condStatus, statusFound, _ := unstructured.NestedString(cond, "status")
+		if !found || !statusFound {
+			degraded = append(degraded, "malformed condition (missing type or status)")
+			continue
+		}
 		if isJobSetOperatorConditionDegraded(condType, condStatus) {
 			reason, _, _ := unstructured.NestedString(cond, "reason")
 			message, _, _ := unstructured.NestedString(cond, "message")
