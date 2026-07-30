@@ -4,5 +4,4 @@ resources:
 - role_binding.yaml
 - metrics_reader_role.yaml
 - trainer_admin_role.yaml
-- trainer_editor_role.yaml
 - trainer_viewer_role.yaml
