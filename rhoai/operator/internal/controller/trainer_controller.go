@@ -129,7 +129,11 @@ type trainerActions struct {
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=create;get;list;patch;update;watch
-// +kubebuilder:rbac:groups="",resources=services;serviceaccounts;configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services;configmaps,verbs=get;list;watch;create;update;patch;delete
+// ServiceAccount mutate verbs are limited to accounts rendered from manifests/trainer.
+// create/list/watch stay unscoped (create ignores resourceNames; GC uses list).
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=create;list;watch
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-cache-initializer
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=create;get;list;update
 // Mutate verbs on cluster RBAC objects are limited to names this operator manages.

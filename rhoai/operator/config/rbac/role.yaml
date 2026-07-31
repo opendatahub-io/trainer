@@ -8,7 +8,6 @@ rules:
   - ""
   resources:
   - configmaps
-  - serviceaccounts
   - services
   verbs:
   - create
@@ -54,6 +53,26 @@ rules:
   verbs:
   - get
   - list
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - create
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resourceNames:
+  - kubeflow-trainer-cache-initializer
+  - kubeflow-trainer-controller-manager
+  resources:
+  - serviceaccounts
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
