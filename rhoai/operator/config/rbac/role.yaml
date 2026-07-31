@@ -206,18 +206,55 @@ rules:
   - list
 - apiGroups:
   - rbac.authorization.k8s.io
+  resourceNames:
+  - kubeflow-trainer-controller-manager
+  - kubeflow-trainer-view
+  resources:
+  - clusterrolebindings
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+- apiGroups:
+  - rbac.authorization.k8s.io
   resources:
   - clusterrolebindings
   - clusterroles
   - rolebindings
   verbs:
   - create
+  - list
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - kubeflow-trainer-admin
+  - kubeflow-trainer-cache-initializer
+  - kubeflow-trainer-controller-manager
+  - kubeflow-trainer-edit
+  - kubeflow-trainer-view
+  - training-admin
+  - training-edit
+  - training-view
+  resources:
+  - clusterroles
+  verbs:
   - delete
   - get
-  - list
   - patch
   - update
-  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - kubeflow-trainer-cache-initializer
+  resources:
+  - rolebindings
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
 - apiGroups:
   - scheduling.volcano.sh
   - scheduling.x-k8s.io
