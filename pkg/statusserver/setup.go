@@ -17,6 +17,7 @@ limitations under the License.
 package statusserver
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	"k8s.io/client-go/rest"
@@ -27,8 +28,11 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/util/cert"
 )
 
-func SetupServer(mgr ctrl.Manager, cfg *configapi.StatusServer, tlsOpts *configapi.TLSOptions) error {
-	tlsConfig, err := cert.SetupTLSConfig(mgr, tlsOpts)
+// SetupServer registers the TrainJob runtime status HTTPS server with the manager.
+// optionalTLSOpts layers additional *tls.Config mutations after Configuration TLS
+// options (for example OpenShift TLSSecurityProfile from pkg/tls.Resolve).
+func SetupServer(mgr ctrl.Manager, cfg *configapi.StatusServer, tlsOpts *configapi.TLSOptions, optionalTLSOpts ...func(*tls.Config)) error {
+	tlsConfig, err := cert.SetupTLSConfig(mgr, tlsOpts, optionalTLSOpts...)
 	if err != nil {
 		return err
 	}

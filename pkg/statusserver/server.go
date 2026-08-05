@@ -94,6 +94,10 @@ func NewServer(c client.Client, cfg *configapi.StatusServer, tlsConfig *tls.Conf
 		bodySizeLimitMiddleware(log, maxBodySize),
 	)
 
+	// TLSConfig is required for ListenAndServeTLS with cert-controller rotation
+	// (GetCertificate). On OpenShift it is further hardened via pkg/tls.Resolve
+	// (cluster TLSSecurityProfile), matching metrics and webhook servers.
+	// nosemgrep: go-http-server-tls-override
 	httpServer := http.Server{
 		Addr:         fmt.Sprintf(":%d", *cfg.Port),
 		Handler:      handler,

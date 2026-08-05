@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"net/http"
@@ -166,7 +167,7 @@ func main() {
 		os.Exit(1)
 	}
 	// Set up controllers and other components using goroutines to start the manager quickly.
-	go setupManagerComponents(mgr, runtimes, &cfg, certsReady)
+	go setupManagerComponents(mgr, runtimes, &cfg, certsReady, tlsResult.TLSOpts)
 
 	setupLog.Info("Starting manager")
 	if err = mgr.Start(ctx); err != nil {
@@ -175,7 +176,7 @@ func main() {
 	}
 }
 
-func setupManagerComponents(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, cfg *configapi.Configuration, certsReady <-chan struct{}) {
+func setupManagerComponents(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, cfg *configapi.Configuration, certsReady <-chan struct{}, clusterTLSOpts []func(*tls.Config)) {
 	setupLog.Info("Waiting for certificate generation to complete")
 	<-certsReady
 	setupLog.Info("Certs ready")
@@ -190,7 +191,8 @@ func setupManagerComponents(mgr ctrl.Manager, runtimes map[string]runtime.Runtim
 	}
 
 	if features.Enabled(features.TrainJobStatus) {
-		if err := statusserver.SetupServer(mgr, cfg.StatusServer, cfg.TLS); err != nil {
+		// Apply the same OpenShift TLSSecurityProfile used by metrics/webhook servers.
+		if err := statusserver.SetupServer(mgr, cfg.StatusServer, cfg.TLS, clusterTLSOpts...); err != nil {
 			setupLog.Error(err, "Could not create runtime status server")
 			os.Exit(1)
 		}

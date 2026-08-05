@@ -98,7 +98,11 @@ func ManageCerts(mgr ctrl.Manager, cfg Config, setupFinished chan struct{}) erro
 // SetupTLSConfig creates a TLS config with automatic certificate rotation support.
 // It creates a cert watcher, adds it to the manager, and returns a TLS config
 // that will automatically pick up rotated certificates.
-func SetupTLSConfig(mgr ctrl.Manager, tlsOpts *configapi.TLSOptions) (*tls.Config, error) {
+//
+// optionalTLSOpts are applied after Configuration TLSOptions so callers can
+// layer cluster TLSSecurityProfile settings (OpenShift) on top of config-file
+// TLS, matching metrics and webhook server behavior.
+func SetupTLSConfig(mgr ctrl.Manager, tlsOpts *configapi.TLSOptions, optionalTLSOpts ...func(*tls.Config)) (*tls.Config, error) {
 	certWatcher, err := certwatcher.New(certDir+"/tls.crt", certDir+"/tls.key")
 	if err != nil {
 		return nil, fmt.Errorf("error creating cert watcher: %w", err)
@@ -112,6 +116,11 @@ func SetupTLSConfig(mgr ctrl.Manager, tlsOpts *configapi.TLSOptions) (*tls.Confi
 		GetCertificate: certWatcher.GetCertificate,
 	}
 	tlsconfig.Apply(tlsConfig, tlsOpts)
+	for _, apply := range optionalTLSOpts {
+		if apply != nil {
+			apply(tlsConfig)
+		}
+	}
 
 	return tlsConfig, nil
 }

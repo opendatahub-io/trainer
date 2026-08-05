@@ -167,6 +167,32 @@ func TestSetupTLSConfigMissingCerts(t *testing.T) {
 	}
 }
 
+func TestSetupTLSConfigOptionalTLSOpts(t *testing.T) {
+	dir := t.TempDir()
+	writeSelfSignedCert(t, dir)
+
+	originalCertDir := certDir
+	certDir = dir
+	t.Cleanup(func() { certDir = originalCertDir })
+
+	mgr := &fakeManager{}
+	got, err := SetupTLSConfig(mgr, &configapi.TLSOptions{
+		MinVersion: configapi.TLSVersion12,
+	}, func(c *tls.Config) {
+		c.MinVersion = tls.VersionTLS13
+		c.NextProtos = []string{"h2", "http/1.1"}
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if got.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %v, want %v (optionalTLSOpts should override Configuration TLS)", got.MinVersion, tls.VersionTLS13)
+	}
+	if diff := cmp.Diff([]string{"h2", "http/1.1"}, got.NextProtos); len(diff) != 0 {
+		t.Errorf("Unexpected NextProtos (-want,+got):\n%s", diff)
+	}
+}
+
 func TestGetOperatorNamespace(t *testing.T) {
 	// Outside of a pod the service account namespace file does not exist, so we
 	// must fall back to the default namespace rather than returning an empty one.
