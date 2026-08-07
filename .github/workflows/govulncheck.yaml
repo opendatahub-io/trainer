@@ -1,0 +1,81 @@
+# This workflow runs govulncheck on PRs to detect known CVEs in controller source directory and Go dependencies.
+
+name: govulncheck - CVE Detection
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/trainer-controller-manager/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "Go version: $(go version)"
+          govulncheck -version
+
+      - name: Run govulncheck
+        run: |
+          govulncheck -format json ./... > govulncheck-output.json
+
+          JQ_PARSE='
+            [.[] | select(.osv)] as $osvs |
+            [.[] | select(.finding)] as $findings |
+            ($osvs | map({(.osv.id): .osv}) | add) as $osv_map |
+            [
+              $findings
+              | group_by(.finding.osv)[]
+              | .[0].finding as $f
+              | $osv_map[$f.osv] as $osv
+              | {
+                  osv_id: $f.osv,
+                  cve: ([$osv.aliases[]? | select(startswith("CVE-"))] | first // $f.osv),
+                  summary: ($osv.summary // "N/A"),
+                  module: $f.trace[0].module,
+                  version: $f.trace[0].version,
+                  fixed: $f.fixed_version
+                }
+            ]
+            | sort_by(.module, .osv_id)
+          '
+
+          VULN_COUNT=$(jq -s "$JQ_PARSE | length" govulncheck-output.json)
+
+          if [ "$VULN_COUNT" -eq 0 ]; then
+            echo "No vulnerabilities found."
+            echo "## **Summary report of govulncheck:**" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "No vulnerabilities found." >> "$GITHUB_STEP_SUMMARY"
+          else
+            jq -s "$JQ_PARSE"' |
+              "## **Summary report of govulncheck:**\n\n| CVE | Vuln ID | Description | Module | Current | Fixed |\n|-----|---------|-------------|--------|---------|-------|\n" +
+              (map("| \(.cve) | [\(.osv_id)](https://pkg.go.dev/vuln/\(.osv_id)) | \(.summary[:80]) | `\(.module)` | \(.version) | \(.fixed) |") | join("\n")) +
+              "\n\n**Total: \(length) vulnerabilities found**"
+            ' -r govulncheck-output.json >> "$GITHUB_STEP_SUMMARY"
+
+            echo ""
+            echo "=== govulncheck Results ==="
+            echo ""
+            jq -s "$JQ_PARSE"' |
+              .[] | "\(.cve)  \(.osv_id)  \(.module)@\(.version) -> \(.fixed)\n  \(.summary)"
+            ' -r govulncheck-output.json
+            echo ""
+            echo "Total: $VULN_COUNT vulnerabilities found"
+            exit 1
+          fi
