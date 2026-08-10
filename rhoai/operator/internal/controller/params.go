@@ -33,20 +33,15 @@ var trainerImageParamMap = map[string]string{
 }
 
 var imageStreamParamMap = map[string]string{
-	"odh-training-universal-workbench-image-cuda-3-4": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CUDA",
-	"odh-training-universal-workbench-image-rocm-3-4": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_ROCM",
-	"odh-training-universal-workbench-image-cpu-3-4":  "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU",
-	"odh-training-universal-workbench-image-cuda-3-5": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CUDA_3_5",
-	"odh-training-universal-workbench-image-rocm-3-5": "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_ROCM_3_5",
-	"odh-training-universal-workbench-image-cpu-3-5":  "RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU_3_5",
+	"odh-training-universal-workbench-image-cuda-3-5": "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE",
+	"odh-training-universal-workbench-image-rocm-3-5": "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE",
+	"odh-training-universal-workbench-image-cpu-3-5":  "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE",
 }
 
 var runtimesParamMap = map[string]string{
-	"odh-training-cuda128-torch29-py312-image": "RELATED_IMAGE_ODH_TRAINING_CUDA128_TORCH29_PY312_IMAGE",
-	"odh-training-rocm64-torch29-py312-image":  "RELATED_IMAGE_ODH_TRAINING_ROCM64_TORCH29_PY312_IMAGE",
-	"odh-th06-cuda130-torch210-py312-image":    "RELATED_IMAGE_ODH_TH06_CUDA130_TORCH210_PY312_IMAGE",
-	"odh-th06-rocm64-torch291-py312-image":     "RELATED_IMAGE_ODH_TH06_ROCM64_TORCH291_PY312_IMAGE",
-	"odh-th06-cpu-torch210-py312-image":        "RELATED_IMAGE_ODH_TH06_CPU_TORCH210_PY312_IMAGE",
+	"odh-th-torch-cuda-py312-image": "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE",
+	"odh-th-torch-rocm-py312-image": "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE",
+	"odh-th-torch-cpu-py312-image":  "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE",
 }
 
 func applyParamOverrides(dir string, paramMap map[string]string) error {

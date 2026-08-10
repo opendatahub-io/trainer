@@ -112,7 +112,7 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 
 	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
+	g.Expect(ctrNames).To(HaveLen(12), "Expected 12 ClusterTrainingRuntimes")
 
 	// Phase 2: Delete CR (platform removes module)
 	err = k8sClient.DeleteTrainer(ctx)
@@ -200,7 +200,7 @@ func TestTrainerDeletionWithResourceInUseFinalizer(t *testing.T) {
 
 	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(ctrNames).To(HaveLen(15), "Expected 15 ClusterTrainingRuntimes")
+	g.Expect(ctrNames).To(HaveLen(12), "Expected 12 ClusterTrainingRuntimes")
 
 	err = k8sClient.CreateTrainJob(ctx, testTrainJobName, trainerNamespace, targetCTR)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create TrainJob")

@@ -34,9 +34,6 @@ func TestResolveImageStreamParamsUsesDefaults(t *testing.T) {
 	params, err := readParams(filepath.Join(dir, "params.env"))
 	g.Expect(err).NotTo(HaveOccurred())
 
-	g.Expect(params["odh-training-universal-workbench-image-cuda-3-4"]).To(Equal("quay.io/test/cuda:3.4"))
-	g.Expect(params["odh-training-universal-workbench-image-rocm-3-4"]).To(Equal("quay.io/test/rocm:3.4"))
-	g.Expect(params["odh-training-universal-workbench-image-cpu-3-4"]).To(Equal("quay.io/test/cpu:3.4"))
 	g.Expect(params["odh-training-universal-workbench-image-cuda-3-5"]).To(Equal("quay.io/test/cuda:3.5"))
 	g.Expect(params["odh-training-universal-workbench-image-rocm-3-5"]).To(Equal("quay.io/test/rocm:3.5"))
 	g.Expect(params["odh-training-universal-workbench-image-cpu-3-5"]).To(Equal("quay.io/test/cpu:3.5"))
@@ -45,8 +42,8 @@ func TestResolveImageStreamParamsUsesDefaults(t *testing.T) {
 func TestResolveImageStreamParamsEnvVarOverride(t *testing.T) {
 	g := NewWithT(t)
 
-	t.Setenv("RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CUDA", "quay.io/custom/cuda:override")
-	t.Setenv("RELATED_IMAGE_ODH_TRAINING_UNIVERSAL_WORKBENCH_IMAGE_CPU_3_5", "quay.io/custom/cpu:3.5-override")
+	t.Setenv("RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE", "quay.io/custom/cuda:override")
+	t.Setenv("RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE", "quay.io/custom/cpu:override")
 
 	dir := createTestImageStreamManifests(t)
 
@@ -55,10 +52,9 @@ func TestResolveImageStreamParamsEnvVarOverride(t *testing.T) {
 	params, err := readParams(filepath.Join(dir, "params.env"))
 	g.Expect(err).NotTo(HaveOccurred())
 
-	g.Expect(params["odh-training-universal-workbench-image-cuda-3-4"]).To(Equal("quay.io/custom/cuda:override"))
-	g.Expect(params["odh-training-universal-workbench-image-rocm-3-4"]).To(Equal("quay.io/test/rocm:3.4"))
-	g.Expect(params["odh-training-universal-workbench-image-cpu-3-5"]).To(Equal("quay.io/custom/cpu:3.5-override"))
-	g.Expect(params["odh-training-universal-workbench-image-cpu-3-4"]).To(Equal("quay.io/test/cpu:3.4"))
+	g.Expect(params["odh-training-universal-workbench-image-cuda-3-5"]).To(Equal("quay.io/custom/cuda:override"))
+	g.Expect(params["odh-training-universal-workbench-image-rocm-3-5"]).To(Equal("quay.io/test/rocm:3.5"))
+	g.Expect(params["odh-training-universal-workbench-image-cpu-3-5"]).To(Equal("quay.io/custom/cpu:override"))
 }
 
 func TestResolveImageStreamParamsMissingFile(t *testing.T) {
@@ -74,10 +70,7 @@ func createTestImageStreamManifests(t *testing.T) string {
 
 	dir := t.TempDir()
 
-	paramsEnv := `odh-training-universal-workbench-image-cuda-3-4=quay.io/test/cuda:3.4
-odh-training-universal-workbench-image-rocm-3-4=quay.io/test/rocm:3.4
-odh-training-universal-workbench-image-cpu-3-4=quay.io/test/cpu:3.4
-odh-training-universal-workbench-image-cuda-3-5=quay.io/test/cuda:3.5
+	paramsEnv := `odh-training-universal-workbench-image-cuda-3-5=quay.io/test/cuda:3.5
 odh-training-universal-workbench-image-rocm-3-5=quay.io/test/rocm:3.5
 odh-training-universal-workbench-image-cpu-3-5=quay.io/test/cpu:3.5
 `
