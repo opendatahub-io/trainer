@@ -24,7 +24,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
@@ -339,6 +338,15 @@ func (j *JobSetWrapper) SchedulingGates(rJobName string, schedulingGates ...core
 	return j
 }
 
+func (j *JobSetWrapper) TerminationGracePeriodSeconds(rJobName string, seconds int64) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.TerminationGracePeriodSeconds = &seconds
+		}
+	}
+	return j
+}
+
 func (j *JobSetWrapper) ImagePullSecrets(rJobName string, imagePullSecrets ...corev1.LocalObjectReference) *JobSetWrapper {
 	for i, rJob := range j.Spec.ReplicatedJobs {
 		if rJob.Name == rJobName {
@@ -358,6 +366,15 @@ func (j *JobSetWrapper) Tolerations(rJobName string, tolerations ...corev1.Toler
 				j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Tolerations,
 				tolerations...,
 			)
+		}
+	}
+	return j
+}
+
+func (j *JobSetWrapper) PodSecurityContext(rJobName string, securityContext corev1.PodSecurityContext) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.SecurityContext = &securityContext
 		}
 	}
 	return j
@@ -400,6 +417,19 @@ func (j *JobSetWrapper) Env(rJobName, containerName string, envs ...corev1.EnvVa
 						j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers[k].Env,
 						envs...,
 					)
+				}
+			}
+		}
+	}
+	return j
+}
+
+func (j *JobSetWrapper) ContainerSecurityContext(rJobName, containerName string, securityContext corev1.SecurityContext) *JobSetWrapper {
+	for i, rJob := range j.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			for k, container := range j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers {
+				if container.Name == containerName {
+					j.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.Containers[k].SecurityContext = &securityContext
 				}
 			}
 		}
@@ -520,18 +550,18 @@ func (j *JobSetWrapper) PodPriorityClassName(value string) *JobSetWrapper {
 }
 
 func (j *JobSetWrapper) Label(key, value string) *JobSetWrapper {
-	if j.ObjectMeta.Labels == nil {
-		j.ObjectMeta.Labels = make(map[string]string, 1)
+	if j.Labels == nil {
+		j.Labels = make(map[string]string, 1)
 	}
-	j.ObjectMeta.Labels[key] = value
+	j.Labels[key] = value
 	return j
 }
 
 func (j *JobSetWrapper) Annotation(key, value string) *JobSetWrapper {
-	if j.ObjectMeta.Annotations == nil {
-		j.ObjectMeta.Annotations = make(map[string]string, 1)
+	if j.Annotations == nil {
+		j.Annotations = make(map[string]string, 1)
 	}
-	j.ObjectMeta.Annotations[key] = value
+	j.Annotations[key] = value
 	return j
 }
 
@@ -590,27 +620,16 @@ func (t *TrainJobWrapper) UID(uid string) *TrainJobWrapper {
 	return t
 }
 
-func (t *TrainJobWrapper) SpecLabel(key, value string) *TrainJobWrapper {
-	if t.Spec.Labels == nil {
-		t.Spec.Labels = make(map[string]string, 1)
-	}
-	t.Spec.Labels[key] = value
+func (t *TrainJobWrapper) ActiveDeadlineSeconds(deadline int64) *TrainJobWrapper {
+	t.Spec.ActiveDeadlineSeconds = deadline
 	return t
 }
 
 func (t *TrainJobWrapper) Annotation(key, value string) *TrainJobWrapper {
-	if t.ObjectMeta.Annotations == nil {
-		t.ObjectMeta.Annotations = make(map[string]string, 1)
+	if t.Annotations == nil {
+		t.Annotations = make(map[string]string, 1)
 	}
-	t.ObjectMeta.Annotations[key] = value
-	return t
-}
-
-func (t *TrainJobWrapper) SpecAnnotation(key, value string) *TrainJobWrapper {
-	if t.Spec.Annotations == nil {
-		t.Spec.Annotations = make(map[string]string, 1)
-	}
-	t.Spec.Annotations[key] = value
+	t.Annotations[key] = value
 	return t
 }
 
@@ -638,8 +657,8 @@ func (t *TrainJobWrapper) Trainer(trainer *trainer.Trainer) *TrainJobWrapper {
 	return t
 }
 
-func (t *TrainJobWrapper) PodTemplateOverrides(podTemplateOverrides []trainer.PodTemplateOverride) *TrainJobWrapper {
-	t.Spec.PodTemplateOverrides = podTemplateOverrides
+func (t *TrainJobWrapper) RuntimePatches(patches []trainer.RuntimePatch) *TrainJobWrapper {
+	t.Spec.RuntimePatches = patches
 	return t
 }
 
@@ -667,15 +686,20 @@ func (t *TrainJobTrainerWrapper) NumNodes(numNodes int32) *TrainJobTrainerWrappe
 	return t
 }
 
-func (t *TrainJobTrainerWrapper) NumProcPerNode(numProcPerNode intstr.IntOrString) *TrainJobTrainerWrapper {
+func (t *TrainJobTrainerWrapper) NumProcPerNode(numProcPerNode int32) *TrainJobTrainerWrapper {
 	t.Trainer.NumProcPerNode = &numProcPerNode
 	return t
 }
 
+func (t *TrainJobTrainerWrapper) ResourcesPerNode(resources corev1.ResourceRequirements) *TrainJobTrainerWrapper {
+	t.Trainer.ResourcesPerNode = &resources
+	return t
+}
+
 func (t *TrainJobTrainerWrapper) Container(image string, command []string, args []string, resRequests corev1.ResourceList) *TrainJobTrainerWrapper {
-	t.Trainer.Image = &image
-	t.Trainer.Command = command
-	t.Trainer.Args = args
+	t.Image = &image
+	t.Command = command
+	t.Args = args
 	t.Trainer.ResourcesPerNode = &corev1.ResourceRequirements{
 		Requests: resRequests,
 	}
@@ -684,11 +708,6 @@ func (t *TrainJobTrainerWrapper) Container(image string, command []string, args 
 
 func (t *TrainJobTrainerWrapper) Env(env ...corev1.EnvVar) *TrainJobTrainerWrapper {
 	t.Trainer.Env = env
-	return t
-}
-
-func (t *TrainJobTrainerWrapper) ResourcesPerNode(resources corev1.ResourceRequirements) *TrainJobTrainerWrapper {
-	t.Trainer.ResourcesPerNode = &resources
 	return t
 }
 
@@ -707,12 +726,12 @@ func MakeTrainJobInitializerWrapper() *TrainJobInitializerWrapper {
 }
 
 func (t *TrainJobInitializerWrapper) DatasetInitializer(datasetInitializer *trainer.DatasetInitializer) *TrainJobInitializerWrapper {
-	t.Initializer.Dataset = datasetInitializer
+	t.Dataset = datasetInitializer
 	return t
 }
 
 func (t *TrainJobInitializerWrapper) ModelInitializer(modelInitializer *trainer.ModelInitializer) *TrainJobInitializerWrapper {
-	t.Initializer.Model = modelInitializer
+	t.Model = modelInitializer
 	return t
 }
 
@@ -914,18 +933,18 @@ func MakeTrainingRuntimeWrapper(namespace, name string) *TrainingRuntimeWrapper 
 }
 
 func (r *TrainingRuntimeWrapper) Label(key, value string) *TrainingRuntimeWrapper {
-	if r.ObjectMeta.Labels == nil {
-		r.ObjectMeta.Labels = make(map[string]string, 1)
+	if r.Labels == nil {
+		r.Labels = make(map[string]string, 1)
 	}
-	r.ObjectMeta.Labels[key] = value
+	r.Labels[key] = value
 	return r
 }
 
 func (r *TrainingRuntimeWrapper) Annotation(key, value string) *TrainingRuntimeWrapper {
-	if r.ObjectMeta.Annotations == nil {
-		r.ObjectMeta.Annotations = make(map[string]string, 1)
+	if r.Annotations == nil {
+		r.Annotations = make(map[string]string, 1)
 	}
-	r.ObjectMeta.Annotations[key] = value
+	r.Annotations[key] = value
 	return r
 }
 
@@ -1133,6 +1152,18 @@ func (s *TrainingRuntimeSpecWrapper) LauncherReplica() *TrainingRuntimeSpecWrapp
 	return s
 }
 
+func (s *TrainingRuntimeSpecWrapper) DependsOn(
+	rJobName string,
+	dependsOn ...jobsetv1alpha2.DependsOn,
+) *TrainingRuntimeSpecWrapper {
+	for i, rJob := range s.Template.Spec.ReplicatedJobs {
+		if rJob.Name == rJobName {
+			s.Template.Spec.ReplicatedJobs[i].DependsOn = dependsOn
+		}
+	}
+	return s
+}
+
 func (s *TrainingRuntimeSpecWrapper) Replicas(replicas int32, rJobNames ...string) *TrainingRuntimeSpecWrapper {
 	for i, rJob := range s.Template.Spec.ReplicatedJobs {
 		if slices.Contains(rJobNames, rJob.Name) {
@@ -1256,15 +1287,24 @@ func MakeMLPolicySourceWrapper() *MLPolicySourceWrapper {
 	return &MLPolicySourceWrapper{}
 }
 
-func (m *MLPolicySourceWrapper) TorchPolicy(numProcPerNode *intstr.IntOrString, elasticPolicy *trainer.TorchElasticPolicy) *MLPolicySourceWrapper {
-	if m.Torch == nil {
-		m.Torch = &trainer.TorchMLPolicySource{}
-	}
-	m.Torch = &trainer.TorchMLPolicySource{
-		NumProcPerNode: numProcPerNode,
-		ElasticPolicy:  elasticPolicy,
-	}
+func (m *MLPolicySourceWrapper) TorchPolicy() *MLPolicySourceWrapper {
+	m.Torch = &trainer.TorchMLPolicySource{}
 	return m
+}
+
+func (m *MLPolicySourceWrapper) TorchPolicyWithEnvInjection(envInjection *trainer.EnvInjection) *MLPolicySourceWrapper {
+	m.Torch = &trainer.TorchMLPolicySource{EnvInjection: envInjection}
+	return m
+}
+
+func (w *MLPolicySourceWrapper) JAXPolicy() *MLPolicySourceWrapper {
+	w.JAX = &trainer.JAXMLPolicySource{}
+	return w
+}
+
+func (w *MLPolicySourceWrapper) XGBoostPolicy() *MLPolicySourceWrapper {
+	w.XGBoost = &trainer.XGBoostMLPolicySource{}
+	return w
 }
 
 func (m *MLPolicySourceWrapper) MPIPolicy(numProcPerNode *int32, MPImplementation trainer.MPIImplementation, sshAuthMountPath *string, runLauncherAsNode *bool) *MLPolicySourceWrapper {
@@ -1275,6 +1315,14 @@ func (m *MLPolicySourceWrapper) MPIPolicy(numProcPerNode *int32, MPImplementatio
 	m.MPI.MPIImplementation = &MPImplementation
 	m.MPI.SSHAuthMountPath = sshAuthMountPath
 	m.MPI.RunLauncherAsNode = runLauncherAsNode
+	return m
+}
+
+func (m *MLPolicySourceWrapper) FluxPolicy(numProcPerNode *int32) *MLPolicySourceWrapper {
+	if m.Flux == nil {
+		m.Flux = &trainer.FluxMLPolicySource{}
+	}
+	m.Flux.NumProcPerNode = numProcPerNode
 	return m
 }
 
@@ -1302,17 +1350,17 @@ func MakeSchedulerPluginsPodGroup(namespace, name string) *SchedulerPluginsPodGr
 }
 
 func (p *SchedulerPluginsPodGroupWrapper) MinMember(members int32) *SchedulerPluginsPodGroupWrapper {
-	p.PodGroup.Spec.MinMember = members
+	p.Spec.MinMember = members
 	return p
 }
 
 func (p *SchedulerPluginsPodGroupWrapper) MinResources(resources corev1.ResourceList) *SchedulerPluginsPodGroupWrapper {
-	p.PodGroup.Spec.MinResources = resources
+	p.Spec.MinResources = resources
 	return p
 }
 
 func (p *SchedulerPluginsPodGroupWrapper) SchedulingTimeout(timeout int32) *SchedulerPluginsPodGroupWrapper {
-	p.PodGroup.Spec.ScheduleTimeoutSeconds = &timeout
+	p.Spec.ScheduleTimeoutSeconds = &timeout
 	return p
 }
 
@@ -1352,27 +1400,27 @@ func MakeVolcanoPodGroup(namespace, name string) *VolcanoPodGroupWrapper {
 }
 
 func (p *VolcanoPodGroupWrapper) MinMember(members int32) *VolcanoPodGroupWrapper {
-	p.PodGroup.Spec.MinMember = members
+	p.Spec.MinMember = members
 	return p
 }
 
 func (p *VolcanoPodGroupWrapper) MinResources(resources *corev1.ResourceList) *VolcanoPodGroupWrapper {
-	p.PodGroup.Spec.MinResources = resources
+	p.Spec.MinResources = resources
 	return p
 }
 
 func (p *VolcanoPodGroupWrapper) Queue(queue string) *VolcanoPodGroupWrapper {
-	p.PodGroup.Spec.Queue = queue
+	p.Spec.Queue = queue
 	return p
 }
 
 func (p *VolcanoPodGroupWrapper) PriorityClassName(pc string) *VolcanoPodGroupWrapper {
-	p.PodGroup.Spec.PriorityClassName = pc
+	p.Spec.PriorityClassName = pc
 	return p
 }
 
 func (p *VolcanoPodGroupWrapper) NetworkTopology(mode volcanov1beta1.NetworkTopologyMode, highestTier int) *VolcanoPodGroupWrapper {
-	p.PodGroup.Spec.NetworkTopology = &volcanov1beta1.NetworkTopologySpec{
+	p.Spec.NetworkTopology = &volcanov1beta1.NetworkTopologySpec{
 		Mode:               mode,
 		HighestTierAllowed: &highestTier,
 	}
@@ -1387,7 +1435,7 @@ func (p *VolcanoPodGroupWrapper) ControllerReference(gvk schema.GroupVersionKind
 			UID:       types.UID(uid),
 		},
 	}, gvk)
-	p.PodGroup.OwnerReferences = append(p.PodGroup.OwnerReferences, owner)
+	p.OwnerReferences = append(p.OwnerReferences, owner)
 	return p
 }
 

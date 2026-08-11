@@ -17,6 +17,7 @@ limitations under the License.
 package cert
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strings"
@@ -24,16 +25,24 @@ import (
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+
+	configapi "github.com/kubeflow/trainer/v2/pkg/apis/config/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/util/tlsconfig"
 )
 
 const (
-	certDir          = "/tmp/k8s-webhook-server/serving-certs"
 	caName           = "kubeflow-trainer-ca"
 	caOrganization   = "kubeflow-trainer"
 	defaultNamespace = "kubeflow-system"
 )
 
-func getOperatorNamespace() string {
+// certDir is the directory the webhook serving certificates are written to and
+// watched from. It is a variable rather than a constant so that tests can point
+// it at a temporary directory.
+var certDir = "/tmp/k8s-webhook-server/serving-certs"
+
+func GetOperatorNamespace() string {
 	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
 		if ns := strings.TrimSpace(string(data)); len(ns) > 0 {
 			return ns
@@ -43,18 +52,20 @@ func getOperatorNamespace() string {
 }
 
 type Config struct {
-	WebhookServiceName       string
-	WebhookSecretName        string
-	WebhookConfigurationName string
+	WebhookServiceName                 string
+	WebhookSecretName                  string
+	ValidatingWebhookConfigurationName string
+	MutatingWebhookConfigurationName   string
 }
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
 //+kubebuilder:rbac:groups="admissionregistration.k8s.io",resources=validatingwebhookconfigurations,verbs=get;list;watch;update
+//+kubebuilder:rbac:groups="admissionregistration.k8s.io",resources=mutatingwebhookconfigurations,verbs=get;list;watch;update
 
 // ManageCerts creates all certs for webhooks.
 func ManageCerts(mgr ctrl.Manager, cfg Config, setupFinished chan struct{}) error {
 
-	ns := getOperatorNamespace()
+	ns := GetOperatorNamespace()
 	// DNSName is <service name>.<namespace>.svc
 	dnsName := fmt.Sprintf("%s.%s.svc", cfg.WebhookServiceName, ns)
 
@@ -68,12 +79,48 @@ func ManageCerts(mgr ctrl.Manager, cfg Config, setupFinished chan struct{}) erro
 		CAOrganization: caOrganization,
 		DNSName:        dnsName,
 		IsReady:        setupFinished,
-		Webhooks: []cert.WebhookInfo{{
-			Type: cert.Validating,
-			Name: cfg.WebhookConfigurationName,
-		}},
+		Webhooks: []cert.WebhookInfo{
+			{
+				Type: cert.Validating,
+				Name: cfg.ValidatingWebhookConfigurationName,
+			},
+			{
+				Type: cert.Mutating,
+				Name: cfg.MutatingWebhookConfigurationName,
+			},
+		},
 		// When Kubeflow Trainer is running in the leader election mode,
 		// we expect webhook server will run in primary and secondary instance
 		RequireLeaderElection: false,
 	})
+}
+
+// SetupTLSConfig creates a TLS config with automatic certificate rotation support.
+// It creates a cert watcher, adds it to the manager, and returns a TLS config
+// that will automatically pick up rotated certificates.
+//
+// optionalTLSOpts are applied after Configuration TLSOptions so callers can
+// layer cluster TLSSecurityProfile settings (OpenShift) on top of config-file
+// TLS, matching metrics and webhook server behavior.
+func SetupTLSConfig(mgr ctrl.Manager, tlsOpts *configapi.TLSOptions, optionalTLSOpts ...func(*tls.Config)) (*tls.Config, error) {
+	certWatcher, err := certwatcher.New(certDir+"/tls.crt", certDir+"/tls.key")
+	if err != nil {
+		return nil, fmt.Errorf("error creating cert watcher: %w", err)
+	}
+
+	if err := mgr.Add(certWatcher); err != nil {
+		return nil, fmt.Errorf("error adding cert watcher to manager: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		GetCertificate: certWatcher.GetCertificate,
+	}
+	tlsconfig.Apply(tlsConfig, tlsOpts)
+	for _, apply := range optionalTLSOpts {
+		if apply != nil {
+			apply(tlsConfig)
+		}
+	}
+
+	return tlsConfig, nil
 }

@@ -1,18 +1,16 @@
-#
-# Copyright 2025 The Kubeflow authors.
+# Copyright 2025 The Kubeflow Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     https://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
 
 suite: Test manager Deployment
 
@@ -83,6 +81,36 @@ tests:
       - equal:
           path: spec.template.metadata.labels.key2
           value: value2
+
+  - it: Should apply selector labels if `manager.selectorLabels` is set
+    set:
+      manager:
+        selectorLabels:
+          sel1: val1
+          sel2: val2
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels.sel1
+          value: val1
+      - equal:
+          path: spec.selector.matchLabels.sel2
+          value: val2
+      - equal:
+          path: spec.template.metadata.labels.sel1
+          value: val1
+      - equal:
+          path: spec.template.metadata.labels.sel2
+          value: val2
+
+  - it: Should apply pod annotations if `manager.podAnnotations` is set
+    set:
+      manager:
+        podAnnotations:
+          traffic.sidecar.istio.io/excludeInboundPorts: "9443"
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["traffic.sidecar.istio.io/excludeInboundPorts"]
+          value: "9443"
 
   - it: Should add environment variables if `controller.env` is set
     set:

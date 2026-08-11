@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -19,8 +33,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
-from kubeflow_trainer_api.models.io_k8s_apimachinery_pkg_util_intstr_int_or_string import IoK8sApimachineryPkgUtilIntstrIntOrString
-from kubeflow_trainer_api.models.trainer_v1alpha1_torch_elastic_policy import TrainerV1alpha1TorchElasticPolicy
+from kubeflow_trainer_api.models.trainer_v1alpha1_env_injection import TrainerV1alpha1EnvInjection
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -28,9 +41,8 @@ class TrainerV1alpha1TorchMLPolicySource(BaseModel):
     """
     TorchMLPolicySource represents a PyTorch runtime configuration.
     """ # noqa: E501
-    elastic_policy: Optional[TrainerV1alpha1TorchElasticPolicy] = Field(default=None, description="elasticPolicy defines the Elastic policy for the PyTorch training.", alias="elasticPolicy")
-    num_proc_per_node: Optional[IoK8sApimachineryPkgUtilIntstrIntOrString] = Field(default=None, description="numProcPerNode is the number of processes per node. This value is inserted into the `--nproc-per-node` argument of the `torchrun` CLI. Supported values: `auto`, `cpu`, `gpu`, or int value. Defaults to `auto`.", alias="numProcPerNode")
-    __properties: ClassVar[List[str]] = ["elasticPolicy", "numProcPerNode"]
+    env_injection: Optional[TrainerV1alpha1EnvInjection] = Field(default=None, description="envInjection configures which additional containers should receive the PET_* environment variables. By default, the PET_* variables are injected only into the main \"node\" container. Use this field to also inject them into selected sidecar or init containers. For torchtune, envInjection targets still receive PET_MASTER_ADDR and PET_MASTER_PORT even though the main trainer container uses command-line rendezvous instead. Defaults to empty (main container only).", alias="envInjection")
+    __properties: ClassVar[List[str]] = ["envInjection"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -71,12 +83,9 @@ class TrainerV1alpha1TorchMLPolicySource(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of elastic_policy
-        if self.elastic_policy:
-            _dict['elasticPolicy'] = self.elastic_policy.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of num_proc_per_node
-        if self.num_proc_per_node:
-            _dict['numProcPerNode'] = self.num_proc_per_node.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of env_injection
+        if self.env_injection:
+            _dict['envInjection'] = self.env_injection.to_dict()
         return _dict
 
     @classmethod
@@ -89,8 +98,7 @@ class TrainerV1alpha1TorchMLPolicySource(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "elasticPolicy": TrainerV1alpha1TorchElasticPolicy.from_dict(obj["elasticPolicy"]) if obj.get("elasticPolicy") is not None else None,
-            "numProcPerNode": IoK8sApimachineryPkgUtilIntstrIntOrString.from_dict(obj["numProcPerNode"]) if obj.get("numProcPerNode") is not None else None
+            "envInjection": TrainerV1alpha1EnvInjection.from_dict(obj["envInjection"]) if obj.get("envInjection") is not None else None
         })
         return _obj
 

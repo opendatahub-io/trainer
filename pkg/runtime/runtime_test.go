@@ -428,6 +428,60 @@ func TestNewInfo(t *testing.T) {
 				Scheduler:   &Scheduler{PodLabels: make(map[string]string)},
 			},
 		},
+		"image and command are extracted from containers and init containers": {
+			infoOpts: []InfoOption{
+				WithPodSet(constants.Node, ptr.To(constants.AncestorTrainer), 2, corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:    constants.Node,
+						Image:   "train:latest",
+						Command: []string{"python", "train.py"},
+					}},
+					InitContainers: []corev1.Container{{
+						Name:    "flux-installer",
+						Image:   "flux:v1",
+						Command: []string{"/bin/bash", "/etc/flux-config/init.sh"},
+					}},
+				}, corev1ac.PodSpec().
+					WithContainers(
+						corev1ac.Container().
+							WithName(constants.Node).
+							WithImage("train:latest").
+							WithCommand("python", "train.py"),
+					).
+					WithInitContainers(
+						corev1ac.Container().
+							WithName("flux-installer").
+							WithImage("flux:v1").
+							WithCommand("/bin/bash", "/etc/flux-config/init.sh"),
+					),
+				),
+			},
+			wantInfo: &Info{
+				Labels:      make(map[string]string),
+				Annotations: make(map[string]string),
+				Scheduler:   &Scheduler{PodLabels: make(map[string]string)},
+				TemplateSpec: TemplateSpec{
+					PodSets: []PodSet{
+						{
+							Name:     constants.Node,
+							Ancestor: ptr.To(constants.AncestorTrainer),
+							Count:    ptr.To[int32](2),
+							Containers: []Container{{
+								Name:    constants.Node,
+								Image:   "train:latest",
+								Command: []string{"python", "train.py"},
+							}},
+							InitContainers: []Container{{
+								Name:    "flux-installer",
+								Image:   "flux:v1",
+								Command: []string{"/bin/bash", "/etc/flux-config/init.sh"},
+							}},
+							SinglePodRequests: corev1.ResourceList{},
+						},
+					},
+				},
+			},
+		},
 	}
 	cmpOpts := []cmp.Option{
 		cmpopts.SortMaps(func(a, b string) bool { return a < b }),
@@ -557,6 +611,75 @@ func TestFindPodSetByName(t *testing.T) {
 			got := tc.info.FindPodSetByName(tc.psName)
 			if diff := cmp.Diff(tc.wantPodSet, got); len(diff) != 0 {
 				t.Errorf("Unexpected PodSet (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestFindContainerByPodSetName(t *testing.T) {
+	cases := map[string]struct {
+		info          *Info
+		psName        string
+		containerName string
+		wantContainer *Container
+	}{
+		"regular container exists": {
+			info: &Info{TemplateSpec: TemplateSpec{PodSets: []PodSet{
+				{
+					Name:       "node",
+					Containers: []Container{{Name: "trainer"}},
+				},
+			}}},
+			psName:        "node",
+			containerName: "trainer",
+			wantContainer: &Container{Name: "trainer"},
+		},
+		"init container exists": {
+			info: &Info{TemplateSpec: TemplateSpec{PodSets: []PodSet{
+				{
+					Name:           "node",
+					InitContainers: []Container{{Name: "preflight"}},
+					Containers:     []Container{{Name: "trainer"}},
+				},
+			}}},
+			psName:        "node",
+			containerName: "preflight",
+			wantContainer: &Container{Name: "preflight"},
+		},
+		"regular container wins name collision": {
+			info: &Info{TemplateSpec: TemplateSpec{PodSets: []PodSet{
+				{
+					Name:           "node",
+					InitContainers: []Container{{Name: "shared", Image: "init"}},
+					Containers:     []Container{{Name: "shared", Image: "main"}},
+				},
+			}}},
+			psName:        "node",
+			containerName: "shared",
+			wantContainer: &Container{Name: "shared", Image: "main"},
+		},
+		"podSet does not exist": {
+			info: &Info{TemplateSpec: TemplateSpec{PodSets: []PodSet{
+				{Name: "node", Containers: []Container{{Name: "trainer"}}},
+			}}},
+			psName:        "worker",
+			containerName: "trainer",
+			wantContainer: nil,
+		},
+		"container does not exist": {
+			info: &Info{TemplateSpec: TemplateSpec{PodSets: []PodSet{
+				{Name: "node", Containers: []Container{{Name: "trainer"}}},
+			}}},
+			psName:        "node",
+			containerName: "preflight",
+			wantContainer: nil,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := tc.info.FindContainerByPodSetName(tc.psName, tc.containerName)
+			if diff := cmp.Diff(tc.wantContainer, got); len(diff) != 0 {
+				t.Errorf("Unexpected Container (-want,+got):\n%s", diff)
 			}
 		})
 	}

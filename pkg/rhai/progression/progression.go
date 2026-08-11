@@ -273,7 +273,7 @@ func PollTrainingProgress(ctx context.Context, pod *corev1.Pod, metricsPort stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metrics from %s: %w", metricsURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code %d from metrics endpoint", resp.StatusCode)
@@ -672,14 +672,20 @@ func PollAndUpdateFinalProgress(ctx context.Context, c client.Client, reader cli
 }
 
 func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
-	var status AnnotationStatus
+	// Only finalize an annotation that was previously populated from live metrics /
+	// termination/HTTP capture. Inventing a trainerStatus (e.g. progress=100) when
+	// metrics were never reachable misleads consumers and breaks the RHAI e2e contract.
+	if trainJob.Annotations == nil {
+		return nil
+	}
+	statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]
+	if !exists || statusJSON == "" {
+		return nil
+	}
 
-	if trainJob.Annotations != nil {
-		if statusJSON, exists := trainJob.Annotations[constants.AnnotationTrainerStatus]; exists && statusJSON != "" {
-			if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
-				return err
-			}
-		}
+	var status AnnotationStatus
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+		return err
 	}
 
 	if completed {
@@ -693,13 +699,6 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 			status.EstimatedRemainingTimeSummary = "complete (early stopped)"
 		} else {
 			status.EstimatedRemainingTimeSummary = "complete"
-		}
-		// Synthesize progress if no prior annotation existed
-		if status.ProgressPercentage == nil {
-			pct := 100
-			status.ProgressPercentage = &pct
-			remaining := 0
-			status.EstimatedRemainingSeconds = &remaining
 		}
 	} else {
 		progressPct := 0
@@ -719,6 +718,11 @@ func updateFinalStatus(trainJob *trainer.TrainJob, completed bool) error {
 func ReconcileProgression(ctx context.Context, c client.Client, reader client.Reader, log logr.Logger, trainJob *trainer.TrainJob) (ctrl.Result, error) {
 	if !IsProgressionTrackingEnabled(trainJob) {
 		return ctrl.Result{}, nil
+	}
+
+	// Re-fetch from API server to get latest status before patching annotations
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(trainJob), trainJob); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	isRunning := !meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobSuspended) &&

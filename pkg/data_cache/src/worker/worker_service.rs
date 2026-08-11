@@ -1,3 +1,17 @@
+// Copyright The Kubeflow Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::config::config::{CACHE_INDEX_COLUMN, DatasetConfig, IndexPair};
 use crate::health::{HealthState, start_health_server, worker_router};
 use crate::worker::worker::DataLoader;
@@ -12,6 +26,7 @@ use arrow_flight::{
     flight_service_server::FlightService,
 };
 use arrow_schema::DataType;
+use bincode::config;
 use bytes::Bytes;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -137,8 +152,10 @@ impl FlightService for WorkerService {
     ) -> Result<Response<<Self as FlightService>::DoGetStream>, Status> {
         info!("querying worker");
         let ticket = request.into_inner();
-        let pair = bincode::deserialize::<IndexPair>(&ticket.ticket)
-            .map_err(|e| Status::internal(format!("Deserialization error: {}", e)))?;
+
+        let config = config::standard();
+        let (pair, _): (IndexPair, usize) = bincode::decode_from_slice(&ticket.ticket, config)
+            .map_err(|_e| Status::invalid_argument("Invalid ticket format"))?;
         info!("{:?}", pair);
         let df = self
             .ctx

@@ -2,7 +2,9 @@
 # only so we exclude them.
 bin/
 manifests/external-crds/
-
+.specify/
+.claude/
+specs/
 # IDEs
 .vscode/
 __debug_bin
@@ -15,6 +17,7 @@ __debug_bin
 **/.ipynb_checkpoints
 # The default output for various artifacts (e.g. Jupyter Notebooks after Papermill execution).
 artifacts
+knowledge-base/
 
 # Python cache files / packaging
 __pycache__/
@@ -33,3 +36,14 @@ charts/kubeflow-trainer/Chart.lock
 pkg/data_cache/target
 pkg/data_cache/test/target/
 hack/data_cache/*.log
+
+# pytorch examples
+examples/pytorch/*/data
+
+examples/pytorch/audio-classification/genres_original
+examples/pytorch/audio-classification/output
+
+trainer-controller-manager.exe
+
+# Sphinx documentation build artifacts
+docs/_build/

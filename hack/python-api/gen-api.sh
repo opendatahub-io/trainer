@@ -26,13 +26,18 @@ source "${SCRIPT_DIR}/../scripts/container-runtime.sh"
 # Setup container runtime
 setup_container_runtime
 
-# TODO (andreyvelich): Read this data from the global VERSION file.
-API_VERSION="2.1.0"
+TRAINER_ROOT="$(pwd)"
+
+VERSION_FILE="${TRAINER_ROOT}/VERSION"
+if [ ! -f "${VERSION_FILE}" ]; then
+  echo "Missing VERSION file at ${VERSION_FILE}"
+  exit 1
+fi
+API_VERSION=$(sed -e 's/^v//' -e 's/-rc\.\([0-9]*\)/rc\1/' "${VERSION_FILE}")
 API_OUTPUT_PATH="api/python_api"
 PKG_ROOT="${API_OUTPUT_PATH}/kubeflow_trainer_api"
 
 OPENAPI_GENERATOR_VERSION="v7.13.0"
-TRAINER_ROOT="$(pwd)"
 SWAGGER_CODEGEN_CONF="hack/python-api/swagger_config.json"
 SWAGGER_CODEGEN_FILE="api/openapi-spec/swagger.json"
 
@@ -62,3 +67,15 @@ if [[ $(uname) == "Darwin" ]]; then
 else
   sed -i -e "s/__version__.*/__version__ = \"${API_VERSION}\"/" ${PKG_ROOT}/__init__.py
 fi
+
+echo "Adding copyright headers to generated Python API models"
+BOILERPLATE="${TRAINER_ROOT}/hack/boilerplate/boilerplate.sh.txt"
+find "${PKG_ROOT}/models" "${PKG_ROOT}/__init__.py" -name '*.py' -type f | while read -r f; do
+  if ! head -n 5 "$f" | grep -q "Copyright"; then
+    tmp="$(mktemp)"
+    cat "${BOILERPLATE}" > "$tmp"
+    echo "" >> "$tmp"
+    cat "$f" >> "$tmp"
+    mv "$tmp" "$f"
+  fi
+done

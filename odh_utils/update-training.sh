@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#
+
 # This script adjusts a running OLM-deployed ODH/RHODS operator to use custom
 # component manifests, based on the 'hack/component-dev/README.md'.
 #

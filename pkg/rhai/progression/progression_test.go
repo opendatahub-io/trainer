@@ -1843,6 +1843,11 @@ func TestPollAndUpdateFinalProgress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			hadAnnotationBefore := false
+			if tt.trainJob.Annotations != nil {
+				_, hadAnnotationBefore = tt.trainJob.Annotations[constants.AnnotationTrainerStatus]
+			}
+
 			clientBuilder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.trainJob)
 			for i := range tt.pods {
 				clientBuilder = clientBuilder.WithObjects(&tt.pods[i])
@@ -1869,16 +1874,18 @@ func TestPollAndUpdateFinalProgress(t *testing.T) {
 			}
 
 			// Check if annotation was actually created/modified
-			statusJSON, exists := updatedTrainJob.Annotations[constants.AnnotationTrainerStatus]
+			var statusJSON string
+			exists := false
+			if updatedTrainJob.Annotations != nil {
+				statusJSON, exists = updatedTrainJob.Annotations[constants.AnnotationTrainerStatus]
+			}
 			if tt.wantAnnotationCreated && !exists {
 				t.Errorf("Expected trainerStatus annotation to be created but not found")
 				return
 			}
-			if !tt.wantAnnotationCreated && exists {
-				if _, hadAnnotation := tt.trainJob.Annotations[constants.AnnotationTrainerStatus]; !hadAnnotation {
-					t.Errorf("Expected no new trainerStatus annotation but found one: %s", statusJSON)
-					return
-				}
+			if !tt.wantAnnotationCreated && exists && !hadAnnotationBefore {
+				t.Errorf("Expected no new trainerStatus annotation but found one: %s", statusJSON)
+				return
 			}
 
 			// Validate progress percentage if annotation exists and expected value is set

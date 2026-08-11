@@ -1,15 +1,22 @@
 # Developer Guide
 
 This guide explains how to contribute to the Kubeflow Trainer V2 project.
-For the Kubeflow Trainer documentation, please check [the official Kubeflow documentation](https://www.kubeflow.org/docs/components/trainer/overview/).
+For the Kubeflow Trainer documentation, please check [the official Kubeflow documentation](https://trainer.kubeflow.org/en/latest/overview/index.html).
+
+## AI Assistant Tooling
+
+The Kubeflow community allows the use of AI assistant tooling for contributions.
+Before using AI agents, please review the
+[Kubeflow AI Policy](https://www.kubeflow.org/docs/about/ai_policy/) to understand
+the guidelines and responsibilities for such contributions.
 
 ## Requirements
 
-- [Go](https://golang.org/) (1.24 or later)
+- [Go](https://golang.org/) (1.26 or later)
 - [Docker](https://docs.docker.com/) (23 or later)
 - [Lima](https://github.com/lima-vm/lima?tab=readme-ov-file#adopters) (an alternative to DockerDesktop) (0.21.0 or later)
   - [Colima](https://github.com/abiosoft/colima) (Lima specifically for MacOS) (0.6.8 or later)
-- [Python](https://www.python.org/) (3.11 or later)
+- [Python](https://www.python.org/) (3.12 or later)
 - [kustomize](https://kustomize.io/) (4.0.5 or later)
 - [Kind](https://kind.sigs.k8s.io/) (0.27.0 or later)
 - [pre-commit](https://pre-commit.com/)
@@ -115,7 +122,7 @@ For any significant features or enhancement for Kubeflow Trainer project we foll
 [Kubeflow Enhancement Proposal process](https://github.com/kubeflow/community/tree/master/proposals).
 
 If you want to submit a significant change to the Kubeflow Trainer, please submit a new KEP under
-[./docs/proposals](./docs/proposals/) directory.
+[./proposals](./proposals/) directory.
 
 ### Go Development
 

@@ -21,12 +21,14 @@ import (
 	"errors"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	configapi "github.com/kubeflow/trainer/v2/pkg/apis/config/v1alpha1"
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
@@ -48,7 +50,7 @@ var ClusterTrainingRuntimeGroupKind = schema.GroupKind{
 	Kind:  trainer.ClusterTrainingRuntimeKind,
 }.String()
 
-func NewClusterTrainingRuntime(context.Context, client.Client, client.FieldIndexer) (runtime.Runtime, error) {
+func NewClusterTrainingRuntime(context.Context, client.Client, client.FieldIndexer, *configapi.Configuration) (runtime.Runtime, error) {
 	return &ClusterTrainingRuntime{
 		TrainingRuntime: trainingRuntimeFactory,
 	}, nil
@@ -56,8 +58,21 @@ func NewClusterTrainingRuntime(context.Context, client.Client, client.FieldIndex
 
 func (r *ClusterTrainingRuntime) NewObjects(ctx context.Context, trainJob *trainer.TrainJob) ([]apiruntime.ApplyConfiguration, error) {
 	var clTrainingRuntime trainer.ClusterTrainingRuntime
-	if err := r.client.Get(ctx, client.ObjectKey{Name: trainJob.Spec.RuntimeRef.Name}, &clTrainingRuntime); err != nil {
-		return nil, fmt.Errorf("%w: %w", errorNotFoundSpecifiedClusterTrainingRuntime, err)
+	// Try to get runtime from snapshot first
+	if err := getRuntimeSnapshot(ctx, r.client, trainJob, &clTrainingRuntime); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("getting runtime snapshot: %w", err)
+		}
+
+		// Snapshot doesn't exist, load runtime from API server
+		if err := r.client.Get(ctx, client.ObjectKey{Name: trainJob.Spec.RuntimeRef.Name}, &clTrainingRuntime); err != nil {
+			return nil, fmt.Errorf("%w: %w", errorNotFoundSpecifiedClusterTrainingRuntime, err)
+		}
+
+		// Create snapshot for future reconciliations
+		if err := createRuntimeSnapshot(ctx, r.client, trainJob, &clTrainingRuntime); err != nil {
+			return nil, fmt.Errorf("creating runtime snapshot: %w", err)
+		}
 	}
 
 	info, err := r.RuntimeInfo(trainJob, clTrainingRuntime.Spec.Template, clTrainingRuntime.Spec.MLPolicy, clTrainingRuntime.Spec.PodGroupPolicy)

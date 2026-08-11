@@ -17,10 +17,28 @@ limitations under the License.
 package trainjob
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/utils/ptr"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 )
+
+const (
+	// TrainJobControllerName is the reserved value for the TrainJob managedBy field,
+	// indicating that the TrainJob is reconciled by the built-in TrainJob controller.
+	TrainJobControllerName string = "trainer.kubeflow.org/trainjob-controller"
+)
+
+func IsTrainJobFinished(trainJob *trainer.TrainJob) bool {
+	return meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobComplete) ||
+		meta.IsStatusConditionTrue(trainJob.Status.Conditions, trainer.TrainJobFailed)
+}
+
+// IsManagedByExternalController returns true when the TrainJob is managed by an external
+// controller, i.e. it is not reconciled by the built-in TrainJob controller.
+func IsManagedByExternalController(trainJob *trainer.TrainJob) bool {
+	return ptr.Deref(trainJob.Spec.ManagedBy, TrainJobControllerName) != TrainJobControllerName
+}
 
 func RuntimeRefIsTrainingRuntime(ref trainer.RuntimeRef) bool {
 	return ptr.Equal(ref.APIGroup, &trainer.GroupVersion.Group) &&

@@ -17,9 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
@@ -171,15 +169,14 @@ type VolcanoPodGroupPolicySource struct {
 }
 
 // MLPolicy represents configuration for the model training with ML-specific parameters.
-// +kubebuilder:validation:XValidation:rule="!(has(self.numNodes) && (has(self.torch) && has(self.torch.elasticPolicy)))", message="numNodes should not be set if torch.elasticPolicy is configured"
-// +kubebuilder:validation:XValidation:rule="!(has(self.torch) && has(self.mpi))", message="Only one of the policy can be configured"
+// +kubebuilder:validation:XValidation:rule="[has(self.torch), has(self.mpi), has(self.jax), has(self.xgboost),has(self.flux)].filter(x, x).size() <= 1", message="Only one of the policy can be configured"
 type MLPolicy struct {
 	// numNodes is the number of training nodes.
 	// Defaults to 1.
 	// +optional
 	NumNodes *int32 `json:"numNodes,omitempty"`
 
-	// Configuration for the runtime-specific parameters, such as Torch or MPI.
+	// Configuration for the runtime-specific parameters, such as Torch, Flux, or MPI.
 	// Only one of its members may be specified.
 	MLPolicySource `json:",inline"`
 }
@@ -194,50 +191,82 @@ type MLPolicySource struct {
 	// mpi defines the configuration for the MPI Runtime.
 	// +optional
 	MPI *MPIMLPolicySource `json:"mpi,omitempty"`
+
+	// flux defines the configuration for the Flux runtime.
+	// +optional
+	Flux *FluxMLPolicySource `json:"flux,omitempty"`
+
+	// jax defines the configuration for the JAX Runtime
+	// +optional
+	JAX *JAXMLPolicySource `json:"jax,omitempty"`
+
+	// xgboost defines the configuration for the XGBoost Runtime.
+	// +optional
+	XGBoost *XGBoostMLPolicySource `json:"xgboost,omitempty"`
 }
 
 // TorchMLPolicySource represents a PyTorch runtime configuration.
 type TorchMLPolicySource struct {
-	// numProcPerNode is the number of processes per node.
-	// This value is inserted into the `--nproc-per-node` argument of the `torchrun` CLI.
-	// Supported values: `auto`, `cpu`, `gpu`, or int value.
-	// Defaults to `auto`.
-	// +kubebuilder:default="auto"
-	// +kubebuilder:validation:XValidation:rule="self > 0 || self in ['auto', 'cpu', 'gpu']", message="NumProcPerNode must be equal to auto, cpu, gpu, or int value"
+	// envInjection configures which additional containers should receive the
+	// PET_* environment variables. By default, the PET_* variables are injected
+	// only into the main "node" container. Use this field to also inject them
+	// into selected sidecar or init containers. For torchtune, envInjection
+	// targets still receive PET_MASTER_ADDR and PET_MASTER_PORT even though the
+	// main trainer container uses command-line rendezvous instead.
+	// Defaults to empty (main container only).
 	// +optional
-	NumProcPerNode *intstr.IntOrString `json:"numProcPerNode,omitempty"`
-
-	// elasticPolicy defines the Elastic policy for the PyTorch training.
-	// +optional
-	ElasticPolicy *TorchElasticPolicy `json:"elasticPolicy,omitempty"`
+	EnvInjection *EnvInjection `json:"envInjection,omitempty"`
 }
 
-// TorchElasticPolicy represents a configuration for the PyTorch elastic training.
-// If this policy is set, the `.spec.numNodes` parameter must be omitted, since min and max node
-// is used to configure the `torchrun` CLI argument: `--nnodes=minNodes:maxNodes`.
-// Only `c10d` backend is supported for the Rendezvous communication.
-type TorchElasticPolicy struct {
-	// maxRestarts defines how many times the training job can be restarted.
-	// This value is inserted into the `--max-restarts` argument of the `torchrun` CLI and
-	// the `.spec.failurePolicy.maxRestarts` parameter of the training Job.
+// EnvInjection specifies which containers in which jobs receive framework env injection.
+// Defined as a standalone type so it can be embedded by other MLPolicySource
+// variants in the future.
+type EnvInjection struct {
+	// targets defines which replicated job containers receive PET_* env injection.
+	// The item limit keeps runtime validation bounded while allowing common
+	// multi-job runtimes to target their auxiliary containers.
+	// +listType=map
+	// +listMapKey=jobName
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
-	MaxRestarts *int32 `json:"maxRestarts,omitempty"`
-
-	// minNodes is the lower limit for the number of nodes to which training job can scale down.
-	// +optional
-	MinNodes *int32 `json:"minNodes,omitempty"`
-
-	// maxNodes is the upper limit for the number of nodes to which training job can scale up.
-	// +optional
-	MaxNodes *int32 `json:"maxNodes,omitempty"`
-
-	// metrics which are used to calculate the desired number of nodes. See the individual
-	// metric source types for more information about how each type of metric must respond.
-	// The HPA will be created to perform auto-scaling.
-	// +listType=atomic
-	// +optional
-	Metrics []autoscalingv2.MetricSpec `json:"metrics,omitempty"`
+	Targets []EnvInjectionTarget `json:"targets,omitempty"`
 }
+
+// EnvInjectionTarget specifies a replicated job and the containers within it
+// that should receive PET_* env injection.
+type EnvInjectionTarget struct {
+	// jobName is the name of the target replicated job (e.g. "node").
+	// Using "jobName" rather than "replicatedJobName" keeps the API
+	// future-proof for other CRD types (LWS, Grove, Slurm, etc.).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +required
+	JobName string `json:"jobName,omitempty"`
+
+	// containerNames lists the container names within the target job
+	// that should receive PET_* envs.
+	// The item limit keeps admission checks small while covering typical
+	// preflight and sidecar use cases.
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:XValidation:rule="!self.exists(c, c == 'node')", message="containerNames must not include the main node container because PET_* envs are always injected into it"
+	// +required
+	ContainerNames []string `json:"containerNames,omitempty"`
+}
+
+// JAXMLPolicySource represents a jax runtime configuration.
+type JAXMLPolicySource struct{}
+
+// XGBoostMLPolicySource represents an XGBoost runtime configuration.
+// The number of workers per node is automatically derived from container GPU resources:
+//   - GPU training: 1 worker per GPU (from resourcesPerNode)
+//   - CPU training: 1 worker per node (each worker utilizes all available CPU cores
+//     via XGBoost's multi-threaded execution, controlled by the nthread parameter)
+//
+// DMLC_NUM_WORKER = numNodes × workersPerNode (where workersPerNode = GPU count or 1)
+type XGBoostMLPolicySource struct{}
 
 // MPIMLPolicySource represents a MPI runtime configuration.
 type MPIMLPolicySource struct {
@@ -258,6 +287,7 @@ type MPIMLPolicySource struct {
 	// sshAuthMountPath is the directory where SSH keys are mounted.
 	// Defaults to /root/.ssh.
 	// +kubebuilder:default=/root/.ssh
+	// +kubebuilder:validation:MaxLength=4096
 	// +optional
 	SSHAuthMountPath *string `json:"sshAuthMountPath,omitempty"`
 
@@ -268,6 +298,15 @@ type MPIMLPolicySource struct {
 	RunLauncherAsNode *bool `json:"runLauncherAsNode,omitempty"`
 }
 
+// FluxMLPolicySource represents a Flux HPC runtime configuration.
+type FluxMLPolicySource struct {
+	// numProcPerNode is the number of processes per node.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:XValidation:rule="self >= 1",message="NumProcPerNode in fluxPolicy must be >= 1"
+	// +optional
+	NumProcPerNode *int32 `json:"numProcPerNode,omitempty"`
+}
+
 // MPIImplementation represents one of the supported MPI implementations.
 type MPIImplementation string
 
@@ -276,7 +315,3 @@ const (
 	MPIImplementationIntel   MPIImplementation = "Intel"
 	MPIImplementationMPICH   MPIImplementation = "MPICH"
 )
-
-func init() {
-	SchemeBuilder.Register(&ClusterTrainingRuntime{}, &ClusterTrainingRuntimeList{}, &TrainingRuntime{}, &TrainingRuntimeList{})
-}

@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -30,7 +44,7 @@ class TrainerV1alpha1DatasetInitializer(BaseModel):
     """ # noqa: E501
     env: Optional[List[IoK8sApiCoreV1EnvVar]] = Field(default=None, description="env is the list of environment variables to set in the dataset initializer container. These values will be merged with the TrainingRuntime's dataset initializer environments.")
     secret_ref: Optional[IoK8sApiCoreV1LocalObjectReference] = Field(default=None, description="secretRef is the reference to the secret with credentials to download dataset. Secret must be created in the TrainJob's namespace.", alias="secretRef")
-    storage_uri: Optional[StrictStr] = Field(default=None, description="storageUri is the URI for the dataset provider.", alias="storageUri")
+    storage_uri: Optional[StrictStr] = Field(default=None, description="storageUri is the URI for the dataset provider. If set, it may be empty, or it must be a valid URI format (e.g., s3://bucket/path, gs://bucket/path).", alias="storageUri")
     __properties: ClassVar[List[str]] = ["env", "secretRef", "storageUri"]
 
     model_config = ConfigDict(

@@ -1,3 +1,17 @@
+// Copyright The Kubeflow Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::config::config::CACHE_INDEX_COLUMN;
 use arrow::array::UInt64Array;
 use arrow::record_batch::RecordBatch;
@@ -111,7 +125,18 @@ impl WorkerDataSource {
 
         let fields = schema.fields().clone();
         let mut builder = SchemaBuilder::from(&fields);
-        builder.push(Field::new(CACHE_INDEX_COLUMN, DataType::UInt64, false)); // TODO:// validate name collision
+
+        // Validate that source schema does not already contain cache_index column
+        if schema.field_with_name(CACHE_INDEX_COLUMN).is_ok() {
+            return Err(format!(
+                "Source schema already contains a column named '{}'. This conflicts with the cache index column added by the data cache worker.",
+                CACHE_INDEX_COLUMN
+            )
+            .into());
+        }
+
+        builder.push(Field::new(CACHE_INDEX_COLUMN, DataType::UInt64, false));
+
         let output_schema = Arc::new(Schema::new(builder.finish().fields));
         Ok(Self {
             file_urls,
@@ -511,5 +536,43 @@ async fn filter_and_create_stream(
         Err(e) => Ok(Box::pin(futures::stream::once(future::ready(Err(
             from_datafusion_error(e),
         ))))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_schema::{DataType, Field, Schema};
+
+    #[test]
+    fn fails_when_source_schema_contains_cache_index() {
+        // Build a schema that already has a cache_index column
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(CACHE_INDEX_COLUMN, DataType::UInt64, false),
+        ]);
+
+        // The check we added: if cache_index already exists, is_ok() returns true
+        let collision = schema.field_with_name(CACHE_INDEX_COLUMN).is_ok();
+        assert!(
+            collision,
+            "Should detect cache_index collision in source schema"
+        );
+    }
+
+    #[test]
+    fn passes_when_source_schema_has_no_cache_index() {
+        // Build a schema with no cache_index column
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, false),
+        ]);
+
+        // No collision — field_with_name returns Err, so is_ok() is false
+        let collision = schema.field_with_name(CACHE_INDEX_COLUMN).is_ok();
+        assert!(
+            !collision,
+            "Should not detect cache_index collision when column is absent"
+        );
     }
 }

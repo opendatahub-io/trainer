@@ -36,13 +36,17 @@ if [ -z "${PAPERMILL_TIMEOUT}" ]; then
     exit 1
 fi
 
+# PAPERMILL_PARAMS should contain full papermill parameter flags.
+# Example: "-p num_cpu 3 -p gpu 1"
+PAPERMILL_PARAMS="${PAPERMILL_PARAMS:-}"
+
 print_results() {
     # Only run kubectl commands if we're testing Kubernetes notebooks
     if command -v kubectl &> /dev/null && kubectl cluster-info &> /dev/null; then
         # Always show TrainJob status
         kubectl describe trainjob
         kubectl logs -n kubeflow-system -l app.kubernetes.io/name=trainer
-        kubectl wait trainjob --for=condition=Complete --all --timeout 3s
+        kubectl wait trainjob --for=condition=Complete --all --timeout 30s
 
         # Only check pod logs if pods exist (not for local backends)
         if kubectl get pods -l jobset.sigs.k8s.io/replicatedjob-name=trainer-node --no-headers 2>/dev/null | grep -q .; then
@@ -58,5 +62,5 @@ print_results() {
     fi
 }
 
-(papermill "${NOTEBOOK_INPUT}" "${NOTEBOOK_OUTPUT}" --execution-timeout "${PAPERMILL_TIMEOUT}" && print_results) ||
+(papermill "${NOTEBOOK_INPUT}" "${NOTEBOOK_OUTPUT}" ${PAPERMILL_PARAMS} --execution-timeout "${PAPERMILL_TIMEOUT}" && print_results) ||
     (print_results && exit 1)

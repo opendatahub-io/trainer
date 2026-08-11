@@ -23,9 +23,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	batchv1ac "k8s.io/client-go/applyconfigurations/batch/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -41,6 +43,7 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/constants"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 	"github.com/kubeflow/trainer/v2/pkg/runtime/framework"
+	jobsetplgconsts "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset/constants"
 	utiltesting "github.com/kubeflow/trainer/v2/pkg/util/testing"
 )
 
@@ -315,7 +318,7 @@ func TestJobSet(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			t.Cleanup(cancel)
 			cli := utiltesting.NewClientBuilder().Build()
-			p, err := New(ctx, cli, nil)
+			p, err := New(ctx, cli, nil, nil)
 			if err != nil {
 				t.Fatalf("Failed to initialize JobSet plugin: %v", err)
 			}
@@ -520,7 +523,221 @@ func TestValidate(t *testing.T) {
 					fmt.Sprintf("must have container with name - %s in the %s job", constants.ModelInitializer, constants.ModelInitializer)),
 			},
 		},
-		"podTemplateOverrides contain invalid targetJob": {
+		"valid dataset initializer with volumeClaimPolicies and volumeMount passes": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						VolumeClaimPolicies: []jobsetv1alpha2ac.VolumeClaimPolicyApplyConfiguration{
+							{
+								Templates: []corev1.PersistentVolumeClaim{
+									{
+										ObjectMeta: metav1.ObjectMeta{
+											Name: jobsetplgconsts.VolumeNameInitializer,
+										},
+									},
+								},
+							},
+						},
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.DatasetInitializer),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													*corev1ac.Container().
+														WithName(constants.DatasetInitializer).
+														WithVolumeMounts(corev1ac.VolumeMount().
+															WithName(jobsetplgconsts.VolumeNameInitializer)),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
+				Initializer(&trainer.Initializer{
+					Dataset: &trainer.DatasetInitializer{},
+				}).Obj(),
+		},
+		"valid model initializer with volumeClaimPolicies and volumeMount passes": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						VolumeClaimPolicies: []jobsetv1alpha2ac.VolumeClaimPolicyApplyConfiguration{
+							{
+								Templates: []corev1.PersistentVolumeClaim{
+									{
+										ObjectMeta: metav1.ObjectMeta{
+											Name: jobsetplgconsts.VolumeNameInitializer,
+										},
+									},
+								},
+							},
+						},
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.ModelInitializer),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													*corev1ac.Container().
+														WithName(constants.ModelInitializer).
+														WithVolumeMounts(corev1ac.VolumeMount().
+															WithName(jobsetplgconsts.VolumeNameInitializer)),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
+				Initializer(&trainer.Initializer{
+					Model: &trainer.ModelInitializer{},
+				}).Obj(),
+		},
+		"valid dataset and model initializers together pass": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						VolumeClaimPolicies: []jobsetv1alpha2ac.VolumeClaimPolicyApplyConfiguration{
+							{
+								Templates: []corev1.PersistentVolumeClaim{
+									{
+										ObjectMeta: metav1.ObjectMeta{
+											Name: jobsetplgconsts.VolumeNameInitializer,
+										},
+									},
+								},
+							},
+						},
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.DatasetInitializer),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													*corev1ac.Container().
+														WithName(constants.DatasetInitializer).
+														WithVolumeMounts(corev1ac.VolumeMount().
+															WithName(jobsetplgconsts.VolumeNameInitializer)),
+												},
+											},
+										},
+									},
+								},
+							},
+							{
+								Name: ptr.To(constants.ModelInitializer),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													*corev1ac.Container().
+														WithName(constants.ModelInitializer).
+														WithVolumeMounts(corev1ac.VolumeMount().
+															WithName(jobsetplgconsts.VolumeNameInitializer)),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
+				Initializer(&trainer.Initializer{
+					Dataset: &trainer.DatasetInitializer{},
+					Model:   &trainer.ModelInitializer{},
+				}).Obj(),
+		},
+		"must have volumeMount with name - initializer in the dataset initializer container": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.DatasetInitializer),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													{
+														Name: ptr.To(constants.DatasetInitializer),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
+				Initializer(&trainer.Initializer{
+					Dataset: &trainer.DatasetInitializer{},
+				}).Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(runtimeRefPath,
+					utiltesting.MakeTrainJobWrapper("default", "test").Obj().Spec.RuntimeRef,
+					fmt.Sprintf("must have volumeMount with name - %s in container %s of the %s job", jobsetplgconsts.VolumeNameInitializer, constants.DatasetInitializer, constants.DatasetInitializer)),
+			},
+		},
+		"must have volumeMount with name - initializer in the model initializer container": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.ModelInitializer),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													{
+														Name: ptr.To(constants.ModelInitializer),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
+				Initializer(&trainer.Initializer{
+					Model: &trainer.ModelInitializer{},
+				}).Obj(),
+			wantError: field.ErrorList{
+				field.Invalid(runtimeRefPath,
+					utiltesting.MakeTrainJobWrapper("default", "test").Obj().Spec.RuntimeRef,
+					fmt.Sprintf("must have volumeMount with name - %s in container %s of the %s job", jobsetplgconsts.VolumeNameInitializer, constants.ModelInitializer, constants.ModelInitializer)),
+			},
+		},
+		"runtimePatches contain invalid replicated job": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -542,22 +759,36 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: "invalid"}},
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{Name: "invalid"}},
+								},
+							},
+						},
 					},
 				}).Obj(),
 			wantError: field.ErrorList{
-				field.Invalid(podTemplateOverridePath,
-					[]trainer.PodTemplateOverride{
+				field.Invalid(runtimePatchesPath,
+					[]trainer.RuntimePatch{
 						{
-							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: "invalid"}},
+							Manager: "test.io/manager",
+							TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+								Template: &trainer.JobSetTemplatePatch{
+									Spec: &trainer.JobSetSpecPatch{
+										ReplicatedJobs: []trainer.ReplicatedJobPatch{{Name: "invalid"}},
+									},
+								},
+							},
 						},
 					},
-					"must not have targetJob that doesn't exist in the runtime job template"),
+					"must not have replicated job that doesn't exist in the runtime job template"),
 			},
 		},
-		"podTemplateOverrides contain invalid initContainer": {
+		"runtimePatches contain invalid initContainer": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -583,27 +814,53 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							InitContainers: []trainer.ContainerOverride{
-								{
-									Name: "invalid",
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														InitContainers: []trainer.ContainerPatch{
+															{Name: "invalid"},
+														},
+													},
+												},
+											},
+										},
+									}},
 								},
 							},
 						},
 					},
 				}).Obj(),
 			wantError: field.ErrorList{
-				field.Invalid(podTemplateOverridePath,
-					[]trainer.PodTemplateOverride{
+				field.Invalid(runtimePatchesPath,
+					[]trainer.RuntimePatch{
 						{
-							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-							Spec: &trainer.PodTemplateSpecOverride{
-								InitContainers: []trainer.ContainerOverride{
-									{
-										Name: "invalid",
+							Manager: "test.io/manager",
+							TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+								Template: &trainer.JobSetTemplatePatch{
+									Spec: &trainer.JobSetSpecPatch{
+										ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															InitContainers: []trainer.ContainerPatch{
+																{Name: "invalid"},
+															},
+														},
+													},
+												},
+											},
+										}},
 									},
 								},
 							},
@@ -612,7 +869,7 @@ func TestValidate(t *testing.T) {
 					fmt.Sprintf("must not have initContainer that doesn't exist in the runtime job %s", constants.Node)),
 			},
 		},
-		"podTemplateOverrides contain invalid container": {
+		"runtimePatches contain invalid container": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -638,27 +895,53 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							Containers: []trainer.ContainerOverride{
-								{
-									Name: "invalid",
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														Containers: []trainer.ContainerPatch{
+															{Name: "invalid"},
+														},
+													},
+												},
+											},
+										},
+									}},
 								},
 							},
 						},
 					},
 				}).Obj(),
 			wantError: field.ErrorList{
-				field.Invalid(podTemplateOverridePath,
-					[]trainer.PodTemplateOverride{
+				field.Invalid(runtimePatchesPath,
+					[]trainer.RuntimePatch{
 						{
-							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-							Spec: &trainer.PodTemplateSpecOverride{
-								Containers: []trainer.ContainerOverride{
-									{
-										Name: "invalid",
+							Manager: "test.io/manager",
+							TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+								Template: &trainer.JobSetTemplatePatch{
+									Spec: &trainer.JobSetSpecPatch{
+										ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															Containers: []trainer.ContainerPatch{
+																{Name: "invalid"},
+															},
+														},
+													},
+												},
+											},
+										}},
 									},
 								},
 							},
@@ -667,7 +950,7 @@ func TestValidate(t *testing.T) {
 					fmt.Sprintf("must not have container that doesn't exist in the runtime job %s", constants.Node)),
 			},
 		},
-		"podTemplateOverrides contain envs for reserved container": {
+		"runtimePatches contain envs for reserved container": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -693,39 +976,69 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			newObj: utiltesting.MakeTrainJobWrapper("default", "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-						Spec: &trainer.PodTemplateSpecOverride{
-							Containers: []trainer.ContainerOverride{
-								{
-									Name: constants.Node,
-									Env: []corev1.EnvVar{
-										{
-											Name:  "ENV_NAME",
-											Value: "OVERRIDE",
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														Containers: []trainer.ContainerPatch{
+															{
+																Name: constants.Node,
+																Env: []corev1.EnvVar{
+																	{
+																		Name:  "ENV_NAME",
+																		Value: "OVERRIDE",
+																	},
+																},
+															},
+														},
+													},
+												},
+											},
 										},
-									},
+									}},
 								},
 							},
 						},
 					},
 				}).Obj(),
 			wantError: field.ErrorList{
-				field.Invalid(podTemplateOverridePath,
-					[]trainer.PodTemplateOverride{
+				field.Invalid(runtimePatchesPath,
+					[]trainer.RuntimePatch{
 						{
-							TargetJobs: []trainer.PodTemplateOverrideTargetJob{{Name: constants.Node}},
-							Spec: &trainer.PodTemplateSpecOverride{
-								Containers: []trainer.ContainerOverride{
-									{
-										Name: constants.Node,
-										Env: []corev1.EnvVar{
-											{
-												Name:  "ENV_NAME",
-												Value: "OVERRIDE",
+							Manager: "test.io/manager",
+							TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+								Template: &trainer.JobSetTemplatePatch{
+									Spec: &trainer.JobSetSpecPatch{
+										ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+											Name: constants.Node,
+											Template: &trainer.JobTemplatePatch{
+												Spec: &trainer.JobSpecPatch{
+													Template: &trainer.PodTemplatePatch{
+														Spec: &trainer.PodSpecPatch{
+															Containers: []trainer.ContainerPatch{
+																{
+																	Name: constants.Node,
+																	Env: []corev1.EnvVar{
+																		{
+																			Name:  "ENV_NAME",
+																			Value: "OVERRIDE",
+																		},
+																	},
+																},
+															},
+														},
+													},
+												},
 											},
-										},
+										}},
 									},
 								},
 							},
@@ -734,7 +1047,7 @@ func TestValidate(t *testing.T) {
 					fmt.Sprintf("must not have envs for the %s, %s, %s containers", constants.DatasetInitializer, constants.ModelInitializer, constants.Node)),
 			},
 		},
-		"allow podTemplateOverrides when creating a new trainJob": {
+		"allow runtimePatches when creating a new trainJob": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -761,22 +1074,33 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: nil,
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			wantError: nil,
 		},
-		"allow updates to trainJob with no changes to podTemplateOverrides": {
+		"allow updates to trainJob with no changes to runtimePatches": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -802,36 +1126,58 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			wantError: nil,
 		},
-		"forbid changes to podTemplateOverrides when trainJob is not suspended": {
+		"forbid changes to runtimePatches when trainJob is not suspended": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -858,39 +1204,61 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(false).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(false).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account-updated"),
 						},
 					},
 				}).
 				Obj(),
 			wantError: field.ErrorList{
-				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides can only be modified when the TrainJob is suspended"),
+				field.Forbidden(runtimePatchesPath, "RuntimePatches can only be modified when the TrainJob is suspended before or after the update"),
 			},
 		},
-		"allow changes to podTemplateOverrides when trainJob is suspended and jobSet does not exists": {
+		"allow changes to runtimePatches when trainJob is suspended and jobSet does not exist": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -917,30 +1285,52 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account-updated"),
 						},
 					},
 				}).
@@ -948,7 +1338,167 @@ func TestValidate(t *testing.T) {
 			clientErr: apierrors.NewNotFound(jobsetv1alpha2.Resource("jobset"), ""),
 			wantError: nil,
 		},
-		"allow changes to podTemplateOverrides when trainJob is suspended and jobSet exists but is inactive": {
+		"allow atomic update: modify runtimePatches and unsuspend trainJob in a single request": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.Node),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													{
+														Name: ptr.To(constants.Node),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(true).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														NodeSelector: map[string]string{"injected": "by-kueue"},
+													},
+												},
+											},
+										},
+									}},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			clientErr: apierrors.NewNotFound(jobsetv1alpha2.Resource("jobset"), ""),
+			wantError: nil,
+		},
+		"allow atomic update: modify runtimePatches and suspend trainJob in a single request": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.Node),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													{
+														Name: ptr.To(constants.Node),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(true).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			clientErr: apierrors.NewNotFound(jobsetv1alpha2.Resource("jobset"), ""),
+			wantError: nil,
+		},
+		"allow changes to runtimePatches when trainJob is suspended and jobSet exists but is inactive": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -991,30 +1541,52 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account-updated"),
 						},
 					},
 				}).
@@ -1039,7 +1611,7 @@ func TestValidate(t *testing.T) {
 			},
 			wantError: nil,
 		},
-		"forbid changes to podTemplateOverrides when trainJob is suspended but jobSet has an active replicatedJob": {
+		"forbid changes to runtimePatches when trainJob is suspended but jobSet has an active replicatedJob": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -1082,30 +1654,52 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account-updated"),
 						},
 					},
 				}).
@@ -1129,10 +1723,105 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantError: field.ErrorList{
-				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides cannot be modified when the JobSet's ReplicatedJob node is still active"),
+				field.Forbidden(runtimePatchesPath, "RuntimePatches cannot be modified when the JobSet's ReplicatedJob node is still active"),
 			},
 		},
-		"forbid changes to podTemplateOverrides when trainJob is suspended but has multiple active replicatedJobs": {
+		"forbid atomic update: suspending trainJob with runtimePatches change is rejected when jobSet has an active replicatedJob": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
+						ReplicatedJobs: []jobsetv1alpha2ac.ReplicatedJobApplyConfiguration{
+							{
+								Name: ptr.To(constants.Node),
+								Template: &batchv1ac.JobTemplateSpecApplyConfiguration{
+									Spec: &batchv1ac.JobSpecApplyConfiguration{
+										Template: &corev1ac.PodTemplateSpecApplyConfiguration{
+											Spec: &corev1ac.PodSpecApplyConfiguration{
+												Containers: []corev1ac.ContainerApplyConfiguration{
+													{
+														Name: ptr.To(constants.Node),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(false).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
+				Suspend(true).
+				RuntimePatches([]trainer.RuntimePatch{
+					{
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
+							},
+						},
+					},
+				}).
+				Obj(),
+			jobSet: &jobsetv1alpha2.JobSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: metav1.NamespaceDefault,
+				},
+				Status: jobsetv1alpha2.JobSetStatus{
+					ReplicatedJobsStatus: []jobsetv1alpha2.ReplicatedJobStatus{
+						{
+							Name:   constants.Node,
+							Active: 2,
+						},
+					},
+				},
+			},
+			wantError: field.ErrorList{
+				field.Forbidden(runtimePatchesPath, "RuntimePatches cannot be modified when the JobSet's ReplicatedJob node is still active"),
+			},
+		},
+		"forbid changes to runtimePatches when trainJob is suspended but has multiple active replicatedJobs": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -1175,30 +1864,52 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account-updated"),
 						},
 					},
 				}).
@@ -1222,11 +1933,11 @@ func TestValidate(t *testing.T) {
 				},
 			},
 			wantError: field.ErrorList{
-				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides cannot be modified when the JobSet's ReplicatedJob dataset-initializer is still active"),
-				field.Forbidden(podTemplateOverridePath, "PodTemplateOverrides cannot be modified when the JobSet's ReplicatedJob node is still active"),
+				field.Forbidden(runtimePatchesPath, "RuntimePatches cannot be modified when the JobSet's ReplicatedJob dataset-initializer is still active"),
+				field.Forbidden(runtimePatchesPath, "RuntimePatches cannot be modified when the JobSet's ReplicatedJob node is still active"),
 			},
 		},
-		"forbid changes to podTemplateOverrides when trainJob is suspended but jobSet cannot be checked due to a client error": {
+		"forbid changes to runtimePatches when trainJob is suspended but jobSet cannot be checked due to a client error": {
 			info: &runtime.Info{
 				TemplateSpec: runtime.TemplateSpec{
 					ObjApply: &jobsetv1alpha2ac.JobSetSpecApplyConfiguration{
@@ -1253,37 +1964,59 @@ func TestValidate(t *testing.T) {
 			},
 			oldObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account"),
 						},
 					},
 				}).
 				Obj(),
 			newObj: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test").
 				Suspend(true).
-				PodTemplateOverrides([]trainer.PodTemplateOverride{
+				RuntimePatches([]trainer.RuntimePatch{
 					{
-						TargetJobs: []trainer.PodTemplateOverrideTargetJob{
-							{
-								Name: constants.Node,
+						Manager: "test.io/manager",
+						TrainingRuntimeSpec: &trainer.TrainingRuntimeSpecPatch{
+							Template: &trainer.JobSetTemplatePatch{
+								Spec: &trainer.JobSetSpecPatch{
+									ReplicatedJobs: []trainer.ReplicatedJobPatch{{
+										Name: constants.Node,
+										Template: &trainer.JobTemplatePatch{
+											Spec: &trainer.JobSpecPatch{
+												Template: &trainer.PodTemplatePatch{
+													Spec: &trainer.PodSpecPatch{
+														ServiceAccountName: ptr.To("service-account-updated"),
+													},
+												},
+											},
+										},
+									}},
+								},
 							},
-						},
-						Spec: &trainer.PodTemplateSpecOverride{
-							ServiceAccountName: ptr.To("service-account-updated"),
 						},
 					},
 				}).
 				Obj(),
 			clientErr: fmt.Errorf("client error"),
 			wantError: field.ErrorList{
-				field.InternalError(podTemplateOverridePath, fmt.Errorf("client error")),
+				field.InternalError(runtimePatchesPath, fmt.Errorf("client error")),
 			},
 		},
 	}
@@ -1310,17 +2043,716 @@ func TestValidate(t *testing.T) {
 			}
 			cli := clientBuilder.Build()
 
-			p, err := New(ctx, cli, nil)
+			p, err := New(ctx, cli, nil, nil)
 			if err != nil {
 				t.Fatalf("Failed to initialize JobSet plugin: %v", err)
 			}
 
 			warnings, errs := p.(framework.CustomValidationPlugin).Validate(ctx, tc.info, tc.oldObj, tc.newObj)
-			if diff := cmp.Diff(tc.wantError, errs); len(diff) != 0 {
+			if diff := cmp.Diff(tc.wantError, errs, cmpopts.IgnoreFields(field.Error{}, "BadValue")); len(diff) != 0 {
 				t.Errorf("Unexpected error from Validate (-want, +got): %s", diff)
 			}
 			if diff := cmp.Diff(tc.wantWarnings, warnings); len(diff) != 0 {
 				t.Errorf("Unexpected warnings from Validate (-want, +got): %s", diff)
+			}
+		})
+	}
+}
+
+func TestBuild(t *testing.T) {
+	cases := map[string]struct {
+		info      *runtime.Info
+		trainJob  *trainer.TrainJob
+		wantObjs  []apiruntime.Object
+		wantError error
+	}{
+		"init containers synced to JobSet replicated jobs": {
+			info: &runtime.Info{
+				Labels:      make(map[string]string),
+				Annotations: make(map[string]string),
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](2),
+							InitContainers: []runtime.Container{
+								{
+									Name:    "preflight-check",
+									Image:   "preflight:latest",
+									Command: []string{"/bin/sh", "-c"},
+									Env: []corev1ac.EnvVarApplyConfiguration{
+										{Name: ptr.To("PET_NNODES"), Value: ptr.To("2")},
+										{Name: ptr.To("PET_MASTER_ADDR"), Value: ptr.To("test-job-node-0-0.test-job")},
+									},
+								},
+							},
+							Containers: []runtime.Container{
+								{Name: constants.Node, Image: "pytorch:latest"},
+							},
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithInitContainers(
+													corev1ac.Container().WithName("preflight-check"),
+												).
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+				Scheduler: &runtime.Scheduler{PodLabels: make(map[string]string)},
+			},
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				Obj(),
+			wantObjs: []apiruntime.Object{
+				&jobsetv1alpha2.JobSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-job",
+						Namespace: metav1.NamespaceDefault,
+						OwnerReferences: []metav1.OwnerReference{
+							{APIVersion: trainer.GroupVersion.String(), Kind: trainer.TrainJobKind, Name: "test-job", Controller: ptr.To(true)},
+						},
+					},
+					Spec: jobsetv1alpha2.JobSetSpec{
+						ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
+							{
+								Name:     constants.Node,
+								Replicas: 0,
+								Template: batchv1.JobTemplateSpec{
+									Spec: batchv1.JobSpec{
+										Template: corev1.PodTemplateSpec{
+											Spec: corev1.PodSpec{
+												InitContainers: []corev1.Container{
+													{
+														Name:    "preflight-check",
+														Image:   "preflight:latest",
+														Command: []string{"/bin/sh", "-c"},
+														Env: []corev1.EnvVar{
+															{Name: "PET_NNODES", Value: "2"},
+															{Name: "PET_MASTER_ADDR", Value: "test-job-node-0-0.test-job"},
+														},
+													},
+												},
+												Containers: []corev1.Container{
+													{Name: constants.Node, Image: "pytorch:latest"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"init container with ports and volume mounts synced": {
+			info: &runtime.Info{
+				Labels:      make(map[string]string),
+				Annotations: make(map[string]string),
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](1),
+							InitContainers: []runtime.Container{
+								{
+									Name:    "nccl-check",
+									Image:   "nccl-test:latest",
+									Command: []string{"/nccl-test"},
+									Ports: []corev1ac.ContainerPortApplyConfiguration{
+										{ContainerPort: ptr.To[int32](8080), Name: ptr.To("http")},
+									},
+									VolumeMounts: []corev1ac.VolumeMountApplyConfiguration{
+										{Name: ptr.To("mount"), MountPath: ptr.To("/data")},
+									},
+								},
+							},
+							Containers: []runtime.Container{
+								{Name: constants.Node, Image: "train:latest"},
+							},
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithInitContainers(
+													corev1ac.Container().WithName("nccl-check"),
+												).
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+				Scheduler: &runtime.Scheduler{PodLabels: make(map[string]string)},
+			},
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				Obj(),
+			wantObjs: []apiruntime.Object{
+				&jobsetv1alpha2.JobSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-job",
+						Namespace: metav1.NamespaceDefault,
+						OwnerReferences: []metav1.OwnerReference{
+							{APIVersion: trainer.GroupVersion.String(), Kind: trainer.TrainJobKind, Name: "test-job", Controller: ptr.To(true)},
+						},
+					},
+					Spec: jobsetv1alpha2.JobSetSpec{
+						ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
+							{
+								Name:     constants.Node,
+								Replicas: 0,
+								Template: batchv1.JobTemplateSpec{
+									Spec: batchv1.JobSpec{
+										Template: corev1.PodTemplateSpec{
+											Spec: corev1.PodSpec{
+												InitContainers: []corev1.Container{
+													{
+														Name:    "nccl-check",
+														Image:   "nccl-test:latest",
+														Command: []string{"/nccl-test"},
+														Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
+														VolumeMounts: []corev1.VolumeMount{
+															{Name: "mount", MountPath: "/data"},
+														},
+													},
+												},
+												Containers: []corev1.Container{
+													{Name: constants.Node, Image: "train:latest"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"multiple init containers synced": {
+			info: &runtime.Info{
+				Labels:      make(map[string]string),
+				Annotations: make(map[string]string),
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](3),
+							InitContainers: []runtime.Container{
+								{Name: "driver-check", Image: "driver:latest", Command: []string{"/check-driver"}},
+								{Name: "nccl-check", Image: "nccl:latest", Command: []string{"/check-nccl"}},
+							},
+							Containers: []runtime.Container{
+								{Name: constants.Node, Image: "train:latest"},
+							},
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithInitContainers(
+													corev1ac.Container().WithName("driver-check"),
+													corev1ac.Container().WithName("nccl-check"),
+												).
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+				Scheduler: &runtime.Scheduler{PodLabels: make(map[string]string)},
+			},
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "test-job").
+				Obj(),
+			wantObjs: []apiruntime.Object{
+				&jobsetv1alpha2.JobSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-job",
+						Namespace: metav1.NamespaceDefault,
+						OwnerReferences: []metav1.OwnerReference{
+							{APIVersion: trainer.GroupVersion.String(), Kind: trainer.TrainJobKind, Name: "test-job", Controller: ptr.To(true)},
+						},
+					},
+					Spec: jobsetv1alpha2.JobSetSpec{
+						ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
+							{
+								Name:     constants.Node,
+								Replicas: 0,
+								Template: batchv1.JobTemplateSpec{
+									Spec: batchv1.JobSpec{
+										Template: corev1.PodTemplateSpec{
+											Spec: corev1.PodSpec{
+												InitContainers: []corev1.Container{
+													{Name: "driver-check", Image: "driver:latest", Command: []string{"/check-driver"}},
+													{Name: "nccl-check", Image: "nccl:latest", Command: []string{"/check-nccl"}},
+												},
+												Containers: []corev1.Container{
+													{Name: constants.Node, Image: "train:latest"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"auto-append initContainers from podSet when missing from apply configuration": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{{
+						Name:           constants.Node,
+						InitContainers: []runtime.Container{{Name: "preflight-check", Image: "check:latest", Command: []string{"/run-check"}}},
+						Containers:     []runtime.Container{{Name: constants.Node}},
+					}},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(jobsetv1alpha2ac.ReplicatedJob().
+							WithName(constants.Node).
+							WithTemplate(batchv1ac.JobTemplateSpec().
+								WithSpec(batchv1ac.JobSpec().
+									WithTemplate(corev1ac.PodTemplateSpec().
+										WithSpec(corev1ac.PodSpec().
+											WithContainers(corev1ac.Container().WithName(constants.Node)),
+										),
+									),
+								),
+							),
+						),
+				},
+				Scheduler: &runtime.Scheduler{PodLabels: make(map[string]string)},
+			},
+			trainJob: utiltesting.MakeTrainJobWrapper(metav1.NamespaceDefault, "trainJob").
+				Obj(),
+			wantObjs: []apiruntime.Object{
+				&jobsetv1alpha2.JobSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "trainJob",
+						Namespace: metav1.NamespaceDefault,
+						OwnerReferences: []metav1.OwnerReference{
+							{APIVersion: trainer.GroupVersion.String(), Kind: trainer.TrainJobKind, Name: "trainJob", Controller: ptr.To(true)},
+						},
+					},
+					Spec: jobsetv1alpha2.JobSetSpec{
+						ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{
+							{
+								Name: constants.Node,
+								Template: batchv1.JobTemplateSpec{
+									Spec: batchv1.JobSpec{
+										Template: corev1.PodTemplateSpec{
+											Spec: corev1.PodSpec{
+												InitContainers: []corev1.Container{
+													{Name: "preflight-check", Image: "check:latest", Command: []string{"/run-check"}},
+												},
+												Containers: []corev1.Container{
+													{Name: constants.Node},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, ctx := ktesting.NewTestContext(t)
+			var cancel func()
+			ctx, cancel = context.WithCancel(ctx)
+			t.Cleanup(cancel)
+			cli := utiltesting.NewClientBuilder().Build()
+			p, err := New(ctx, cli, nil, nil)
+			if err != nil {
+				t.Fatalf("Failed to initialize JobSet plugin: %v", err)
+			}
+			objs, err := p.(framework.ComponentBuilderPlugin).Build(ctx, tc.info, tc.trainJob)
+			if diff := cmp.Diff(tc.wantError, err, cmp.Comparer(func(x, y error) bool {
+				if x == nil || y == nil {
+					return x == y
+				}
+				return x.Error() == y.Error()
+			})); len(diff) != 0 {
+				t.Errorf("Unexpected error from Build (-want,+got):\n%s", diff)
+			}
+			if tc.wantError != nil {
+				return
+			}
+			typedObjs, err := utiltesting.ToObject(cli.Scheme(), objs...)
+			if err != nil {
+				t.Fatalf("Failed to convert objects: %v", err)
+			}
+			if diff := cmp.Diff(tc.wantObjs, typedObjs,
+				cmpopts.SortSlices(func(a, b string) bool { return a < b }),
+				cmpopts.SortMaps(func(a, b string) bool { return a < b }),
+				cmp.Transformer("", func(in jobsetv1alpha2.JobSet) jobsetv1alpha2.JobSet {
+					in.Kind = ""
+					in.APIVersion = ""
+					for i := range in.OwnerReferences {
+						in.OwnerReferences[i].BlockOwnerDeletion = nil
+					}
+					return in
+				}),
+			); len(diff) != 0 {
+				t.Errorf("Unexpected objects from Build (-want, +got): %s", diff)
+			}
+		})
+	}
+}
+
+func TestSyncParallelCount(t *testing.T) {
+	cases := map[string]struct {
+		info      *runtime.Info
+		wantInfo  *runtime.Info
+		wantError error
+	}{
+		"no action when info is nil": {},
+		"no action when template.spec is not JobSet": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](3),
+						},
+					},
+					ObjApply: batchv1ac.JobSpec(),
+				},
+			},
+			wantInfo: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](3),
+						},
+					},
+					ObjApply: batchv1ac.JobSpec(),
+				},
+			},
+		},
+		"parallelism and completions are synced for matching replicatedJob by name": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](4),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+			wantInfo: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](4),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(4).
+										WithCompletions(4).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+		},
+		"multiple podSets synced to corresponding replicatedJobs": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Launcher,
+							Count: ptr.To[int32](1),
+						},
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](5),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Launcher).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(2).
+										WithCompletions(2).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+			wantInfo: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  constants.Launcher,
+							Count: ptr.To[int32](1),
+						},
+						{
+							Name:  constants.Node,
+							Count: ptr.To[int32](5),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Launcher).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(5).
+										WithCompletions(5).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+		},
+		"podSet with nil count is skipped": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name: constants.Node,
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(2).
+										WithCompletions(2).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+			wantInfo: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name: constants.Node,
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(2).
+										WithCompletions(2).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+		},
+		"podSet with no matching replicatedJob name is skipped": {
+			info: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  "non-existent",
+							Count: ptr.To[int32](3),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+			wantInfo: &runtime.Info{
+				TemplateSpec: runtime.TemplateSpec{
+					PodSets: []runtime.PodSet{
+						{
+							Name:  "non-existent",
+							Count: ptr.To[int32](3),
+						},
+					},
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithSpec(batchv1ac.JobSpec().
+										WithParallelism(1).
+										WithCompletions(1).
+										WithTemplate(corev1ac.PodTemplateSpec().
+											WithSpec(corev1ac.PodSpec().
+												WithContainers(
+													corev1ac.Container().WithName(constants.Node),
+												),
+											),
+										),
+									),
+								),
+						),
+				},
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, ctx := ktesting.NewTestContext(t)
+			var cancel func()
+			ctx, cancel = context.WithCancel(ctx)
+			t.Cleanup(cancel)
+			cli := utiltesting.NewClientBuilder().Build()
+			p, err := New(ctx, cli, nil, nil)
+			if err != nil {
+				t.Fatalf("Failed to initialize JobSet plugin: %v", err)
+			}
+			err = p.(framework.ComponentBuilderPlugin).SyncParallelCount(tc.info)
+			if diff := cmp.Diff(tc.wantError, err, cmpopts.EquateErrors()); len(diff) != 0 {
+				t.Errorf("Unexpected error (-want,+got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tc.wantInfo, tc.info,
+				cmpopts.SortSlices(func(a, b string) bool { return a < b }),
+				cmpopts.SortMaps(func(a, b string) bool { return a < b }),
+			); len(diff) != 0 {
+				t.Errorf("Unexpected Info from SyncParallelCount (-want,+got):\n%s", diff)
 			}
 		})
 	}

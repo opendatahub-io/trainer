@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -26,11 +40,11 @@ class JobsetV1alpha2FailurePolicyRule(BaseModel):
     """
     FailurePolicyRule defines a FailurePolicyAction to be executed if a child job fails due to a reason listed in OnJobFailureReasons and a message pattern listed in OnJobFailureMessagePatterns. The rule must match both the job failure reason and the job failure message. The rules are evaluated in order and the first matching rule is executed.
     """ # noqa: E501
-    action: StrictStr = Field(description="The action to take if the rule is matched.")
-    name: StrictStr = Field(description="The name of the failure policy rule. The name is defaulted to 'failurePolicyRuleN' where N is the index of the failure policy rule. The name must match the regular expression \"^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$\".")
-    on_job_failure_message_patterns: Optional[List[StrictStr]] = Field(default=None, description="The requirement on the job failure message. The requirement is satisfied if at least one pattern (regex) matches the job failure message. An empty list matches any job failure message. The syntax of the regular expressions accepted is the same general syntax used by Perl, Python, and other languages. More precisely, it is the syntax accepted by RE2 and described at https://golang.org/s/re2syntax, except for \\C. For an overview of the syntax, see https://pkg.go.dev/regexp/syntax.", alias="onJobFailureMessagePatterns")
-    on_job_failure_reasons: Optional[List[StrictStr]] = Field(default=None, description="The requirement on the job failure reasons. The requirement is satisfied if at least one reason matches the list. An empty list matches any job failure reason.", alias="onJobFailureReasons")
-    target_replicated_jobs: Optional[List[StrictStr]] = Field(default=None, description="TargetReplicatedJobs are the names of the replicated jobs the operator applies to. An empty list will apply to all replicatedJobs.", alias="targetReplicatedJobs")
+    action: StrictStr = Field(description="action to take if the rule is matched. Valid values are FailJobSet, RestartJobSet, RestartJobSetAndIgnoreMaxRestarts, RestartJob, RestartJobAndIgnoreMaxRestarts.")
+    name: StrictStr = Field(description="name of the failure policy rule. The name is defaulted to 'failurePolicyRuleN' where N is the index of the failure policy rule. The name must match the regular expression \"^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$\".")
+    on_job_failure_message_patterns: Optional[List[StrictStr]] = Field(default=None, description="onJobFailureMessagePatterns is a requirement on the job failure messages. The requirement is satisfied if at least one pattern (regex) matches the job failure message. An empty list matches any job failure message. The syntax of the regular expressions accepted is the same general syntax used by Perl, Python, and other languages. More precisely, it is the syntax accepted by RE2 and described at https://golang.org/s/re2syntax, except for \\C. For an overview of the syntax, see https://pkg.go.dev/regexp/syntax.", alias="onJobFailureMessagePatterns")
+    on_job_failure_reasons: Optional[List[StrictStr]] = Field(default=None, description="onJobFailureReasons is a list of job failures reasons. The requirement is satisfied if at least one reason matches the list. An empty list matches any job failure reason.", alias="onJobFailureReasons")
+    target_replicated_jobs: Optional[List[StrictStr]] = Field(default=None, description="targetReplicatedJobs are the names of the replicated jobs the operator applies to. An empty list will apply to all replicatedJobs.", alias="targetReplicatedJobs")
     __properties: ClassVar[List[str]] = ["action", "name", "onJobFailureMessagePatterns", "onJobFailureReasons", "targetReplicatedJobs"]
 
     model_config = ConfigDict(

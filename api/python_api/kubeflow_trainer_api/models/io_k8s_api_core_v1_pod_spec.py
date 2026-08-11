@@ -1,3 +1,17 @@
+# Copyright The Kubeflow Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # coding: utf-8
 
 """
@@ -29,6 +43,7 @@ from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_os import IoK8sApiCoreV1
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_readiness_gate import IoK8sApiCoreV1PodReadinessGate
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_resource_claim import IoK8sApiCoreV1PodResourceClaim
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_scheduling_gate import IoK8sApiCoreV1PodSchedulingGate
+from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_scheduling_group import IoK8sApiCoreV1PodSchedulingGroup
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_pod_security_context import IoK8sApiCoreV1PodSecurityContext
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_resource_requirements import IoK8sApiCoreV1ResourceRequirements
 from kubeflow_trainer_api.models.io_k8s_api_core_v1_toleration import IoK8sApiCoreV1Toleration
@@ -54,7 +69,7 @@ class IoK8sApiCoreV1PodSpec(BaseModel):
     host_ipc: Optional[StrictBool] = Field(default=None, description="Use the host's ipc namespace. Optional: Default to false.", alias="hostIPC")
     host_network: Optional[StrictBool] = Field(default=None, description="Host networking requested for this pod. Use the host's network namespace. When using HostNetwork you should specify ports so the scheduler is aware. When `hostNetwork` is true, specified `hostPort` fields in port definitions must match `containerPort`, and unspecified `hostPort` fields in port definitions are defaulted to match `containerPort`. Default to false.", alias="hostNetwork")
     host_pid: Optional[StrictBool] = Field(default=None, description="Use the host's pid namespace. Optional: Default to false.", alias="hostPID")
-    host_users: Optional[StrictBool] = Field(default=None, description="Use the host's user namespace. Optional: Default to true. If set to true or not present, the pod will be run in the host user namespace, useful for when the pod needs a feature only available to the host user namespace, such as loading a kernel module with CAP_SYS_MODULE. When set to false, a new userns is created for the pod. Setting false is useful for mitigating container breakout vulnerabilities even allowing users to run their containers as root without actually having root privileges on the host. This field is alpha-level and is only honored by servers that enable the UserNamespacesSupport feature.", alias="hostUsers")
+    host_users: Optional[StrictBool] = Field(default=None, description="Use the host's user namespace. Optional: Default to true. If set to true or not present, the pod will be run in the host user namespace, useful for when the pod needs a feature only available to the host user namespace, such as loading a kernel module with CAP_SYS_MODULE. When set to false, a new userns is created for the pod. Setting false is useful for mitigating container breakout vulnerabilities even allowing users to run their containers as root without actually having root privileges on the host.", alias="hostUsers")
     hostname: Optional[StrictStr] = Field(default=None, description="Specifies the hostname of the Pod If not specified, the pod's hostname will be set to a system-defined value.")
     hostname_override: Optional[StrictStr] = Field(default=None, description="HostnameOverride specifies an explicit override for the pod's hostname as perceived by the pod. This field only specifies the pod's hostname and does not affect its DNS records. When this field is set to a non-empty string: - It takes precedence over the values set in `hostname` and `subdomain`. - The Pod's hostname will be set to this value. - `setHostnameAsFQDN` must be nil or set to false. - `hostNetwork` must be set to false.  This field must be a valid DNS subdomain as defined in RFC 1123 and contain at most 64 characters. Requires the HostnameOverride feature gate to be enabled.", alias="hostnameOverride")
     image_pull_secrets: Optional[List[IoK8sApiCoreV1LocalObjectReference]] = Field(default=None, description="ImagePullSecrets is an optional list of references to secrets in the same namespace to use for pulling any of the images used by this PodSpec. If specified, these secrets will be passed to individual puller implementations for them to use. More info: https://kubernetes.io/docs/concepts/containers/images#specifying-imagepullsecrets-on-a-pod", alias="imagePullSecrets")
@@ -67,12 +82,13 @@ class IoK8sApiCoreV1PodSpec(BaseModel):
     priority: Optional[StrictInt] = Field(default=None, description="The priority value. Various system components use this field to find the priority of the pod. When Priority Admission Controller is enabled, it prevents users from setting this field. The admission controller populates this field from PriorityClassName. The higher the value, the higher the priority.")
     priority_class_name: Optional[StrictStr] = Field(default=None, description="If specified, indicates the pod's priority. \"system-node-critical\" and \"system-cluster-critical\" are two special keywords which indicate the highest priorities with the former being the highest priority. Any other name must be defined by creating a PriorityClass object with that name. If not specified, the pod priority will be default or zero if there is no default.", alias="priorityClassName")
     readiness_gates: Optional[List[IoK8sApiCoreV1PodReadinessGate]] = Field(default=None, description="If specified, all readiness gates will be evaluated for pod readiness. A pod is ready when all its containers are ready AND all conditions specified in the readiness gates have status equal to \"True\" More info: https://git.k8s.io/enhancements/keps/sig-network/580-pod-readiness-gates", alias="readinessGates")
-    resource_claims: Optional[List[IoK8sApiCoreV1PodResourceClaim]] = Field(default=None, description="ResourceClaims defines which ResourceClaims must be allocated and reserved before the Pod is allowed to start. The resources will be made available to those containers which consume them by name.  This is an alpha field and requires enabling the DynamicResourceAllocation feature gate.  This field is immutable.", alias="resourceClaims")
+    resource_claims: Optional[List[IoK8sApiCoreV1PodResourceClaim]] = Field(default=None, description="ResourceClaims defines which ResourceClaims must be allocated and reserved before the Pod is allowed to start. The resources will be made available to those containers which consume them by name.  This is a stable field but requires that the DynamicResourceAllocation feature gate is enabled.  This field is immutable.", alias="resourceClaims")
     resources: Optional[IoK8sApiCoreV1ResourceRequirements] = Field(default=None, description="Resources is the total amount of CPU and Memory resources required by all containers in the pod. It supports specifying Requests and Limits for \"cpu\", \"memory\" and \"hugepages-\" resource names only. ResourceClaims are not supported.  This field enables fine-grained control over resource allocation for the entire pod, allowing resource sharing among containers in a pod.  This is an alpha field and requires enabling the PodLevelResources feature gate.")
     restart_policy: Optional[StrictStr] = Field(default=None, description="Restart policy for all containers within the pod. One of Always, OnFailure, Never. In some contexts, only a subset of those values may be permitted. Default to Always. More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#restart-policy  Possible enum values:  - `\"Always\"`  - `\"Never\"`  - `\"OnFailure\"`", alias="restartPolicy")
     runtime_class_name: Optional[StrictStr] = Field(default=None, description="RuntimeClassName refers to a RuntimeClass object in the node.k8s.io group, which should be used to run this pod.  If no RuntimeClass resource matches the named class, the pod will not be run. If unset or empty, the \"legacy\" RuntimeClass will be used, which is an implicit class with an empty definition that uses the default runtime handler. More info: https://git.k8s.io/enhancements/keps/sig-node/585-runtime-class", alias="runtimeClassName")
     scheduler_name: Optional[StrictStr] = Field(default=None, description="If specified, the pod will be dispatched by specified scheduler. If not specified, the pod will be dispatched by default scheduler.", alias="schedulerName")
     scheduling_gates: Optional[List[IoK8sApiCoreV1PodSchedulingGate]] = Field(default=None, description="SchedulingGates is an opaque list of values that if specified will block scheduling the pod. If schedulingGates is not empty, the pod will stay in the SchedulingGated state and the scheduler will not attempt to schedule the pod.  SchedulingGates can only be set at pod creation time, and be removed only afterwards.", alias="schedulingGates")
+    scheduling_group: Optional[IoK8sApiCoreV1PodSchedulingGroup] = Field(default=None, description="SchedulingGroup provides a reference to the immediate scheduling runtime grouping object that this Pod belongs to. This field is used by the scheduler to identify the group and apply the correct group scheduling policies. The association with a group also impacts other lifecycle aspects of a Pod that are relevant in a wider context of scheduling like preemption, resource attachment, etc. If not specified, the Pod is treated as a single unit in all of these aspects. The group object referenced by this field may not exist at the time the Pod is created. This field is immutable, but a group object with the same name may be recreated with different policies. Doing this during pod scheduling may result in the placement not conforming to the expected policies.", alias="schedulingGroup")
     security_context: Optional[IoK8sApiCoreV1PodSecurityContext] = Field(default=None, description="SecurityContext holds pod-level security attributes and common container settings. Optional: Defaults to empty.  See type description for default values of each field.", alias="securityContext")
     service_account: Optional[StrictStr] = Field(default=None, description="DeprecatedServiceAccount is a deprecated alias for ServiceAccountName. Deprecated: Use serviceAccountName instead.", alias="serviceAccount")
     service_account_name: Optional[StrictStr] = Field(default=None, description="ServiceAccountName is the name of the ServiceAccount to use to run this pod. More info: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/", alias="serviceAccountName")
@@ -83,7 +99,7 @@ class IoK8sApiCoreV1PodSpec(BaseModel):
     tolerations: Optional[List[IoK8sApiCoreV1Toleration]] = Field(default=None, description="If specified, the pod's tolerations.")
     topology_spread_constraints: Optional[List[IoK8sApiCoreV1TopologySpreadConstraint]] = Field(default=None, description="TopologySpreadConstraints describes how a group of pods ought to spread across topology domains. Scheduler will schedule pods in a way which abides by the constraints. All topologySpreadConstraints are ANDed.", alias="topologySpreadConstraints")
     volumes: Optional[List[IoK8sApiCoreV1Volume]] = Field(default=None, description="List of volumes that can be mounted by containers belonging to the pod. More info: https://kubernetes.io/docs/concepts/storage/volumes")
-    __properties: ClassVar[List[str]] = ["activeDeadlineSeconds", "affinity", "automountServiceAccountToken", "containers", "dnsConfig", "dnsPolicy", "enableServiceLinks", "ephemeralContainers", "hostAliases", "hostIPC", "hostNetwork", "hostPID", "hostUsers", "hostname", "hostnameOverride", "imagePullSecrets", "initContainers", "nodeName", "nodeSelector", "os", "overhead", "preemptionPolicy", "priority", "priorityClassName", "readinessGates", "resourceClaims", "resources", "restartPolicy", "runtimeClassName", "schedulerName", "schedulingGates", "securityContext", "serviceAccount", "serviceAccountName", "setHostnameAsFQDN", "shareProcessNamespace", "subdomain", "terminationGracePeriodSeconds", "tolerations", "topologySpreadConstraints", "volumes"]
+    __properties: ClassVar[List[str]] = ["activeDeadlineSeconds", "affinity", "automountServiceAccountToken", "containers", "dnsConfig", "dnsPolicy", "enableServiceLinks", "ephemeralContainers", "hostAliases", "hostIPC", "hostNetwork", "hostPID", "hostUsers", "hostname", "hostnameOverride", "imagePullSecrets", "initContainers", "nodeName", "nodeSelector", "os", "overhead", "preemptionPolicy", "priority", "priorityClassName", "readinessGates", "resourceClaims", "resources", "restartPolicy", "runtimeClassName", "schedulerName", "schedulingGates", "schedulingGroup", "securityContext", "serviceAccount", "serviceAccountName", "setHostnameAsFQDN", "shareProcessNamespace", "subdomain", "terminationGracePeriodSeconds", "tolerations", "topologySpreadConstraints", "volumes"]
 
     @field_validator('dns_policy')
     def dns_policy_validate_enum(cls, value):
@@ -229,6 +245,9 @@ class IoK8sApiCoreV1PodSpec(BaseModel):
                 if _item_scheduling_gates:
                     _items.append(_item_scheduling_gates.to_dict())
             _dict['schedulingGates'] = _items
+        # override the default output from pydantic by calling `to_dict()` of scheduling_group
+        if self.scheduling_group:
+            _dict['schedulingGroup'] = self.scheduling_group.to_dict()
         # override the default output from pydantic by calling `to_dict()` of security_context
         if self.security_context:
             _dict['securityContext'] = self.security_context.to_dict()
@@ -301,6 +320,7 @@ class IoK8sApiCoreV1PodSpec(BaseModel):
             "runtimeClassName": obj.get("runtimeClassName"),
             "schedulerName": obj.get("schedulerName"),
             "schedulingGates": [IoK8sApiCoreV1PodSchedulingGate.from_dict(_item) for _item in obj["schedulingGates"]] if obj.get("schedulingGates") is not None else None,
+            "schedulingGroup": IoK8sApiCoreV1PodSchedulingGroup.from_dict(obj["schedulingGroup"]) if obj.get("schedulingGroup") is not None else None,
             "securityContext": IoK8sApiCoreV1PodSecurityContext.from_dict(obj["securityContext"]) if obj.get("securityContext") is not None else None,
             "serviceAccount": obj.get("serviceAccount"),
             "serviceAccountName": obj.get("serviceAccountName"),
