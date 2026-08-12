@@ -6,3 +6,5 @@ resources:
   - clusterrolebinding.yaml
   - metrics-auth-clusterrole.yaml
   - metrics-auth-clusterrolebinding.yaml
+  - metrics-reader-clusterrole.yaml
+  - metrics-reader-clusterrolebinding.yaml

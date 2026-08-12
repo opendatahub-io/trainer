@@ -75,11 +75,6 @@ func init() {
 func main() {
 	var configFile string
 	var featureGates string
-	var secureMetrics bool
-	var metricsCertPath string
-	var metricsCertName string
-	var metricsCertKey string
-
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
@@ -87,10 +82,6 @@ func main() {
 	flag.StringVar(&featureGates, "feature-gates", "",
 		"A comma-separated list of key=value pairs that describe feature gates. "+
 			"Command-line feature gates override those specified in the config file.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true, "Serve metrics via HTTPS")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", "", "Directory with TLS cert for metrics server. When empty, controller-runtime auto-generates self-signed certs.")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "TLS certificate filename for metrics server")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "TLS key filename for metrics server")
 
 	zapOpts := zap.Options{
 		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
@@ -132,14 +123,12 @@ func main() {
 		os.Exit(1)
 	}
 	options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, tlsResult.TLSOpts...)
-	options.Metrics.SecureServing = secureMetrics
-	if secureMetrics {
+	if options.Metrics.SecureServing {
 		options.Metrics.FilterProvider = filters.WithAuthenticationAndAuthorization
-	}
-	if len(metricsCertPath) > 0 {
-		options.Metrics.CertDir = metricsCertPath
-		options.Metrics.CertName = metricsCertName
-		options.Metrics.KeyName = metricsCertKey
+		// Wire the metrics server to serve the cert-controller-managed cert so
+		// Prometheus can verify it against the webhook CA. Lazy init handles the
+		// race where cert files are written after manager startup.
+		options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, cert.MetricsTLSOpt())
 	}
 	webhookOpts := webhook.Options{
 		TLSOpts: options.Metrics.TLSOpts,
