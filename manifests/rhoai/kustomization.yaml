@@ -15,6 +15,21 @@ configurations:
 - params.yaml
 
 replacements:
+# Replace NAMESPACE placeholder in the ServiceMonitor serverName with the operator namespace
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.operator-namespace
+  targets:
+  - select:
+      kind: ServiceMonitor
+      name: kubeflow-trainer-controller-manager-metrics-monitor
+    fieldPaths:
+    - spec.endpoints.0.tlsConfig.serverName
+    options:
+      delimiter: "."
+      index: 1
 # Replace controller image
 - source:
     kind: ConfigMap

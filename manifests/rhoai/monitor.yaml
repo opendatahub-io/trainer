@@ -13,7 +13,7 @@ spec:
       scheme: https
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
-        serverName: kubeflow-trainer-controller-manager.opendatahub.svc
+        serverName: kubeflow-trainer-controller-manager.NAMESPACE.svc
         ca:
           secret:
             name: kubeflow-trainer-webhook-cert
