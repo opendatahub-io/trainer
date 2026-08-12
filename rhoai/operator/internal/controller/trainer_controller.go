@@ -125,7 +125,7 @@ type trainerActions struct {
 // +kubebuilder:rbac:groups=components.platform.opendatahub.io,resources=trainers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update;watch
-// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch;update;watch
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=create;get;list;patch;update;watch
@@ -140,14 +140,15 @@ type trainerActions struct {
 // create/list/watch stay unscoped: resourceNames is not enforced on create, and GC
 // discovers owned objects via label-based list. Keep resourceNames aligned with
 // manifests/trainer/ when those object names change.
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;rolebindings,verbs=create;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=create;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;training-admin;training-edit;training-view;kubeflow-trainer-admin;kubeflow-trainer-edit;kubeflow-trainer-view;kubeflow-trainer-cache-initializer
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-view
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-cache-initializer
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-public
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-cache-initializer;kubeflow-trainer-public
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=podmonitors,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=jobset.x-k8s.io,resources=jobsets,verbs=create;get;list;patch;update;watch
+// +kubebuilder:rbac:groups=jobset.x-k8s.io,resources=jobsets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=node.k8s.io,resources=runtimeclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=scheduling.volcano.sh,resources=podgroups,verbs=create;get;list;patch;update;watch

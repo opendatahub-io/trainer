@@ -20,15 +20,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
-  verbs:
-  - create
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - limitranges
   verbs:
   - get
@@ -74,8 +65,19 @@ rules:
   - patch
   - update
 - apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+  - watch
+- apiGroups:
   - admissionregistration.k8s.io
   resources:
+  - mutatingwebhookconfigurations
   - validatingwebhookconfigurations
   verbs:
   - create
@@ -149,13 +151,6 @@ rules:
   - list
   - update
 - apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
   - image.openshift.io
   resources:
   - imagestreams
@@ -173,6 +168,7 @@ rules:
   - jobsets
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -241,6 +237,7 @@ rules:
   - clusterrolebindings
   - clusterroles
   - rolebindings
+  - roles
   verbs:
   - create
   - list
@@ -267,8 +264,20 @@ rules:
   - rbac.authorization.k8s.io
   resourceNames:
   - kubeflow-trainer-cache-initializer
+  - kubeflow-trainer-public
   resources:
   - rolebindings
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - kubeflow-trainer-public
+  resources:
+  - roles
   verbs:
   - delete
   - get
