@@ -170,15 +170,15 @@ replacements:
     - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
 
 resources:
-- torch_distributed.yaml
-- torch_distributed_rocm.yaml
-- torch_distributed_cpu.yaml
-- torch_distributed_cuda130_torch211_py312.yaml
-- torch_distributed_rocm714_torch211_py312.yaml
-- torch_distributed_cpu_torch211_py312.yaml
-- training_hub.yaml
-- training_hub_rocm.yaml
-- training_hub_cpu.yaml
-- training_hub_th09_cuda130_torch211_py312.yaml
-- training_hub_th09_rocm714_torch211_py312.yaml
-- training_hub_th09_cpu_torch211_py312.yaml
+- torch-distributed.yaml
+- torch-distributed-rocm.yaml
+- torch-distributed-cpu.yaml
+- torch-distributed-cuda130-torch211-py312.yaml
+- torch-distributed-rocm714-torch211-py312.yaml
+- torch-distributed-cpu-torch211-py312.yaml
+- training-hub.yaml
+- training-hub-rocm.yaml
+- training-hub-cpu.yaml
+- training-hub-th09-cuda130-torch211-py312.yaml
+- training-hub-th09-rocm714-torch211-py312.yaml
+- training-hub-th09-cpu-torch211-py312.yaml
