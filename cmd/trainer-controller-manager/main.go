@@ -34,6 +34,7 @@ import (
 	ctrlpkg "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
@@ -74,6 +75,10 @@ func init() {
 func main() {
 	var configFile string
 	var featureGates string
+	var secureMetrics bool
+	var metricsCertPath string
+	var metricsCertName string
+	var metricsCertKey string
 
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
@@ -82,6 +87,10 @@ func main() {
 	flag.StringVar(&featureGates, "feature-gates", "",
 		"A comma-separated list of key=value pairs that describe feature gates. "+
 			"Command-line feature gates override those specified in the config file.")
+	flag.BoolVar(&secureMetrics, "metrics-secure", true, "Serve metrics via HTTPS")
+	flag.StringVar(&metricsCertPath, "metrics-cert-path", "", "Directory with TLS cert for metrics server. When empty, controller-runtime auto-generates self-signed certs.")
+	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "TLS certificate filename for metrics server")
+	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "TLS key filename for metrics server")
 
 	zapOpts := zap.Options{
 		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
@@ -123,6 +132,15 @@ func main() {
 		os.Exit(1)
 	}
 	options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, tlsResult.TLSOpts...)
+	options.Metrics.SecureServing = secureMetrics
+	if secureMetrics {
+		options.Metrics.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+	if len(metricsCertPath) > 0 {
+		options.Metrics.CertDir = metricsCertPath
+		options.Metrics.CertName = metricsCertName
+		options.Metrics.KeyName = metricsCertKey
+	}
 	webhookOpts := webhook.Options{
 		TLSOpts: options.Metrics.TLSOpts,
 	}
@@ -158,7 +176,18 @@ func main() {
 		close(certsReady)
 	}
 
-	ctx := ctrl.SetupSignalHandler()
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	defer cancel()
+
+	if tlsResult.APIAvailable {
+		watcher := pkgtls.NewProfileWatcher(restCfg, tlsResult.RawProfile, func() {
+			setupLog.Info("TLS security profile changed, shutting down for restart")
+			cancel()
+		})
+		if err := watcher.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to set up TLS security profile watcher; profile changes will not trigger a restart")
+		}
+	}
 
 	setupProbeEndpoints(mgr, certsReady)
 	runtimes, err := runtimecore.New(ctx, mgr.GetClient(), mgr.GetFieldIndexer(), &cfg)

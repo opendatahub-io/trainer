@@ -9,7 +9,12 @@ spec:
       app.kubernetes.io/name: trainer
       app.kubernetes.io/component: controller
   podMetricsEndpoints:
-    - port: metrics
+    - port: monitoring-port
       scheme: https
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
-        insecureSkipVerify: true
+        serverName: kubeflow-trainer-controller-manager.opendatahub.svc
+        ca:
+          secret:
+            name: kubeflow-trainer-webhook-cert
+            key: ca.crt
