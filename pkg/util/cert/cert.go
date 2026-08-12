@@ -17,10 +17,12 @@ limitations under the License.
 package cert
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"k8s.io/apimachinery/pkg/types"
@@ -93,6 +95,39 @@ func ManageCerts(mgr ctrl.Manager, cfg Config, setupFinished chan struct{}) erro
 		// we expect webhook server will run in primary and secondary instance
 		RequireLeaderElection: false,
 	})
+}
+
+// MetricsTLSOpt returns a TLS option that wires the metrics server to use the
+// same certificate as the webhook server via lazy initialization. The cert files
+// are written by cert-controller after the manager starts, so this function
+// retries on every TLS handshake until the files are available.
+func MetricsTLSOpt() func(*tls.Config) {
+	var mu sync.Mutex
+	var watcher *certwatcher.CertWatcher
+
+	return func(c *tls.Config) {
+		c.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			mu.Lock()
+			if watcher == nil {
+				if w, err := certwatcher.New(certDir+"/tls.crt", certDir+"/tls.key"); err == nil {
+					go func() {
+						// certwatcher.Start is a blocking call; use background context since
+						// there is no manager context available at TLSOpts wiring time.
+						_ = w.Start(context.Background())
+					}()
+					watcher = w
+				}
+			}
+			w := watcher
+			mu.Unlock()
+
+			if w == nil {
+				// Cert not yet written by cert-controller; let the handshake fail.
+				return nil, nil
+			}
+			return w.GetCertificate(hello)
+		}
+	}
 }
 
 // SetupTLSConfig creates a TLS config with automatic certificate rotation support.

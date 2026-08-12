@@ -15,6 +15,21 @@ configurations:
 - params.yaml
 
 replacements:
+# Replace NAMESPACE placeholder in the ServiceMonitor serverName with the operator namespace
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.operator-namespace
+  targets:
+  - select:
+      kind: ServiceMonitor
+      name: kubeflow-trainer-controller-manager-metrics-monitor
+    fieldPaths:
+    - spec.endpoints.0.tlsConfig.serverName
+    options:
+      delimiter: "."
+      index: 1
 # Replace controller image
 - source:
     kind: ConfigMap
@@ -289,6 +304,7 @@ resources:
 # - ../third-party/jobset #uncomment if jobset should be bundled under kubeflow trainer controller manager
 - runtimes
 - imagestreams
+- rbac/tls
 - kubeflow-training-roles.yaml
 - monitor.yaml
 
@@ -301,19 +317,10 @@ patches:
 # Mount the controller config file for loading manager configurations
 # through a ComponentConfig type
 - path: manager_config_patch.yaml
-- path: manager_metrics_patch.yaml
 # RHAI-specific RBAC for progression tracking
 - path: rbac_progression_patch.yaml
   target:
     group: rbac.authorization.k8s.io
     version: v1
     kind: ClusterRole
-    name: kubeflow-trainer-controller-manager
-- patch: |-
-    - op: remove
-      path: /spec/ports/0
-  target:
-    group: ""
-    version: v1
-    kind: Service
     name: kubeflow-trainer-controller-manager

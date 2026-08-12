@@ -34,6 +34,7 @@ import (
 	ctrlpkg "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	schedulerpluginsv1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
@@ -74,7 +75,6 @@ func init() {
 func main() {
 	var configFile string
 	var featureGates string
-
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
@@ -123,6 +123,13 @@ func main() {
 		os.Exit(1)
 	}
 	options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, tlsResult.TLSOpts...)
+	if options.Metrics.SecureServing {
+		options.Metrics.FilterProvider = filters.WithAuthenticationAndAuthorization
+		// Wire the metrics server to serve the cert-controller-managed cert so
+		// Prometheus can verify it against the webhook CA. Lazy init handles the
+		// race where cert files are written after manager startup.
+		options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, cert.MetricsTLSOpt())
+	}
 	webhookOpts := webhook.Options{
 		TLSOpts: options.Metrics.TLSOpts,
 	}
@@ -158,7 +165,18 @@ func main() {
 		close(certsReady)
 	}
 
-	ctx := ctrl.SetupSignalHandler()
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	defer cancel()
+
+	if tlsResult.APIAvailable {
+		watcher := pkgtls.NewProfileWatcher(restCfg, tlsResult.RawProfile, func() {
+			setupLog.Info("TLS security profile changed, shutting down for restart")
+			cancel()
+		})
+		if err := watcher.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to set up TLS security profile watcher; profile changes will not trigger a restart")
+		}
+	}
 
 	setupProbeEndpoints(mgr, certsReady)
 	runtimes, err := runtimecore.New(ctx, mgr.GetClient(), mgr.GetFieldIndexer(), &cfg)

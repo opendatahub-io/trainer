@@ -82,7 +82,9 @@ type tlsSecurityProfile struct {
 
 // Result holds the resolved TLS configuration.
 type Result struct {
-	TLSOpts []func(*tls.Config)
+	TLSOpts      []func(*tls.Config)
+	APIAvailable bool
+	RawProfile   interface{}
 }
 
 // Resolve reads the cluster TLS profile from the APIServer resource using
@@ -105,7 +107,7 @@ func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
 	if err != nil {
 		switch {
 		case meta.IsNoMatchError(err):
-			log.Info("TLS profile API not available, using hardened defaults")
+			log.Info("TLS profile API not available (non-OpenShift cluster)")
 		case apierrors.IsNotFound(err):
 			log.Info("APIServer resource not found, using hardened defaults")
 		case apierrors.IsServiceUnavailable(err),
@@ -114,12 +116,21 @@ func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
 			apierrors.IsTooManyRequests(err),
 			errors.Is(err, context.DeadlineExceeded):
 			log.Info("Transient API error reading TLS profile, using hardened defaults", "error", err)
+			result.APIAvailable = true
+		case apierrors.IsForbidden(err),
+			apierrors.IsUnauthorized(err):
+			log.Error(err, "Permission denied reading TLS profile, using hardened defaults; watcher will retry")
+			result.APIAvailable = true
 		default:
 			return result, fmt.Errorf("reading APIServer TLS profile: %w", err)
 		}
 		result.TLSOpts = append(result.TLSOpts, intermediateWithALPN)
 		return result, nil
 	}
+
+	result.APIAvailable = true
+	rawSpec, _, _ := unstructured.NestedMap(obj.Object, "spec", "tlsSecurityProfile")
+	result.RawProfile = rawSpec
 
 	profile, err := extractTLSProfile(obj)
 	if err != nil {
