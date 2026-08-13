@@ -146,9 +146,10 @@ type trainerActions struct {
 // create/list/watch stay unscoped: resourceNames is not enforced on create, and GC
 // discovers owned objects via label-based list. Keep resourceNames aligned with
 // manifests/trainer/ when those object names change.
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;rolebindings,verbs=create;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=create;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;training-admin;training-edit;training-view;kubeflow-trainer-admin;kubeflow-trainer-edit;kubeflow-trainer-view;kubeflow-trainer-cache-initializer;trainer-metrics-reader;trainer-metrics-auth
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-view;trainer-metrics-reader;trainer-metrics-auth
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-public
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-cache-initializer
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
