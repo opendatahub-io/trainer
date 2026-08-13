@@ -146,13 +146,12 @@ type trainerActions struct {
 // create/list/watch stay unscoped: resourceNames is not enforced on create, and GC
 // discovers owned objects via label-based list. Keep resourceNames aligned with
 // manifests/trainer/ when those object names change.
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=create;list;watch
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;training-admin;training-edit;training-view;kubeflow-trainer-admin;kubeflow-trainer-edit;kubeflow-trainer-view;kubeflow-trainer-cache-initializer
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-view
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-public
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-cache-initializer;kubeflow-trainer-public
-// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=podmonitors,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;rolebindings,verbs=create;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;training-admin;training-edit;training-view;kubeflow-trainer-admin;kubeflow-trainer-edit;kubeflow-trainer-view;kubeflow-trainer-cache-initializer;trainer-metrics-reader;trainer-metrics-auth
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-view;trainer-metrics-reader;trainer-metrics-auth
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-cache-initializer
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=podmonitors;servicemonitors,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=jobset.x-k8s.io,resources=jobsets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch
@@ -329,6 +328,7 @@ func (m *trainerActions) renderManifests(ctx context.Context, rr *types.Reconcil
 			subDir:       "manifests",
 			templatePath: m.manifestsPath,
 			paramMap:     trainerImageParamMap,
+			staticParams: map[string]string{paramOperatorNamespace: namespace},
 			namespace:    namespace,
 			overlay:      defaultOverlay,
 		},
@@ -379,6 +379,11 @@ func (m *trainerActions) renderResourceSet(rs resourceSet) ([]unstructured.Unstr
 
 	if err := applyParamOverrides(renderPath, rs.paramMap); err != nil {
 		return nil, fmt.Errorf("resolving %s params: %w", rs.name, err)
+	}
+	if len(rs.staticParams) > 0 {
+		if err := applyStaticParams(renderPath, rs.staticParams); err != nil {
+			return nil, fmt.Errorf("applying %s static params: %w", rs.name, err)
+		}
 	}
 
 	rendered, err := renderOverlay(renderPath, rs.namespace)
@@ -527,6 +532,7 @@ type resourceSet struct {
 	subDir           string
 	templatePath     string
 	paramMap         map[string]string
+	staticParams     map[string]string
 	namespace        string
 	overlay          string
 	filterConfigMaps bool

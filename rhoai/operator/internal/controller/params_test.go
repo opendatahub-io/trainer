@@ -74,3 +74,24 @@ func TestApplyParamOverridesMissingParamsEnv(t *testing.T) {
 
 	g.Expect(applyParamOverrides(t.TempDir(), trainerImageParamMap)).To(Succeed())
 }
+
+func TestApplyStaticParams(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("operator-namespace=opendatahub\nsome-image=quay.io/example:latest\n"), 0o644)).To(Succeed())
+
+	g.Expect(applyStaticParams(dir, map[string]string{paramOperatorNamespace: "redhat-ods-applications"})).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params[paramOperatorNamespace]).To(Equal("redhat-ods-applications"))
+	g.Expect(params["some-image"]).To(Equal("quay.io/example:latest"))
+}
+
+func TestApplyStaticParamsMissingParamsEnv(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(applyStaticParams(t.TempDir(), map[string]string{paramOperatorNamespace: "redhat-ods-applications"})).To(Succeed())
+}

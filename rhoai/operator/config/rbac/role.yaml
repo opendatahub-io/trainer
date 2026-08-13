@@ -178,6 +178,7 @@ rules:
   - monitoring.coreos.com
   resources:
   - podmonitors
+  - servicemonitors
   verbs:
   - create
   - delete
@@ -224,6 +225,8 @@ rules:
   resourceNames:
   - kubeflow-trainer-controller-manager
   - kubeflow-trainer-view
+  - trainer-metrics-auth
+  - trainer-metrics-reader
   resources:
   - clusterrolebindings
   verbs:
@@ -250,6 +253,8 @@ rules:
   - kubeflow-trainer-controller-manager
   - kubeflow-trainer-edit
   - kubeflow-trainer-view
+  - trainer-metrics-auth
+  - trainer-metrics-reader
   - training-admin
   - training-edit
   - training-view
