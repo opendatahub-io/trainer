@@ -19,19 +19,21 @@ package v1alpha1
 import (
 	"testing"
 
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 )
+
+const testComponentName = "trainer"
 
 func TestPlatformObjectInterface(t *testing.T) {
 	trainer := &Trainer{}
 
-	var _ common.PlatformObject = trainer
+	var _ fwapi.PlatformObject = trainer
 
 	if trainer.GetStatus() == nil {
 		t.Error("GetStatus() returned nil")
 	}
 
-	conditions := []common.Condition{
+	conditions := []fwapi.Condition{
 		{
 			Type:   "Ready",
 			Status: "True",
@@ -47,17 +49,15 @@ func TestPlatformObjectInterface(t *testing.T) {
 		t.Error("GetReleaseStatus() returned nil")
 	}
 
-	releaseStatus := common.ComponentReleaseStatus{
-		Releases: []common.ComponentRelease{
-			{
-				Name:    "trainer",
-				Version: "v2.1.0",
-			},
+	releases := []fwapi.ComponentRelease{
+		{
+			Name:    testComponentName,
+			Version: "v2.1.0",
 		},
 	}
-	trainer.SetReleaseStatus(releaseStatus)
+	trainer.SetReleaseStatus(releases)
 	gotRelease := trainer.GetReleaseStatus()
-	if len(gotRelease.Releases) != 1 || gotRelease.Releases[0].Name != "trainer" {
-		t.Errorf("SetReleaseStatus/GetReleaseStatus failed: got %v, want %v", gotRelease, releaseStatus)
+	if len(*gotRelease) != 1 || (*gotRelease)[0].Name != testComponentName {
+		t.Errorf("SetReleaseStatus/GetReleaseStatus failed: got %v, want %v", gotRelease, releases)
 	}
 }

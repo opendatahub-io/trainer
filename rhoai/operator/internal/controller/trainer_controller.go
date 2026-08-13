@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/blang/semver/v4"
+	ofversion "github.com/operator-framework/api/pkg/lib/version"
 	"gopkg.in/yaml.v3"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -417,13 +418,13 @@ func (m *trainerActions) updateReleases(ctx context.Context, rr *types.Reconcili
 		if parseErr != nil {
 			log.V(1).Info("Ignoring unparsable platform version", "version", platformVersion, "error", parseErr)
 		} else {
-			trainer.Status.Releases = appendOrUpdateRelease(trainer.Status.Releases, common.ComponentRelease{
+			trainer.Status.Releases = appendOrUpdateRelease(trainer.Status.Releases, fwapi.ComponentRelease{
 				Name:    platformReleaseName,
 				Version: platformVersion,
 			})
 			m.reconciler.Release = fwapi.Release{
 				Name:    fwapi.Platform(platformReleaseName),
-				Version: v,
+				Version: ofversion.OperatorVersion{Version: v},
 			}
 		}
 	}
@@ -590,11 +591,11 @@ func readBootstrapRelease(manifestsPath string) (fwapi.Release, error) {
 
 	return fwapi.Release{
 		Name:    fwapi.Platform(metadata.Releases[0].Name),
-		Version: v,
+		Version: ofversion.OperatorVersion{Version: v},
 	}, nil
 }
 
-func (m *trainerActions) getComponentReleases() ([]common.ComponentRelease, error) {
+func (m *trainerActions) getComponentReleases() ([]fwapi.ComponentRelease, error) {
 	metadataPath := filepath.Join(m.manifestsPath, "component_metadata.yaml")
 
 	data, err := os.ReadFile(metadataPath)
@@ -607,9 +608,9 @@ func (m *trainerActions) getComponentReleases() ([]common.ComponentRelease, erro
 		return nil, fmt.Errorf("parsing component metadata: %w", err)
 	}
 
-	releases := make([]common.ComponentRelease, len(metadata.Releases))
+	releases := make([]fwapi.ComponentRelease, len(metadata.Releases))
 	for i, r := range metadata.Releases {
-		releases[i] = common.ComponentRelease{
+		releases[i] = fwapi.ComponentRelease{
 			Name:    r.Name,
 			Version: r.Version,
 			RepoURL: r.RepoURL,
@@ -628,7 +629,7 @@ func currentPlatformVersion(trainer *componentsv1alpha1.Trainer) string {
 	return ""
 }
 
-func appendOrUpdateRelease(releases []common.ComponentRelease, release common.ComponentRelease) []common.ComponentRelease {
+func appendOrUpdateRelease(releases []fwapi.ComponentRelease, release fwapi.ComponentRelease) []fwapi.ComponentRelease {
 	for i, r := range releases {
 		if r.Name == release.Name {
 			releases[i] = release

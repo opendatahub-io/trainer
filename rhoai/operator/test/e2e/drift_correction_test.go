@@ -55,7 +55,7 @@ func TestDriftCorrection(t *testing.T) {
 	verifyTrainerReady := func(g Gomega) {
 		trainer, err := k8sClient.GetTrainer(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseReady))
+		g.Expect(trainer.Status.Phase).To(Equal(string(common.PhaseReady)))
 
 		// Verify the kubeflow-trainer-config ConfigMap exists
 		cm, err := k8sClient.CoreV1().ConfigMaps(trainerNamespace).Get(

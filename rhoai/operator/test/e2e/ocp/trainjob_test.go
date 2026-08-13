@@ -49,7 +49,7 @@ func TestTrainJobWithClusterTrainingRuntime(t *testing.T) {
 	g.Eventually(func(g Gomega) {
 		trainer, err := k8sClient.GetTrainer(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseReady))
+		g.Expect(trainer.Status.Phase).To(Equal(string(common.PhaseReady)))
 	}).Should(Succeed())
 
 	_, err = k8sClient.GetClusterTrainingRuntime(ctx, targetCTR)

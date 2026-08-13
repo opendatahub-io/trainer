@@ -17,7 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -38,8 +38,8 @@ type TrainerSpec struct {
 }
 
 type TrainerStatus struct {
-	common.Status                 `json:",inline"`
-	common.ComponentReleaseStatus `json:",inline"`
+	fwapi.Status                 `json:",inline"`
+	fwapi.ComponentReleaseStatus `json:",inline"`
 }
 
 // +kubebuilder:object:root=true
@@ -72,24 +72,24 @@ func init() {
 	SchemeBuilder.Register(&Trainer{}, &TrainerList{})
 }
 
-var _ common.PlatformObject = &Trainer{}
+var _ fwapi.PlatformObject = &Trainer{}
 
-func (t *Trainer) GetStatus() *common.Status {
+func (t *Trainer) GetStatus() *fwapi.Status {
 	return &t.Status.Status
 }
 
-func (t *Trainer) GetConditions() []common.Condition {
+func (t *Trainer) GetConditions() []fwapi.Condition {
 	return t.Status.Conditions
 }
 
-func (t *Trainer) SetConditions(conditions []common.Condition) {
-	t.Status.Conditions = conditions
+func (t *Trainer) SetConditions(conditions []fwapi.Condition) {
+	t.Status.Conditions = append(t.Status.Conditions[:0:0], conditions...)
 }
 
-func (t *Trainer) GetReleaseStatus() *common.ComponentReleaseStatus {
-	return &t.Status.ComponentReleaseStatus
+func (t *Trainer) GetReleaseStatus() *[]fwapi.ComponentRelease {
+	return &t.Status.Releases
 }
 
-func (t *Trainer) SetReleaseStatus(status common.ComponentReleaseStatus) {
-	t.Status.ComponentReleaseStatus = status
+func (t *Trainer) SetReleaseStatus(status []fwapi.ComponentRelease) {
+	t.Status.Releases = append(t.Status.Releases[:0:0], status...)
 }

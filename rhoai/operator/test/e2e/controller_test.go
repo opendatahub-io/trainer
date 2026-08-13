@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 
 	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
 )
@@ -78,7 +79,7 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 		trainer, err := k8sClient.GetTrainer(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(trainer.Status.ObservedGeneration).To(Equal(trainer.Generation))
-		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseReady))
+		g.Expect(trainer.Status.Phase).To(Equal(string(common.PhaseReady)))
 
 		readyCond := findCondition(trainer, common.ConditionTypeReady)
 		g.Expect(readyCond).NotTo(BeNil())
@@ -153,7 +154,7 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g.Expect(ctrNames).NotTo(BeEmpty(), "ClusterTrainingRuntimes should be re-created after recreate")
 }
 
-func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *common.Condition {
+func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *fwapi.Condition {
 	for i := range trainer.Status.Conditions {
 		if trainer.Status.Conditions[i].Type == string(condType) {
 			return &trainer.Status.Conditions[i]

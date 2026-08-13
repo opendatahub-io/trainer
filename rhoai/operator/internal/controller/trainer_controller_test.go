@@ -38,6 +38,7 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/actions"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/reconciler"
 	fwtypes "github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
@@ -79,7 +80,7 @@ func TestReconcileManaged(t *testing.T) {
 
 	updated := getTrainer(ctx, g)
 	g.Expect(controllerutil.ContainsFinalizer(updated, finalizerName)).To(BeTrue())
-	g.Expect(updated.Status.Phase).To(Equal(common.PhaseReady))
+	g.Expect(updated.Status.Phase).To(Equal(string(common.PhaseReady)))
 
 	readyCond := findCondition(updated, common.ConditionTypeReady)
 	g.Expect(readyCond).NotTo(BeNil())
@@ -309,7 +310,7 @@ func TestPlatformVersionHandshake(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated = getTrainer(ctx, g)
-	var platformRelease *common.ComponentRelease
+	var platformRelease *fwapi.ComponentRelease
 	for i, rel := range updated.Status.Releases {
 		if rel.Name == platformReleaseName {
 			platformRelease = &updated.Status.Releases[i]
@@ -364,7 +365,7 @@ func TestReconcileDeleteAndRecreate(t *testing.T) {
 
 	_, err := r.Reconcile(ctx, testRequest())
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(getTrainer(ctx, g).Status.Phase).To(Equal(common.PhaseReady))
+	g.Expect(getTrainer(ctx, g).Status.Phase).To(Equal(string(common.PhaseReady)))
 
 	// Delete the CR
 	updated := getTrainer(ctx, g)
@@ -397,7 +398,7 @@ func TestReconcileDeleteAndRecreate(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated = getTrainer(ctx, g)
-	g.Expect(updated.Status.Phase).To(Equal(common.PhaseReady))
+	g.Expect(updated.Status.Phase).To(Equal(string(common.PhaseReady)))
 }
 
 func TestEnsureNamespaceAlreadyExists(t *testing.T) {
@@ -481,7 +482,7 @@ func getTrainer(ctx context.Context, g Gomega) *componentsv1alpha1.Trainer {
 	return trainer
 }
 
-func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *common.Condition {
+func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *fwapi.Condition {
 	for i := range trainer.Status.Conditions {
 		if trainer.Status.Conditions[i].Type == string(condType) {
 			return &trainer.Status.Conditions[i]

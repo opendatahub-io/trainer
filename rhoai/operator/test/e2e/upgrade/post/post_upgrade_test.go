@@ -61,7 +61,7 @@ func TestPostUpgradeTrainerStillReady(t *testing.T) {
 	g.Eventually(func(g Gomega) {
 		trainer, err := k8sClient.GetTrainer(ctx)
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(trainer.Status.Phase).To(Equal(common.PhaseReady))
+		g.Expect(trainer.Status.Phase).To(Equal(string(common.PhaseReady)))
 		g.Expect(trainer.Status.ObservedGeneration).To(Equal(trainer.Generation))
 
 		var readyFound, provFound bool

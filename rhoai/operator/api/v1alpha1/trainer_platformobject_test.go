@@ -19,27 +19,27 @@ package v1alpha1
 import (
 	"testing"
 
+	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/opendatahub-io/odh-platform-utilities/api/common/validation"
 )
 
-// TestTrainer_PlatformObjectContract verifies that Trainer correctly implements
-// the PlatformObject behavioral contract, including:
-// - Status pointer semantics (must return pointer to actual field, not copy)
-// - Condition round-trip persistence
-// - Mandatory conditions (Ready, ProvisioningSucceeded, Degraded)
-// - Release status handling
-//
-// This test uses the validation helper from odh-platform-utilities to ensure
-// compliance with the platform object contract.
-func TestTrainer_PlatformObjectContract(t *testing.T) {
-	obj := &Trainer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "default-trainer",
-		},
+func TestTrainerCommonTypeConversion(t *testing.T) {
+	trainer := &Trainer{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-trainer"},
 	}
 
-	// Validate that Trainer satisfies the PlatformObject contract
-	validation.ValidatePlatformObject(t, obj)
+	trainer.SetConditions([]fwapi.Condition{
+		{Type: string(common.ConditionTypeReady), Status: metav1.ConditionTrue},
+	})
+
+	if len(trainer.GetConditions()) != 1 || trainer.GetConditions()[0].Type != string(common.ConditionTypeReady) {
+		t.Fatalf("condition round-trip failed: %#v", trainer.GetConditions())
+	}
+
+	trainer.SetReleaseStatus([]fwapi.ComponentRelease{{Name: testComponentName, Version: "v2.1.0"}})
+	releases := trainer.GetReleaseStatus()
+	if len(*releases) != 1 || (*releases)[0].Name != testComponentName {
+		t.Fatalf("release round-trip failed: %#v", *releases)
+	}
 }
