@@ -56,10 +56,15 @@ func addTo(o *ctrl.Options, cfg *configapi.Configuration) {
 		},
 	}
 
+	metricsBindAddress := cfg.Metrics.BindAddress
+	if cfg.Metrics.SecureServing != nil && *cfg.Metrics.SecureServing {
+		// The secure metrics server is started manually in setupManagerComponents
+		// after certificates are guaranteed to be present. Disable the manager's
+		// built-in metrics server so the two don't race for the same port.
+		metricsBindAddress = "0"
+	}
 	o.Metrics = metricsserver.Options{
-		BindAddress:   cfg.Metrics.BindAddress,
-		SecureServing: cfg.Metrics.SecureServing != nil && *cfg.Metrics.SecureServing,
-		TLSOpts:       tlsOpts,
+		BindAddress: metricsBindAddress,
 	}
 
 	if cfg.Webhook.Port != nil {
@@ -141,4 +146,10 @@ func IsCertManagementEnabled(cfg *configapi.Configuration) bool {
 		return true
 	}
 	return *cfg.CertManagement.Enable
+}
+
+// IsAuthenticatedMetricsEnabled returns true if RBAC-based authentication and
+// authorization is enabled for the metrics endpoint.
+func IsAuthenticatedMetricsEnabled(cfg *configapi.Configuration) bool {
+	return cfg.Metrics.AuthenticatedMetrics != nil && *cfg.Metrics.AuthenticatedMetrics
 }

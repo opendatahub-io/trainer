@@ -31,6 +31,9 @@ func SetDefaults_Configuration(cfg *Configuration) {
 	if cfg.Metrics.SecureServing == nil {
 		cfg.Metrics.SecureServing = ptr.To(true)
 	}
+	if cfg.Metrics.AuthenticatedMetrics == nil {
+		cfg.Metrics.AuthenticatedMetrics = ptr.To(false)
+	}
 	if cfg.Health.HealthProbeBindAddress == "" {
 		cfg.Health.HealthProbeBindAddress = ":8081"
 	}

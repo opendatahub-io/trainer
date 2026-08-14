@@ -293,8 +293,9 @@ this is not: valid: yaml: content
 	}
 
 	defaultMetrics := configapi.ControllerMetrics{
-		BindAddress:   ":8443",
-		SecureServing: ptr.To(true),
+		BindAddress:          ":8443",
+		SecureServing:        ptr.To(true),
+		AuthenticatedMetrics: ptr.To(false),
 	}
 
 	defaultHealth := configapi.ControllerHealth{
@@ -303,11 +304,12 @@ this is not: valid: yaml: content
 		LivenessEndpointName:   "healthz",
 	}
 
+	// When SecureServing is true the built-in metrics server is disabled (BindAddress="0")
+	// and a manual TLS server is started later in setupManagerComponents.
 	defaultOptions := ctrl.Options{
 		HealthProbeBindAddress: ":8081",
 		Metrics: metricsserver.Options{
-			BindAddress:   ":8443",
-			SecureServing: true,
+			BindAddress: "0",
 		},
 		WebhookServer: &webhook.DefaultServer{
 			Options: webhook.Options{
@@ -383,8 +385,9 @@ this is not: valid: yaml: content
 					Port: ptr.To[int32](9444),
 				},
 				Metrics: configapi.ControllerMetrics{
-					BindAddress:   ":9443",
-					SecureServing: ptr.To(true),
+					BindAddress:          ":9443",
+					SecureServing:        ptr.To(true),
+					AuthenticatedMetrics: ptr.To(false),
 				},
 				Health: configapi.ControllerHealth{
 					HealthProbeBindAddress: ":8082",
@@ -401,8 +404,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":8082",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":9443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -435,8 +437,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":8081",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":8443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -474,8 +475,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":8081",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":8443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -534,8 +534,9 @@ this is not: valid: yaml: content
 				TypeMeta: typeMeta,
 				Webhook:  defaultWebhook,
 				Metrics: configapi.ControllerMetrics{
-					BindAddress:   ":8080",
-					SecureServing: ptr.To(false),
+					BindAddress:          ":8080",
+					SecureServing:        ptr.To(false),
+					AuthenticatedMetrics: ptr.To(false),
 				},
 				Health:           defaultHealth,
 				CertManagement:   defaultCertManagement,
@@ -573,8 +574,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":8081",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":8443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -603,8 +603,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":8081",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":8443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -632,8 +631,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":9090",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":8443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -679,8 +677,7 @@ this is not: valid: yaml: content
 			wantOptions: ctrl.Options{
 				HealthProbeBindAddress: ":8081",
 				Metrics: metricsserver.Options{
-					BindAddress:   ":8443",
-					SecureServing: true,
+					BindAddress: "0",
 				},
 				WebhookServer: &webhook.DefaultServer{
 					Options: webhook.Options{
@@ -978,13 +975,19 @@ tls:
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if len(options.Metrics.TLSOpts) == 0 {
-				t.Fatal("Expected TLSOpts to be set")
+			// TLS options from the config file are applied to the webhook server.
+			// The metrics server receives its TLS config separately at startup
+			// via cert.SetupTLSConfig, called after certs are guaranteed present.
+			webhookSrv, ok := options.WebhookServer.(*webhook.DefaultServer)
+			if !ok {
+				t.Fatal("Expected WebhookServer to be a *webhook.DefaultServer")
+			}
+			if len(webhookSrv.Options.TLSOpts) == 0 {
+				t.Fatal("Expected TLSOpts to be set on the webhook server")
 			}
 
-			// The webhook server must resolve TLS identically to the metrics server.
 			got := &tls.Config{}
-			for _, apply := range options.Metrics.TLSOpts {
+			for _, apply := range webhookSrv.Options.TLSOpts {
 				apply(got)
 			}
 
