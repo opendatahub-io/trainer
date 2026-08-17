@@ -277,6 +277,40 @@ func (c *Client) GetClusterTrainingRuntime(ctx context.Context, name string) (*u
 	return c.DynamicClient.Resource(clusterTrainingRuntimeGVR).Get(ctx, name, metav1.GetOptions{})
 }
 
+func (c *Client) TouchTrainer(ctx context.Context) error {
+	trainer, err := c.GetTrainer(ctx)
+	if err != nil {
+		return err
+	}
+	annotations := trainer.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations["trainer.opendatahub.io/reconcile-trigger"] = "true"
+	trainer.SetAnnotations(annotations)
+	return c.CRClient.Update(ctx, trainer)
+}
+
+func (c *Client) AddClusterTrainingRuntimeFinalizer(ctx context.Context, name, finalizer string) error {
+	ctr, err := c.DynamicClient.Resource(clusterTrainingRuntimeGVR).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	finalizers := ctr.GetFinalizers()
+	finalizers = append(finalizers, finalizer)
+	ctr.SetFinalizers(finalizers)
+	_, err = c.DynamicClient.Resource(clusterTrainingRuntimeGVR).Update(ctx, ctr, metav1.UpdateOptions{})
+	return err
+}
+
+func (c *Client) GetClusterTrainingRuntimeFinalizers(ctx context.Context, name string) ([]string, error) {
+	ctr, err := c.DynamicClient.Resource(clusterTrainingRuntimeGVR).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return ctr.GetFinalizers(), nil
+}
+
 func (c *Client) CreateTrainJob(ctx context.Context, name, namespace, runtimeName string) error {
 	trainJob := &unstructured.Unstructured{}
 	trainJob.SetUnstructuredContent(map[string]any{

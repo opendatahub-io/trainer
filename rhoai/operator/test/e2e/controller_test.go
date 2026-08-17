@@ -154,6 +154,42 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g.Expect(ctrNames).NotTo(BeEmpty(), "ClusterTrainingRuntimes should be re-created after recreate")
 }
 
+func TestFinalizerStrippedFromRuntimes(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
+
+	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
+
+	var targetCTR string
+	verifyReady := func(g Gomega) {
+		trainer, err := k8sClient.GetTrainer(ctx)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(trainer.Status.Phase).To(Equal(string(common.PhaseReady)))
+
+		names, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(names).NotTo(BeEmpty())
+		targetCTR = names[0]
+	}
+	g.Eventually(verifyReady).Should(Succeed())
+
+	legacyFinalizer := "trainer.kubeflow.org/resource-in-use"
+	err = k8sClient.AddClusterTrainingRuntimeFinalizer(ctx, targetCTR, legacyFinalizer)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to add finalizer to ClusterTrainingRuntime")
+
+	// Touch the Trainer CR to trigger a reconcile — the controller does not
+	// watch ClusterTrainingRuntime changes.
+	err = k8sClient.TouchTrainer(ctx)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to touch Trainer CR")
+
+	g.Eventually(func(g Gomega) {
+		f, err := k8sClient.GetClusterTrainingRuntimeFinalizers(ctx, targetCTR)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(f).To(BeEmpty(), "Controller should strip the legacy finalizer")
+	}).Should(Succeed())
+}
+
 func findCondition(trainer *componentsv1alpha1.Trainer, condType common.ConditionType) *fwapi.Condition {
 	for i := range trainer.Status.Conditions {
 		if trainer.Status.Conditions[i].Type == string(condType) {

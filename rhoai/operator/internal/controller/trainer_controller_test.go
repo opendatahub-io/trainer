@@ -170,10 +170,10 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
 
-	ctrGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "clustertrainingruntimes"}
+	ctrGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: clusterTrainingRuntimeResource}
 	ctrGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: clusterTrainingRuntime}
-	trGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "trainingruntimes"}
-	trGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: "TrainingRuntime"}
+	trGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: trainingRuntimeResource}
+	trGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: trainingRuntime}
 
 	labeledCTR := newUnstructured(ctrGVK, "labeled-ctr", "", map[string]string{labels.PlatformPartOf: trainerPartOf})
 	_, err := dynamicClient.Resource(ctrGVR).Create(ctx, labeledCTR, metav1.CreateOptions{})
@@ -207,6 +207,64 @@ func TestCleanupTrainerResourcesDeletesLabeledResources(t *testing.T) {
 
 	_, err = dynamicClient.Resource(trGVR).Namespace("tr-test-ns").Get(ctx, "labeled-tr", metav1.GetOptions{})
 	g.Expect(errors.IsNotFound(err)).To(BeTrue(), "labeled TrainingRuntime should be deleted")
+}
+
+func TestRemoveRuntimeFinalizersStripsAllFinalizers(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	ctrGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: clusterTrainingRuntimeResource}
+	ctrGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: clusterTrainingRuntime}
+	trGVR := schema.GroupVersionResource{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: trainingRuntimeResource}
+	trGVK := schema.GroupVersionKind{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Kind: trainingRuntime}
+
+	withFinalizer := newUnstructured(ctrGVK, "ctr-with-finalizer", "", map[string]string{labels.PlatformPartOf: trainerPartOf})
+	withFinalizer.SetFinalizers([]string{legacyTrainerFinalizer})
+	_, err := dynamicClient.Resource(ctrGVR).Create(ctx, withFinalizer, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	withoutFinalizer := newUnstructured(ctrGVK, "ctr-no-finalizer", "", map[string]string{labels.PlatformPartOf: trainerPartOf})
+	_, err = dynamicClient.Resource(ctrGVR).Create(ctx, withoutFinalizer, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	unlabeled := newUnstructured(ctrGVK, "ctr-unlabeled", "", nil)
+	unlabeled.SetFinalizers([]string{legacyTrainerFinalizer})
+	_, err = dynamicClient.Resource(ctrGVR).Create(ctx, unlabeled, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "strip-finalizer-ns"}}
+	g.Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, ns) })
+
+	trWithMixed := newUnstructured(trGVK, "tr-with-mixed", "strip-finalizer-ns", map[string]string{labels.PlatformPartOf: trainerPartOf})
+	trWithMixed.SetFinalizers([]string{legacyTrainerFinalizer, "another/finalizer"})
+	_, err = dynamicClient.Resource(trGVR).Namespace("strip-finalizer-ns").Create(ctx, trWithMixed, metav1.CreateOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	t.Cleanup(func() {
+		_ = dynamicClient.Resource(ctrGVR).Delete(ctx, "ctr-with-finalizer", metav1.DeleteOptions{})
+		_ = dynamicClient.Resource(ctrGVR).Delete(ctx, "ctr-no-finalizer", metav1.DeleteOptions{})
+		_ = dynamicClient.Resource(ctrGVR).Delete(ctx, "ctr-unlabeled", metav1.DeleteOptions{})
+		_ = dynamicClient.Resource(trGVR).Namespace("strip-finalizer-ns").Delete(ctx, "tr-with-mixed", metav1.DeleteOptions{})
+	})
+
+	g.Expect(removeRuntimeFinalizers(ctx, dynamicClient)).To(Succeed())
+
+	got, err := dynamicClient.Resource(ctrGVR).Get(ctx, "ctr-with-finalizer", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got.GetFinalizers()).To(BeEmpty(), "legacy finalizer should be stripped")
+
+	got, err = dynamicClient.Resource(ctrGVR).Get(ctx, "ctr-no-finalizer", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got.GetFinalizers()).To(BeEmpty(), "CTR without finalizers should remain unchanged")
+
+	got, err = dynamicClient.Resource(ctrGVR).Get(ctx, "ctr-unlabeled", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got.GetFinalizers()).To(ConsistOf(legacyTrainerFinalizer), "unlabeled CTR finalizers should be untouched")
+
+	got, err = dynamicClient.Resource(trGVR).Namespace("strip-finalizer-ns").Get(ctx, "tr-with-mixed", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got.GetFinalizers()).To(ConsistOf("another/finalizer"), "unrelated finalizer should be preserved")
 }
 
 func TestGetComponentReleases(t *testing.T) {
@@ -454,6 +512,7 @@ func newTestReconciler(t *testing.T) *reconciler.Reconciler {
 		m.ensureNamespace,
 		m.updateReleases,
 		m.renderManifests,
+		m.stripRuntimeFinalizers,
 	}
 	r.Finalizer = []actions.Fn{m.cleanup}
 

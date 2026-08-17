@@ -69,6 +69,10 @@ const (
 	trainerKubeflowGroup   = "trainer.kubeflow.org"
 	trainerKubeflowVersion = "v1alpha1"
 	clusterTrainingRuntime = "ClusterTrainingRuntime"
+	trainingRuntime        = "TrainingRuntime"
+
+	clusterTrainingRuntimeResource = "clustertrainingruntimes"
+	trainingRuntimeResource        = "trainingruntimes"
 
 	platformConfigMapName = "odh-trainer-config"
 	platformVersionKey    = "platformVersion"
@@ -90,7 +94,7 @@ var (
 	trainingRuntimeGVK = schema.GroupVersionKind{
 		Group:   trainerKubeflowGroup,
 		Version: trainerKubeflowVersion,
-		Kind:    "TrainingRuntime",
+		Kind:    trainingRuntime,
 	}
 )
 
@@ -197,6 +201,7 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 			fwdeploy.WithApplyOrder(),
 		))).
 		WithAction(fwdeployments.NewAction(fwdeployments.InNamespaceFn(nsFn))).
+		WithAction(m.stripRuntimeFinalizers).
 		// GC deletes stale resources from previous versions that are no longer
 		// rendered. OnlyCollectOwned is false because cluster-scoped resources
 		// (e.g. ClusterTrainingRuntimes) can't have owner references to the
@@ -439,6 +444,9 @@ func (m *trainerActions) cleanup(ctx context.Context, rr *types.ReconciliationRe
 
 	log.Info("Cleaning up trainer resources")
 
+	if err := removeRuntimeFinalizers(ctx, rr.Controller.GetDynamicClient()); err != nil {
+		return err
+	}
 	cleanupTrainerResources(ctx, rr.Controller.GetDynamicClient())
 
 	collector := gc.New(
@@ -501,6 +509,15 @@ func isImmutableFieldError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "field is immutable")
 }
 
+// stripRuntimeFinalizers removes leftover finalizers from
+// ClusterTrainingRuntimes and TrainingRuntimes. Upstream Trainer 2.3 no longer
+// adds these finalizers; this action cleans up any that remain from earlier
+// versions so the resources can be deleted cleanly. Runs after the new control
+// plane is deployed to avoid the old controller re-adding them.
+func (m *trainerActions) stripRuntimeFinalizers(ctx context.Context, rr *types.ReconciliationRequest) error {
+	return removeRuntimeFinalizers(ctx, rr.Controller.GetDynamicClient())
+}
+
 // --- Helpers ---
 
 type resourceSet struct {
@@ -517,8 +534,8 @@ func cleanupTrainerResources(ctx context.Context, dynClient dynamic.Interface) {
 	log := logf.FromContext(ctx)
 
 	gvrs := []schema.GroupVersionResource{
-		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "clustertrainingruntimes"},
-		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: "trainingruntimes"},
+		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: clusterTrainingRuntimeResource},
+		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: trainingRuntimeResource},
 	}
 
 	selector := labels.PlatformPartOf + "=" + trainerPartOf
@@ -549,6 +566,60 @@ func cleanupTrainerResources(ctx context.Context, dynClient dynamic.Interface) {
 			}
 		}
 	}
+}
+
+// legacyTrainerFinalizer is the upstream Trainer controller's resource-in-use
+// finalizer, removed in Trainer 2.3.
+const legacyTrainerFinalizer = "trainer.kubeflow.org/resource-in-use"
+
+func removeRuntimeFinalizers(ctx context.Context, dynClient dynamic.Interface) error {
+	log := logf.FromContext(ctx)
+
+	gvrs := []schema.GroupVersionResource{
+		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: clusterTrainingRuntimeResource},
+		{Group: trainerKubeflowGroup, Version: trainerKubeflowVersion, Resource: trainingRuntimeResource},
+	}
+
+	selector := labels.PlatformPartOf + "=" + trainerPartOf
+
+	for _, gvr := range gvrs {
+		items, err := dynClient.Resource(gvr).Namespace("").List(ctx, metav1.ListOptions{
+			LabelSelector: selector,
+		})
+		if err != nil {
+			return fmt.Errorf("listing %s for finalizer removal: %w", gvr.Resource, err)
+		}
+
+		for i := range items.Items {
+			item := &items.Items[i]
+			retained := filterFinalizer(item.GetFinalizers(), legacyTrainerFinalizer)
+			if len(retained) == len(item.GetFinalizers()) {
+				continue
+			}
+
+			log.Info("Removing legacy finalizer from training runtime", "gvr", gvr, "name", item.GetName(), "namespace", item.GetNamespace())
+
+			item.SetFinalizers(retained)
+			_, err := dynClient.Resource(gvr).Namespace(item.GetNamespace()).Update(
+				ctx, item, metav1.UpdateOptions{},
+			)
+			if err != nil {
+				return fmt.Errorf("removing finalizer from %s %s/%s: %w", gvr.Resource, item.GetNamespace(), item.GetName(), err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func filterFinalizer(finalizers []string, toRemove string) []string {
+	result := make([]string, 0, len(finalizers))
+	for _, f := range finalizers {
+		if f != toRemove {
+			result = append(result, f)
+		}
+	}
+	return result
 }
 
 func (m *trainerActions) getPlatformVersion(ctx context.Context, namespace string) (string, error) {
