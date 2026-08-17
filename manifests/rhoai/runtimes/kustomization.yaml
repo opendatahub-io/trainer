@@ -13,3 +13,5 @@ resources:
   - training-hub-th09-cuda130-torch211-py312.yaml
   - training-hub-th09-rocm714-torch211-py312.yaml
   - training-hub-th09-cpu-torch211-py312.yaml
+  - speculator-model-opt-cuda.yaml
+  - vllm-extract-cuda.yaml

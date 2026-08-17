@@ -1,0 +1,28 @@
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: ClusterTrainingRuntime
+metadata:
+  name: speculator-model-opt-cuda
+  labels:
+    trainer.kubeflow.org/framework: torch
+spec:
+  mlPolicy:
+    numNodes: 1
+    torch:
+      numProcPerNode: auto
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: registry.redhat.io/rhaii-early-access/model-opt-cuda-rhel9:3.5.0-ea.2-1782914138
+                      resources:
+                        limits:
+                          nvidia.com/gpu: "1"
