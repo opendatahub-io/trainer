@@ -133,7 +133,7 @@ type trainerActions struct {
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch;update;watch
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;get;list;patch;update;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups="",resources=services;configmaps,verbs=get;list;watch;create;update;patch;delete
 // ServiceAccount mutate verbs are limited to accounts rendered from manifests/trainer.
 // create/list/watch stay unscoped (create ignores resourceNames; GC uses list).
