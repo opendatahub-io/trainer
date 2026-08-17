@@ -24,6 +24,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -138,7 +139,37 @@ func (w *TrainJobValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *
 		return nil, fmt.Errorf("unsupported runtime: %s", runtimeRefGK)
 	}
 	warnings, errors := runtime.ValidateObjects(ctx, oldObj, newObj)
+	errors = append(errors, validateTrainJobImmutability(oldObj, newObj)...)
 	return warnings, errors.ToAggregate()
+}
+
+// validateTrainJobImmutability enforces that spec.trainer and spec.initializer do not change
+// after creation. These invariants used to be CRD CEL "self == oldSelf" transition rules, but
+// CEL compares the raw unstructured objects, where an absent key and an explicit zero value are
+// different. A writer that re-serializes the whole object and drops an explicit omitempty zero
+// (for example spec.trainer.env[].value: "") therefore trips the rule even though nothing
+// changed semantically, and CEL runs before any webhook so there is no recourse. This is what
+// blocks Kueue from unsuspending a TrainJob: its full-object update re-serializes the entire
+// spec (see kubeflow/trainer#3888). The validating webhook instead receives the decoded typed
+// objects, where an absent field and its zero value are identical, so equality.Semantic.DeepEqual
+// accepts the re-serialization while still rejecting genuine mutations. Matching the CEL
+// transition semantics, the comparison runs only when the field is present in both the old and
+// the new object, so setting or clearing an optional field is left to other validation.
+func validateTrainJobImmutability(oldObj, newObj *trainer.TrainJob) field.ErrorList {
+	var allErrs field.ErrorList
+	if oldObj == nil || newObj == nil {
+		return allErrs
+	}
+	specPath := field.NewPath("spec")
+	if oldObj.Spec.Trainer != nil && newObj.Spec.Trainer != nil &&
+		!equality.Semantic.DeepEqual(oldObj.Spec.Trainer, newObj.Spec.Trainer) {
+		allErrs = append(allErrs, field.Forbidden(specPath.Child("trainer"), "field is immutable"))
+	}
+	if oldObj.Spec.Initializer != nil && newObj.Spec.Initializer != nil &&
+		!equality.Semantic.DeepEqual(oldObj.Spec.Initializer, newObj.Spec.Initializer) {
+		allErrs = append(allErrs, field.Forbidden(specPath.Child("initializer"), "field is immutable"))
+	}
+	return allErrs
 }
 
 func (w *TrainJobValidator) ValidateDelete(ctx context.Context, obj *trainer.TrainJob) (admission.Warnings, error) {

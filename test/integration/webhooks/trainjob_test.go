@@ -818,7 +818,7 @@ var _ = ginkgo.Describe("TrainJob marker validations and defaulting", ginkgo.Ord
 					job.Spec.Initializer.Model.StorageUri = ptr.To("s3://forbidden-update")
 					return job
 				},
-				testingutil.BeInvalidError()),
+				testingutil.BeForbiddenError()),
 			ginkgo.Entry("Should fail to update trainer",
 				func() *trainer.TrainJob {
 					return testingutil.MakeTrainJobWrapper(ns.Name, "valid-trainer").
@@ -832,7 +832,7 @@ var _ = ginkgo.Describe("TrainJob marker validations and defaulting", ginkgo.Ord
 					job.Spec.Trainer.Image = ptr.To("forbidden-update")
 					return job
 				},
-				testingutil.BeInvalidError()),
+				testingutil.BeForbiddenError()),
 			ginkgo.Entry("Should succeed to update runtimePatches when suspend is true",
 				func() *trainer.TrainJob {
 					return testingutil.MakeTrainJobWrapper(ns.Name, "valid-runtimepatches").
@@ -901,7 +901,7 @@ var _ = ginkgo.Describe("TrainJob marker validations and defaulting", ginkgo.Ord
 					job.Spec.RuntimePatches[0].TrainingRuntimeSpec.Template.Spec.ReplicatedJobs[0].Template.Spec.Template.Spec.TerminationGracePeriodSeconds = ptr.To(int64(600))
 					return job
 				},
-				testingutil.BeInvalidError()),
+				testingutil.BeForbiddenError()),
 		)
 	})
 })
