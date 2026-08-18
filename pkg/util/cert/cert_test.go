@@ -193,6 +193,87 @@ func TestSetupTLSConfigOptionalTLSOpts(t *testing.T) {
 	}
 }
 
+func TestMetricsTLSOpt(t *testing.T) {
+	t.Run("returns nil cert when files not yet written", func(t *testing.T) {
+		originalCertDir := certDir
+		certDir = filepath.Join(t.TempDir(), "missing")
+		t.Cleanup(func() { certDir = originalCertDir })
+
+		opt := MetricsTLSOpt()
+		cfg := &tls.Config{}
+		opt(cfg)
+
+		if cfg.GetCertificate == nil {
+			t.Fatal("Expected GetCertificate to be set")
+		}
+		got, err := cfg.GetCertificate(nil)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if got != nil {
+			t.Errorf("Expected nil cert before files are written, got: %v", got)
+		}
+	})
+
+	t.Run("serves cert when files are present", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSelfSignedCert(t, dir)
+
+		originalCertDir := certDir
+		certDir = dir
+		t.Cleanup(func() { certDir = originalCertDir })
+
+		opt := MetricsTLSOpt()
+		cfg := &tls.Config{}
+		opt(cfg)
+
+		if cfg.GetCertificate == nil {
+			t.Fatal("Expected GetCertificate to be set")
+		}
+		got, err := cfg.GetCertificate(nil)
+		if err != nil {
+			t.Fatalf("Unexpected error loading cert: %v", err)
+		}
+		if got == nil {
+			t.Error("Expected a certificate, got nil")
+		}
+	})
+
+	t.Run("retry succeeds after cert files are written", func(t *testing.T) {
+		dir := t.TempDir()
+		missingDir := filepath.Join(dir, "serving-certs")
+
+		originalCertDir := certDir
+		certDir = missingDir
+		t.Cleanup(func() { certDir = originalCertDir })
+
+		opt := MetricsTLSOpt()
+		cfg := &tls.Config{}
+		opt(cfg)
+
+		// First call with missing files: returns nil.
+		got, err := cfg.GetCertificate(nil)
+		if err != nil || got != nil {
+			t.Fatalf("Expected nil/nil before cert, got cert=%v err=%v", got, err)
+		}
+
+		// Write cert files.
+		if err := os.MkdirAll(missingDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeSelfSignedCert(t, missingDir)
+
+		// Second call: watcher initializes and returns the cert.
+		got, err = cfg.GetCertificate(nil)
+		if err != nil {
+			t.Fatalf("Unexpected error on second call: %v", err)
+		}
+		if got == nil {
+			t.Error("Expected cert to be served after files are written, got nil")
+		}
+	})
+}
+
 func TestGetOperatorNamespace(t *testing.T) {
 	// Outside of a pod the service account namespace file does not exist, so we
 	// must fall back to the default namespace rather than returning an empty one.
