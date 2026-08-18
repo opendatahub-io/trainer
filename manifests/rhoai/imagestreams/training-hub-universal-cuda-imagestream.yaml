@@ -5,6 +5,7 @@ metadata:
   labels:
     opendatahub.io/notebook-image: "true"
   annotations:
+    notebook-tier: secure
     opendatahub.io/notebook-image-url: "https://github.com/opendatahub-io/distributed-workloads/tree/main/images/universal/training"
     opendatahub.io/notebook-image-name: "Training | Jupyter | PyTorch | CUDA | Python"
     opendatahub.io/notebook-image-desc: "Training runtime image for CUDA GPU-based fine-tuning and distributed training."
