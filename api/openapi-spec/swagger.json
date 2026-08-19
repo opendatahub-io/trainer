@@ -14729,7 +14729,7 @@
             "format": "int64"
           },
           "initializer": {
-            "description": "initializer defines the configuration of the initializer.",
+            "description": "initializer defines the configuration of the initializer. The field is immutable.",
             "allOf": [
               {
                 "$ref": "#/components/schemas/trainer.v1alpha1.Initializer"
@@ -14770,7 +14770,7 @@
             "type": "boolean"
           },
           "trainer": {
-            "description": "trainer defines the configuration of the trainer.",
+            "description": "trainer defines the configuration of the trainer. The field is immutable.",
             "allOf": [
               {
                 "$ref": "#/components/schemas/trainer.v1alpha1.Trainer"

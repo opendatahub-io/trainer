@@ -1735,13 +1735,13 @@ func schema_pkg_apis_trainer_v1alpha1_TrainJobSpec(ref common.ReferenceCallback)
 					},
 					"initializer": {
 						SchemaProps: spec.SchemaProps{
-							Description: "initializer defines the configuration of the initializer.",
+							Description: "initializer defines the configuration of the initializer. The field is immutable.",
 							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Initializer"),
 						},
 					},
 					"trainer": {
 						SchemaProps: spec.SchemaProps{
-							Description: "trainer defines the configuration of the trainer.",
+							Description: "trainer defines the configuration of the trainer. The field is immutable.",
 							Ref:         ref("github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1.Trainer"),
 						},
 					},
