@@ -50,6 +50,7 @@ import (
 	fwdeployments "github.com/opendatahub-io/odh-platform-utilities/framework/controller/actions/status/deployments"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/conditions"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/handlers"
+	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/predicates"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/predicates/dependent"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/reconciler"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
@@ -183,7 +184,8 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 	}
 
 	r, err := reconciler.ReconcilerFor(mgr, &componentsv1alpha1.Trainer{}).
-		Watches(&appsv1.Deployment{}).
+		Watches(&appsv1.Deployment{},
+			reconciler.WithPredicates(predicates.DefaultDeploymentPredicate)).
 		Watches(&corev1.Service{}).
 		Watches(&corev1.ConfigMap{}).
 		Watches(&admissionv1.ValidatingWebhookConfiguration{}).
