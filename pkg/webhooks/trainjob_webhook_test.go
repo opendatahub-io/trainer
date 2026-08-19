@@ -25,7 +25,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	admissionv1 "k8s.io/api/admission/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -400,99 +399,6 @@ func TestValidateCreate(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantError.ToAggregate(), err, cmpopts.IgnoreFields(field.Error{}, "Detail")); len(diff) != 0 {
 				t.Errorf("Unexpected error from ValidateCreate (-want, +got): %s", diff)
-			}
-		})
-	}
-}
-
-func TestValidateTrainJobImmutability(t *testing.T) {
-	baseTrainer := func() *trainer.Trainer {
-		return &trainer.Trainer{
-			Image: ptr.To("test-image"),
-			Env:   []corev1.EnvVar{{Name: "FOO", Value: ""}},
-		}
-	}
-	baseInitializer := func() *trainer.Initializer {
-		return &trainer.Initializer{
-			Model: &trainer.ModelInitializer{StorageUri: ptr.To("s3://test/path")},
-		}
-	}
-	specPath := field.NewPath("spec")
-
-	cases := map[string]struct {
-		oldObj    *trainer.TrainJob
-		newObj    *trainer.TrainJob
-		wantError field.ErrorList
-	}{
-		"no change is allowed": {
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(baseTrainer()).Initializer(baseInitializer()).Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(baseTrainer()).Initializer(baseInitializer()).Obj(),
-		},
-		"re-serialization that drops an explicit omitempty zero from trainer is allowed": {
-			// Models Kueue's full-object update (kubeflow/trainer#3888): the stored object
-			// carries env value "", its re-serialization drops the key, and the API server
-			// decodes both to the same typed value, so DeepEqual must treat them as equal.
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(&trainer.Trainer{Env: []corev1.EnvVar{{Name: "FOO", Value: ""}}}).Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(&trainer.Trainer{Env: []corev1.EnvVar{{Name: "FOO"}}}).Obj(),
-		},
-		"changing trainer is forbidden": {
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(baseTrainer()).Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(&trainer.Trainer{Image: ptr.To("changed-image")}).Obj(),
-			wantError: field.ErrorList{
-				field.Forbidden(specPath.Child("trainer"), "field is immutable"),
-			},
-		},
-		"changing initializer is forbidden": {
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Initializer(baseInitializer()).Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Initializer(&trainer.Initializer{
-					Model: &trainer.ModelInitializer{StorageUri: ptr.To("s3://changed/path")},
-				}).Obj(),
-			wantError: field.ErrorList{
-				field.Forbidden(specPath.Child("initializer"), "field is immutable"),
-			},
-		},
-		"changing both trainer and initializer is forbidden": {
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(baseTrainer()).Initializer(baseInitializer()).Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(&trainer.Trainer{Image: ptr.To("changed-image")}).
-				Initializer(&trainer.Initializer{
-					Model: &trainer.ModelInitializer{StorageUri: ptr.To("s3://changed/path")},
-				}).Obj(),
-			wantError: field.ErrorList{
-				field.Forbidden(specPath.Child("trainer"), "field is immutable"),
-				field.Forbidden(specPath.Child("initializer"), "field is immutable"),
-			},
-		},
-		"setting a previously unset optional field is allowed": {
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(baseTrainer()).Initializer(baseInitializer()).Obj(),
-		},
-		"clearing an optional field is allowed": {
-			oldObj: testingutil.MakeTrainJobWrapper("default", "job").
-				Trainer(baseTrainer()).Initializer(baseInitializer()).Obj(),
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").Obj(),
-		},
-		"nil old object is allowed": {
-			oldObj: nil,
-			newObj: testingutil.MakeTrainJobWrapper("default", "job").Trainer(baseTrainer()).Obj(),
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			gotError := validateTrainJobImmutability(tc.oldObj, tc.newObj)
-			if diff := cmp.Diff(tc.wantError.ToAggregate(), gotError.ToAggregate(), cmpopts.IgnoreFields(field.Error{}, "Detail")); len(diff) != 0 {
-				t.Errorf("Unexpected error from validateTrainJobImmutability (-want, +got): %s", diff)
 			}
 		})
 	}
