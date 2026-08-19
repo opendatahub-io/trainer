@@ -110,7 +110,7 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 
 	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(ctrNames).To(HaveLen(12), "Expected 12 ClusterTrainingRuntimes")
+	g.Expect(ctrNames).To(HaveLen(14), "Expected 14 ClusterTrainingRuntimes")
 
 	// Phase 2: Delete CR (platform removes module)
 	err = k8sClient.DeleteTrainer(ctx)

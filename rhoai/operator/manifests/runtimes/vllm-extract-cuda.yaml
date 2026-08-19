@@ -1,0 +1,74 @@
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: ClusterTrainingRuntime
+metadata:
+  name: vllm-extract-cuda
+  labels:
+    trainer.kubeflow.org/framework: torch
+spec:
+  mlPolicy:
+    numNodes: 1
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              template:
+                spec:
+                  initContainers:
+                    - name: vllm-sidecar
+                      image: quay.io/opendatahub/vllm:latest
+                      command:
+                        - sh
+                        - -c
+                      args:
+                        - |
+                          TP=${SPECULATOR_VLLM_GPU_COUNT:-1}
+                          TF=""
+                          [ "$TP" -gt 1 ] && TF="--tensor-parallel-size $TP"
+                          python3 -m vllm.entrypoints.cli.main serve \
+                            "$SPECULATOR_VERIFIER_MODEL" \
+                            --speculative-config '{"method":"extract_hidden_states",
+                              "num_speculative_tokens":1,
+                              "draft_model_config":{"hf_config":{
+                                "eagle_aux_hidden_state_layer_ids":['"$SPECULATOR_TARGET_LAYER_IDS"']}}}' \
+                            --kv-transfer-config '{"kv_connector":"ExampleHiddenStatesConnector",
+                              "kv_role":"kv_producer",
+                              "kv_connector_extra_config":{
+                                "shared_storage_path":"'"$SPECULATOR_HS_PATH"'"}}' \
+                            --port 8234 \
+                            --gpu-memory-utilization ${SPECULATOR_GPU_MEM_UTIL:-0.9} \
+                            --no-enable-chunked-prefill \
+                            --trust-remote-code $TF
+                      env:
+                        - name: SPECULATOR_VERIFIER_MODEL
+                          value: /data/model
+                        - name: SPECULATOR_HS_PATH
+                          value: /data/hidden_states
+                        - name: SPECULATOR_GPU_MEM_UTIL
+                          value: "0.9"
+                        - name: SPECULATOR_VLLM_GPU_COUNT
+                          value: "1"
+                        - name: SPECULATOR_TARGET_LAYER_IDS
+                          value: ""
+                        - name: HF_TOKEN
+                          value: ""
+                        - name: HF_HUB_OFFLINE
+                          value: "0"
+                        - name: HF_HOME
+                          value: /tmp/hf_cache
+                      resources:
+                        limits:
+                          nvidia.com/gpu: "1"
+                      restartPolicy: Always
+                  containers:
+                    - name: node
+                      image: quay.io/opendatahub/speculator:latest
+                      env:
+                        - name: HF_HUB_OFFLINE
+                          value: "0"
+                        - name: HF_HOME
+                          value: /tmp/hf_cache
