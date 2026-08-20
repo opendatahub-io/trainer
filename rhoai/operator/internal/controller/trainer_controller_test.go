@@ -459,6 +459,60 @@ func TestReconcileDeleteAndRecreate(t *testing.T) {
 	g.Expect(updated.Status.Phase).To(Equal(string(common.PhaseReady)))
 }
 
+func TestReconcileDegradedWhenDependencyMissing(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	deleteJobSetCRDAndWait(ctx)
+
+	degradedNS := "degraded-test-ns"
+	trainer := &componentsv1alpha1.Trainer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testTrainerName,
+		},
+		Spec: componentsv1alpha1.TrainerSpec{
+			AppNamespace: degradedNS,
+		},
+	}
+	g.Expect(k8sClient.Create(ctx, trainer)).To(Succeed())
+	t.Cleanup(func() {
+		cleanupTrainer(ctx)
+		cleanupNamespace(ctx, degradedNS)
+	})
+
+	r := newTestReconciler(t)
+
+	_, err := r.Reconcile(ctx, testRequest())
+	g.Expect(err).To(MatchError(ContainSubstring("dependency not met")))
+
+	updated := getTrainer(ctx, g)
+	degradedCond := findCondition(updated, common.ConditionTypeDegraded)
+	g.Expect(degradedCond).NotTo(BeNil(), "Degraded condition should be set when JobSet CRD is missing")
+	g.Expect(degradedCond.Status).To(Equal(metav1.ConditionTrue))
+	g.Expect(degradedCond.Reason).To(Equal("JobSetCRDNotFound"))
+	g.Expect(updated.Status.Phase).NotTo(Equal(string(common.PhaseReady)))
+
+	readyCond := findCondition(updated, common.ConditionTypeReady)
+	g.Expect(readyCond).NotTo(BeNil())
+	g.Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+
+	createJobSetCRD(ctx, t, g)
+
+	_, err = r.Reconcile(ctx, testRequest())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updated = getTrainer(ctx, g)
+	degradedCond = findCondition(updated, common.ConditionTypeDegraded)
+	g.Expect(degradedCond).NotTo(BeNil())
+	g.Expect(degradedCond.Status).To(Equal(metav1.ConditionFalse))
+	g.Expect(degradedCond.Reason).To(Equal("DependenciesAvailable"))
+	g.Expect(updated.Status.Phase).To(Equal(string(common.PhaseReady)))
+
+	readyCond = findCondition(updated, common.ConditionTypeReady)
+	g.Expect(readyCond).NotTo(BeNil(), "Ready condition should be set after recovery")
+	g.Expect(readyCond.Status).To(Equal(metav1.ConditionTrue))
+}
+
 func TestEnsureNamespaceAlreadyExists(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
