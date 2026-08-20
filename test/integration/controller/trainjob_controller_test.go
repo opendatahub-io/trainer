@@ -315,7 +315,7 @@ var _ = ginkgo.Describe("TrainJob controller", ginkgo.Ordered, func() {
 				gomega.Eventually(func(g gomega.Gomega) {
 					g.Expect(k8sClient.Get(ctx, trainJobKey, trainJob)).Should(gomega.Succeed())
 					trainJob.Spec.Trainer.Image = ptr.To("new-image")
-					g.Expect(k8sClient.Update(ctx, trainJob)).Should(testingutil.BeInvalidError())
+					g.Expect(k8sClient.Update(ctx, trainJob)).Should(testingutil.BeForbiddenError())
 				}, util.Timeout, util.Interval).Should(gomega.Succeed())
 			})
 			ginkgo.It("Should propagate terminationGracePeriodSeconds from RuntimePatches to JobSet pods", func() {
