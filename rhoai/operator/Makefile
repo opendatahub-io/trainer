@@ -214,7 +214,8 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	$(KUSTOMIZE) build config/default | sed 's|image: controller:latest|image: ${IMG}|g' > dist/install.yaml
+	@printf -- '---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: trainer-operator-system\n---\n' > dist/install.yaml
+	$(KUSTOMIZE) build config/default | sed 's|image: controller:latest|image: ${IMG}|g' >> dist/install.yaml
 
 ##@ Deployment
 
@@ -232,6 +233,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	$(KUBECTL) create namespace trainer-operator-system --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@tmp="$$(mktemp -d)"; [ -n "$$tmp" ] || { echo "mktemp failed"; exit 1; }; trap 'rm -rf "$$tmp"' EXIT; \
 		cp -r config "$$tmp/config"; \
 		cd "$$tmp" && sed -i 's|TRAINER_OPERATOR_IMAGE=.*|TRAINER_OPERATOR_IMAGE=$(IMG)|' config/default/params.env && \
