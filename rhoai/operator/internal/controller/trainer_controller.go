@@ -192,7 +192,7 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 			reconciler.WithPredicates(predicates.DefaultDeploymentPredicate)).
 		Watches(&corev1.Service{}).
 		Watches(&corev1.ConfigMap{}).
-		Watches(&corev1.ConfigMap{},
+		WatchesGVK(corev1.SchemeGroupVersion.WithKind("ConfigMap"),
 			reconciler.WithEventHandler(handlers.ToNamed(TrainerInstanceName)),
 			reconciler.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				return obj.GetName() == platformConfigMapName
