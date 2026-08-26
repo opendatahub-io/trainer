@@ -111,9 +111,6 @@ func main() {
 				&corev1.Service{}: {
 					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
 				},
-				&corev1.ConfigMap{}: {
-					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
-				},
 				&admissionv1.ValidatingWebhookConfiguration{}: {
 					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
 				},
