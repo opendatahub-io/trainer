@@ -347,14 +347,13 @@ func TestPlatformVersionHandshake(t *testing.T) {
 		g.Expect(rel.Name).NotTo(Equal(platformReleaseName), "platform release should not exist without ConfigMap")
 	}
 
-	// Create the platform config ConfigMap
+	// Create the platform config ConfigMap without the trainer label,
+	// matching the production scenario where the platform operator
+	// creates this ConfigMap without component-specific labels.
 	platformCM := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      platformConfigMapName,
 			Namespace: handshakeNS,
-			Labels: map[string]string{
-				labels.PlatformPartOf: trainerPartOf,
-			},
 		},
 		Data: map[string]string{
 			platformVersionKey: platformVersion,

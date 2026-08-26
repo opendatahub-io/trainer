@@ -37,6 +37,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
@@ -191,6 +192,11 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 			reconciler.WithPredicates(predicates.DefaultDeploymentPredicate)).
 		Watches(&corev1.Service{}).
 		Watches(&corev1.ConfigMap{}).
+		Watches(&corev1.ConfigMap{},
+			reconciler.WithEventHandler(handlers.ToNamed(TrainerInstanceName)),
+			reconciler.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetName() == platformConfigMapName
+			}))).
 		Watches(&admissionv1.ValidatingWebhookConfiguration{}).
 		WatchesGVK(jobSetOperatorGVK,
 			reconciler.WithEventHandler(handlers.ToNamed(TrainerInstanceName)),

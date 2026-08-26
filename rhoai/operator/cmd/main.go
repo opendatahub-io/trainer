@@ -112,7 +112,11 @@ func main() {
 					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
 				},
 				&corev1.ConfigMap{}: {
-					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
+					// No label selector: the cache must include both managed
+					// ConfigMaps (labeled part-of=trainer) and the platform
+					// config ConfigMap (odh-trainer-config) which has no
+					// trainer label. Namespace scoping via DefaultNamespaces
+					// limits the blast radius.
 				},
 				&admissionv1.ValidatingWebhookConfiguration{}: {
 					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
