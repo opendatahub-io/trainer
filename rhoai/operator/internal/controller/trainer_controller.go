@@ -241,10 +241,8 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 	// platform ConfigMap does not carry the trainer label because it is
 	// owned by the platform operator.
 	if cfg.PlatformConfigCache != nil {
-		u := &unstructured.Unstructured{}
-		u.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 		if watchErr := r.Controller.Watch(
-			source.Kind[client.Object](cfg.PlatformConfigCache, u,
+			source.Kind[client.Object](cfg.PlatformConfigCache, &corev1.ConfigMap{},
 				handlers.ToNamed(TrainerInstanceName),
 				predicate.NewPredicateFuncs(func(obj client.Object) bool {
 					return obj.GetName() == platformConfigMapName
