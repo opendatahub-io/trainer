@@ -29,7 +29,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -89,21 +88,18 @@ func main() {
 		setupLog.Info("scoping cache to applications namespace", "namespace", appNS)
 	}
 
-	restConfig := ctrl.GetConfigOrDie()
-
-	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress:   metricsAddr,
 			SecureServing: false,
 		},
 		HealthProbeBindAddress: probeAddr,
-		// Cache hardening: without label selectors, informer caches store
-		// every object of each watched type — even those unrelated to this
-		// operator. A user with edit permissions can create enough large
-		// objects to OOMKill the operator. Label selectors ensure only
-		// trainer-managed resources are cached.
-		// See: https://developers.redhat.com/articles/2026/06/01/protect-your-kubernetes-operator-oomkill
+		// Cache hardening: label selectors ensure only trainer-managed
+		// resources are cached. ConfigMaps are excluded from the label
+		// filter because the platform config ConfigMap (odh-trainer-config)
+		// is created by the platform operator without the trainer label;
+		// namespace scoping via DefaultNamespaces bounds the cached set.
 		Cache: cache.Options{
 			DefaultTransform:  platformcache.StripUnusedFields(),
 			DefaultNamespaces: cacheNamespaces,
@@ -112,9 +108,6 @@ func main() {
 					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
 				},
 				&corev1.Service{}: {
-					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
-				},
-				&corev1.ConfigMap{}: {
 					Label: labels.SelectorFromSet(labels.Set{platformlabels.PlatformPartOf: trainerPartOf}),
 				},
 				&admissionv1.ValidatingWebhookConfiguration{}: {
@@ -134,33 +127,6 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	// Platform config cache: the main cache filters ConfigMaps by the
-	// trainer part-of label, but the platform config ConfigMap
-	// (odh-trainer-config) is created by the platform operator and does
-	// not carry that label. A separate, narrow cache scoped to that one
-	// ConfigMap name lets changes trigger a reconcile without broadening
-	// the main cache's label filter.
-	platformConfigCache, err := cache.New(restConfig, cache.Options{
-		Scheme:            scheme,
-		DefaultNamespaces: cacheNamespaces,
-		DefaultTransform:  platformcache.StripUnusedFields(),
-		ByObject: map[client.Object]cache.ByObject{
-			&corev1.ConfigMap{}: {
-				Field: fields.SelectorFromSet(fields.Set{
-					"metadata.name": "odh-trainer-config",
-				}),
-			},
-		},
-	})
-	if err != nil {
-		setupLog.Error(err, "unable to create platform config cache")
-		os.Exit(1)
-	}
-	if err := mgr.Add(platformConfigCache); err != nil {
-		setupLog.Error(err, "unable to add platform config cache to manager")
 		os.Exit(1)
 	}
 
@@ -200,11 +166,10 @@ func main() {
 	ctx := ctrl.SetupSignalHandler()
 
 	if _, err := controller.NewReconciler(ctx, mgr, &controller.ReconcilerConfig{
-		ManifestsPath:       manifestsPath,
-		RuntimesPath:        runtimesPath,
-		ImageStreamsPath:    imageStreamsPath,
-		WorkDir:             workDir,
-		PlatformConfigCache: platformConfigCache,
+		ManifestsPath:    manifestsPath,
+		RuntimesPath:     runtimesPath,
+		ImageStreamsPath: imageStreamsPath,
+		WorkDir:          workDir,
 	}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Trainer")
 		os.Exit(1)

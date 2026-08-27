@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -118,14 +117,6 @@ type ReconcilerConfig struct {
 	RuntimesPath     string
 	ImageStreamsPath string
 	WorkDir          string
-
-	// PlatformConfigCache is a dedicated cache for the platform config
-	// ConfigMap (odh-trainer-config). The main manager cache filters
-	// ConfigMaps by the trainer part-of label, which excludes the
-	// platform ConfigMap. This separate cache, scoped to just that
-	// ConfigMap name, lets the controller receive watch events for
-	// platform version changes without broadening the main cache.
-	PlatformConfigCache cache.Cache
 }
 
 type trainerActions struct {
@@ -236,21 +227,19 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 		return nil, err
 	}
 
-	// Watch the platform config ConfigMap via a dedicated cache that is
-	// not restricted by the main cache's part-of label filter. The
+	// Watch the platform config ConfigMap for version changes. The
 	// platform ConfigMap does not carry the trainer label because it is
-	// owned by the platform operator.
-	if cfg.PlatformConfigCache != nil {
-		if watchErr := r.Controller.Watch(
-			source.Kind[client.Object](cfg.PlatformConfigCache, &corev1.ConfigMap{},
-				handlers.ToNamed(TrainerInstanceName),
-				predicate.NewPredicateFuncs(func(obj client.Object) bool {
-					return obj.GetName() == platformConfigMapName
-				}),
-			),
-		); watchErr != nil {
-			return nil, fmt.Errorf("watching platform config: %w", watchErr)
-		}
+	// owned by the platform operator; ConfigMaps are excluded from the
+	// main cache's label filter so this ConfigMap is visible.
+	if watchErr := r.Controller.Watch(
+		source.Kind[client.Object](mgr.GetCache(), &corev1.ConfigMap{},
+			handlers.ToNamed(TrainerInstanceName),
+			predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetName() == platformConfigMapName
+			}),
+		),
+	); watchErr != nil {
+		return nil, fmt.Errorf("watching platform config: %w", watchErr)
 	}
 
 	rel, readErr := readBootstrapRelease(cfg.ManifestsPath)
