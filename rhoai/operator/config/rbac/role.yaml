@@ -285,6 +285,7 @@ rules:
   - rbac.authorization.k8s.io
   resourceNames:
   - kubeflow-trainer-cache-initializer
+  - kubeflow-trainer-public
   resources:
   - rolebindings
   verbs:
