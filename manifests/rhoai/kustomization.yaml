@@ -42,6 +42,7 @@ resources:
 - ../base/webhook
 # - ../third-party/jobset #uncomment if jobset should be bundled under kubeflow trainer controller manager
 - kubeflow-training-roles.yaml
+- rbac/tls
 - monitor.yaml
 
 secretGenerator:
