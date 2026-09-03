@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
       pull-requests: write
     concurrency:
       group: sync-upstream-${{ github.repository }}-${{ inputs.upstream_branch }}
@@ -44,7 +43,7 @@ jobs:
 
           if ! gh api "repos/${GITHUB_REPOSITORY}" --silent 2>/tmp/pat_check_err; then
             echo "::error::REPO_WORKFLOW_PAT appears to be invalid, expired, or missing repo access. $(cat /tmp/pat_check_err)"
-            echo "::error::To fix: generate a new fine-grained PAT (Settings > Developer settings > Personal access tokens > Fine-grained tokens) scoped to this repo only, with Contents (Read and write) and Pull requests (Read and write) permissions. Then update the REPO_WORKFLOW_PAT secret at Settings > Secrets and variables > Actions for this repo (requires repo admin access), e.g. 'gh secret set REPO_WORKFLOW_PAT --repo ${GITHUB_REPOSITORY}'."
+            echo "::error::To fix: generate a new fine-grained PAT (Settings > Developer settings > Personal access tokens > Fine-grained tokens) scoped to this repo only, with Contents (Read and write), Pull requests (Read and write) and Workflows (Read and write) permissions. Then update the REPO_WORKFLOW_PAT secret at Settings > Secrets and variables > Actions for this repo (requires repo admin access), e.g. 'gh secret set REPO_WORKFLOW_PAT --repo ${GITHUB_REPOSITORY}'."
             exit 1
           fi
 
@@ -53,8 +52,7 @@ jobs:
         with:
           ref: ${{ env.DOWNSTREAM_BRANCH }}
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ secrets.REPO_WORKFLOW_PAT }}
+          persist-credentials: false
 
       - name: Set up Git
         run: |
@@ -117,8 +115,13 @@ jobs:
 
       - name: Push sync branch
         if: steps.diffcheck.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.REPO_WORKFLOW_PAT }}
         run: |
-          git push origin "${HEAD_BRANCH}" --force-with-lease
+          # inject the PAT only for committing - needed for PR actions (e2e tests) run
+          header=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
+          git -c http.https://github.com/.extraheader="Authorization: basic ${header}" \
+            push origin "${HEAD_BRANCH}" --force-with-lease
 
       - name: Create or update PR
         if: steps.diffcheck.outputs.has_changes == 'true'
