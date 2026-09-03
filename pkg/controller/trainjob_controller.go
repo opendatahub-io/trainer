@@ -75,7 +75,6 @@ func NewTrainJobReconciler(
 	}
 }
 
-// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;watch;update;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;watch;update;patch
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs,verbs=get;list;watch;update;patch
