@@ -1,0 +1,202 @@
+name: Merge Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * 6'
+  workflow_dispatch:
+    inputs:
+      downstream_branch:
+        description: Downstream branch to update (destination)
+        required: true
+        default: main
+      upstream_branch:
+        description: Upstream branch to sync from (source)
+        required: true
+        default: master
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: sync-upstream-${{ github.repository }}-${{ inputs.upstream_branch }}
+      cancel-in-progress: false
+    env:
+      DOWNSTREAM_BRANCH: ${{ inputs.downstream_branch || 'main' }}
+      UPSTREAM_BRANCH: ${{ inputs.upstream_branch || 'master' }}
+      HEAD_BRANCH: sync/upstream-${{ inputs.upstream_branch || 'master' }}
+      LABEL: automated-merge
+
+    steps:
+      - name: Verify REPO_WORKFLOW_PAT is valid
+        env:
+          GH_TOKEN: ${{ secrets.REPO_WORKFLOW_PAT }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::REPO_WORKFLOW_PAT secret is not set."
+            exit 1
+          fi
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}" --silent 2>/tmp/pat_check_err; then
+            echo "::error::REPO_WORKFLOW_PAT appears to be invalid, expired, or missing repo access. $(cat /tmp/pat_check_err)"
+            echo "::error::To fix: generate a new fine-grained PAT (Settings > Developer settings > Personal access tokens > Fine-grained tokens) scoped to this repo only, with Contents (Read and write) and Pull requests (Read and write) permissions. Then update the REPO_WORKFLOW_PAT secret at Settings > Secrets and variables > Actions for this repo (requires repo admin access), e.g. 'gh secret set REPO_WORKFLOW_PAT --repo ${GITHUB_REPOSITORY}'."
+            exit 1
+          fi
+
+      - name: Checkout downstream repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.DOWNSTREAM_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.REPO_WORKFLOW_PAT }}
+
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream https://github.com/kubeflow/trainer || git remote set-url upstream https://github.com/kubeflow/trainer
+          git fetch upstream "${UPSTREAM_BRANCH}"
+          git fetch origin "${DOWNSTREAM_BRANCH}"
+
+      - name: Create sync branch from downstream
+        run: |
+          # Start from downstream - preserves midstream commits on top
+          git checkout -B "${HEAD_BRANCH}" "origin/${DOWNSTREAM_BRANCH}"
+
+      - name: Merge upstream
+        id: merge_step
+        run: |
+          set -euo pipefail
+
+          if git merge --no-commit --no-ff "upstream/${UPSTREAM_BRANCH}"; then
+            if git diff --cached --quiet && git diff --quiet; then
+              echo "No changes to commit (already up to date)"
+              git merge --abort || true
+            else
+              git commit -m "Merge upstream/${UPSTREAM_BRANCH}"
+            fi
+            echo "has_conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Conflicts detected:"
+            git diff --name-only --diff-filter=U
+
+            # Commit with conflict markers in place for manual resolution
+            git add -A
+            git commit -m "Merge upstream/${UPSTREAM_BRANCH} (HAS CONFLICTS - manual resolution needed)"
+            echo "has_conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for real changes
+        id: diffcheck
+        env:
+          HAS_CONFLICT: ${{ steps.merge_step.outputs.has_conflict }}
+        run: |
+          # If there's a conflict, always create PR
+          if [ "${HAS_CONFLICT}" = "true" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "PR needed for conflict resolution"
+            exit 0
+          fi
+
+          if git diff --quiet "origin/${DOWNSTREAM_BRANCH}...${HEAD_BRANCH}"; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No changes"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected"
+          fi
+
+      - name: Push sync branch
+        if: steps.diffcheck.outputs.has_changes == 'true'
+        run: |
+          git push origin "${HEAD_BRANCH}" --force-with-lease
+
+      - name: Create or update PR
+        if: steps.diffcheck.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_CONFLICT: ${{ steps.merge_step.outputs.has_conflict }}
+        run: |
+          if [ "${HAS_CONFLICT}" = "true" ]; then
+            TITLE="⚠️ chore: Merge upstream/${UPSTREAM_BRANCH} (HAS CONFLICTS)"
+            BODY="## ⚠️ DO NOT EDIT OR MERGE THIS PR ⚠️
+
+          This PR is automatically generated and force-pushed on every scheduled run. **Any commits you push here to resolve conflicts will be silently discarded** the next time this workflow runs.
+
+          **What to do instead:**
+          1. Open a **new, separate PR** from your own branch that merges \`upstream/${UPSTREAM_BRANCH}\` into \`${DOWNSTREAM_BRANCH}\` and resolves the conflicts there.
+          2. Get that PR reviewed and merged normally.
+          3. Once merged, this automated PR will pick up the change on its next run and (if there are no more conflicts) go green automatically. Close this PR if it no longer detects a conflict, or leave it — it will keep updating itself.
+
+          Do **not** attempt to fix conflicts directly on this branch (\`${HEAD_BRANCH}\`).
+
+          ---
+
+          Upstream merge has conflicts that need manual resolution."
+          else
+            TITLE="chore: Merge upstream/${UPSTREAM_BRANCH} into ${DOWNSTREAM_BRANCH}"
+            BODY="Successfully merged upstream changes. Ensure CI passes before merging."
+          fi
+
+          PR_NUMBER=$(gh pr list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --head "${HEAD_BRANCH}" \
+            --base "${DOWNSTREAM_BRANCH}" \
+            --state open \
+            --label "${LABEL}" \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "$PR_NUMBER" ]; then
+            echo "Updating PR #${PR_NUMBER}"
+            gh pr edit "$PR_NUMBER" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "$TITLE" \
+              --body "$BODY"
+          else
+            echo "Creating PR"
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base "${DOWNSTREAM_BRANCH}" \
+              --head "${HEAD_BRANCH}" \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label "${LABEL}"
+
+            PR_NUMBER=$(gh pr list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --head "${HEAD_BRANCH}" \
+              --base "${DOWNSTREAM_BRANCH}" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty')
+          fi
+
+          if [ -z "$PR_NUMBER" ]; then
+            exit 0
+          fi
+
+          if [ "${HAS_CONFLICT}" = "true" ]; then
+            # Conflict markers alone don't stop GitHub from reporting the PR as
+            # mergeable, so force it to draft and fail this job. A required
+            # status check on this workflow then blocks merging until a human
+            # resolves the conflicts and marks the PR ready for review.
+            echo "Converting PR #${PR_NUMBER} to draft due to unresolved conflicts"
+            gh pr ready "$PR_NUMBER" --repo "${GITHUB_REPOSITORY}" --undo
+            echo "::error::Upstream merge has unresolved conflicts — PR #${PR_NUMBER} set to draft and requires manual resolution"
+            exit 1
+          else
+            # A prior run may have drafted this PR for conflicts that are now
+            # resolved (via a separate manual PR). Bring it back out of draft
+            # so it can go green and be merged normally.
+            gh pr ready "$PR_NUMBER" --repo "${GITHUB_REPOSITORY}" || true
+          fi
