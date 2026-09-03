@@ -1,0 +1,3 @@
+# go-tls-bypass: probeChecker dials localhost to verify the status server
+# accepts TLS, matching controller-runtime's webhook server probe pattern.
+go-tls-bypass:pkg/statusserver/setup.go
