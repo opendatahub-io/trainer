@@ -106,12 +106,12 @@ type TrainJobSpec struct {
 	RuntimeRef RuntimeRef `json:"runtimeRef,omitzero"`
 
 	// initializer defines the configuration of the initializer.
-	// The field is immutable.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	Initializer *Initializer `json:"initializer,omitempty"`
 
 	// trainer defines the configuration of the trainer.
-	// The field is immutable.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	Trainer *Trainer `json:"trainer,omitempty"`
 
@@ -390,6 +390,7 @@ type PodTemplatePatch struct {
 type PodSpecPatch struct {
 	// serviceAccountName patches the service account for the Pods in the target job templates.
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	ServiceAccountName *string `json:"serviceAccountName,omitempty"`
 
@@ -397,6 +398,7 @@ type PodSpecPatch struct {
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=128
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	Volumes []corev1.Volume `json:"volumes,omitempty"`
 
@@ -404,6 +406,7 @@ type PodSpecPatch struct {
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	InitContainers []ContainerPatch `json:"initContainers,omitempty"`
 
@@ -411,6 +414,7 @@ type PodSpecPatch struct {
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	Containers []ContainerPatch `json:"containers,omitempty"`
 
@@ -418,11 +422,13 @@ type PodSpecPatch struct {
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
 	// securityContext patches the Pod's security context.
 	// More info: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="field is immutable"
 	// +optional
 	SecurityContext *corev1.PodSecurityContext `json:"securityContext,omitempty"`
 
@@ -451,6 +457,7 @@ type PodSpecPatch struct {
 	// terminationGracePeriodSeconds patches the termination grace period for Pods
 	// in the target job templates.
 	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="field is immutable"
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 }
