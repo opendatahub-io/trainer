@@ -1,0 +1,10 @@
+# Semgrep TLS rule suppressions (rule-id:file-path)
+# Each entry scopes a suppression to a specific rule+file pair.
+# Managed by security-config; changes require security review.
+
+# pkg/statusserver/setup.go: probeChecker() dials localhost to verify the
+# status-server TLS listener is alive — identical to the controller-runtime
+# webhook probe pattern. InsecureSkipVerify is required because the probe
+# dials ":<port>" with no SNI, so there is no server name to validate against.
+# Ref: https://github.com/kubernetes-sigs/controller-runtime/blob/v0.24.1/pkg/webhook/server.go#L274-L276
+go-tls-bypass:pkg/statusserver/setup.go
