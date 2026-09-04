@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -55,6 +56,9 @@ type TrainJobReconciler struct {
 	apiReader client.Reader
 	recorder  events.EventRecorder
 	runtimes  map[string]jobruntimes.Runtime
+	// clock is the time source for the activeDeadlineSeconds arithmetic. Tests
+	// substitute a fake clock so the requeue delay can be asserted exactly.
+	clock clock.PassiveClock
 }
 
 var _ reconcile.Reconciler = (*TrainJobReconciler)(nil)
@@ -72,6 +76,7 @@ func NewTrainJobReconciler(
 		apiReader: apiReader,
 		recorder:  recorder,
 		runtimes:  runtimes,
+		clock:     clock.RealClock{},
 	}
 }
 
@@ -99,10 +104,6 @@ func (r *TrainJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	var err error
 	// Keep track of the origin TrainJob status
 	prevTrainJob := trainJob.DeepCopy()
-
-	// Let's clear the failed condition that could have been set previously.
-	// An external change to the TrainJob spec may transition it out of the Failed state.
-	removeFailedCondition(&trainJob)
 
 	runtimeRefGK := jobruntimes.RuntimeRefToRuntimeRegistryKey(trainJob.Spec.RuntimeRef)
 	runtime, ok := r.runtimes[runtimeRefGK]
@@ -179,7 +180,7 @@ func (r *TrainJobReconciler) reconcileDeadline(ctx context.Context, trainJob *tr
 		return ctrl.Result{}
 	}
 	deadline := startTime.Add(time.Duration(trainJob.Spec.ActiveDeadlineSeconds) * time.Second)
-	now := time.Now()
+	now := r.clock.Now()
 	if now.After(deadline) {
 		ctrl.LoggerFrom(ctx).V(2).Info("TrainJob deadline exceeded, marking as failed",
 			"activeDeadlineSeconds", trainJob.Spec.ActiveDeadlineSeconds,
@@ -194,7 +195,7 @@ func (r *TrainJobReconciler) reconcileDeadline(ctx context.Context, trainJob *tr
 		}
 		return ctrl.Result{}
 	}
-	requeueAfter := time.Until(deadline)
+	requeueAfter := deadline.Sub(now)
 	if requeueAfter <= 0 {
 		requeueAfter = 1 * time.Second
 	}
@@ -255,14 +256,6 @@ func setFailedCondition(trainJob *trainer.TrainJob, message, reason string) {
 		Reason:  reason,
 	}
 	meta.SetStatusCondition(&trainJob.Status.Conditions, newCond)
-}
-
-func removeFailedCondition(trainJob *trainer.TrainJob) {
-	cond := meta.FindStatusCondition(trainJob.Status.Conditions, trainer.TrainJobFailed)
-	if cond != nil && cond.Reason == trainer.TrainJobDeadlineExceededReason {
-		return
-	}
-	meta.RemoveStatusCondition(&trainJob.Status.Conditions, trainer.TrainJobFailed)
 }
 
 func setTrainJobStatus(ctx context.Context, runtime jobruntimes.Runtime, trainJob *trainer.TrainJob) error {

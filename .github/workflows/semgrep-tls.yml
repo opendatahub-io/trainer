@@ -24,12 +24,18 @@ jobs:
         run: |
           SUPPRESS_FILE=".github/semgrep-tls-excludes"
           BASE="$BASE_REF"
-          git fetch --depth=1 origin "$BASE" 2>/dev/null || true
-          if git show "origin/$BASE:$SUPPRESS_FILE" > "$SUPPRESS_FILE" 2>/dev/null; then
+          git config --global --add safe.directory "$PWD"
+          echo "::group::git fetch origin/$BASE"
+          git fetch --depth=1 origin "refs/heads/$BASE:refs/remotes/origin/$BASE" 2>&1 \
+            && echo "fetch ok" \
+            || echo "::warning::git fetch origin/$BASE failed"
+          echo "::endgroup::"
+          if git show "origin/$BASE:$SUPPRESS_FILE" 2>/dev/null > "$SUPPRESS_FILE"; then
             echo "Loaded suppression file from origin/$BASE"
+          elif [ -f "$SUPPRESS_FILE" ]; then
+            echo "::warning::Using suppression file from PR branch (base branch fetch failed)"
           else
-            rm -f "$SUPPRESS_FILE"
-            echo "No suppression file on base branch"
+            echo "::notice::No suppression file on base branch — scanning without suppressions"
           fi
 
       - name: Fetch argus-observe-rules
@@ -48,11 +54,15 @@ jobs:
           SUPPRESS_FILE=".github/semgrep-tls-excludes"
           RULES_DIR="/tmp/argus-observe-rules"
 
-          [ -f "$SUPPRESS_FILE" ] || exit 0
+          if [ ! -f "$SUPPRESS_FILE" ]; then
+            echo "::notice::No suppression file present — skipping rule patching"
+            exit 0
+          fi
+          echo "Suppression file entries:"
+          grep -v '^#' "$SUPPRESS_FILE" | grep -v '^$' || echo "  (none)"
 
           while IFS= read -r line; do
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+            case "$line" in ''|'#'*) continue ;; esac
             RULE_ID="${line%%:*}"
             FILE_PATH="${line#*:}"
             [ -z "$RULE_ID" ] || [ -z "$FILE_PATH" ] || [ "$RULE_ID" = "$FILE_PATH" ] && continue
@@ -89,7 +99,10 @@ jobs:
           rule_end = rule_start + 1 + next_rule.start() if next_rule else len(text)
           rule_block = text[rule_start:rule_end]
 
-          exclude_entry = f'        - "{file_path}"\n'
+          # Prefix with **/ so the exclude pattern is unanchored across all
+          # semgrep versions (v1.168+ treats bare relative paths as anchored).
+          safe_path = file_path if file_path.startswith('**/') else f'**/{file_path}'
+          exclude_entry = f'        - "{safe_path}"\n'
 
           if 'paths:' in rule_block and 'exclude:' in rule_block:
               # Append to existing exclude list
@@ -118,7 +131,7 @@ jobs:
 
           text = text[:rule_start] + new_block + text[rule_end:]
           open(rule_file, 'w').write(text)
-          print(f"Patched {rule_file}: excluded {file_path} from {rule_id}")
+          print(f"Patched {rule_file}: excluded {safe_path} from {rule_id}")
           PY
 
           done < "$SUPPRESS_FILE"
