@@ -170,7 +170,8 @@ type trainerActions struct {
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=trainer.kubeflow.org,resources=trainjobs/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=image.openshift.io,resources=imagestreams,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers;clusterversions,verbs=get
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get
 // +kubebuilder:rbac:groups=operators.coreos.com,resources=operatorconditions,verbs=list
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=jobsetoperators,verbs=get;list;watch
 

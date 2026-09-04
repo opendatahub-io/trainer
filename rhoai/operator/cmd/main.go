@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"os"
@@ -25,6 +26,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	configv1 "github.com/openshift/api/config/v1"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -38,7 +40,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	platformcache "github.com/opendatahub-io/odh-platform-utilities/pkg/cache"
@@ -46,6 +47,7 @@ import (
 
 	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
 	"github.com/opendatahub-io/trainer-operator/internal/controller"
+	operatortls "github.com/opendatahub-io/trainer-operator/internal/tls"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,14 +64,21 @@ func init() {
 
 	utilruntime.Must(componentsv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(trainerv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(configv1.Install(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
 func main() {
 	var metricsAddr string
+	var metricsCertPath string
 	var probeAddr string
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to. "+
-		"Use :8080 for HTTP or leave as 0 to disable the metrics service.")
+	var secureMetrics bool
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443",
+		"The address the metrics endpoint binds to. Use :8443 for HTTPS or :8080 for HTTP.")
+	flag.BoolVar(&secureMetrics, "metrics-secure", true,
+		"Serve metrics via HTTPS with authn/authz. Use --metrics-secure=false for HTTP.")
+	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
+		"Directory containing the metrics server TLS cert and key.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	opts := zap.Options{
 		Development: true,
@@ -78,6 +87,18 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	restCfg := ctrl.GetConfigOrDie()
+	bootstrapClient, err := client.New(restCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create bootstrap client")
+		os.Exit(1)
+	}
+	tlsResult, err := operatortls.Resolve(context.Background(), bootstrapClient, setupLog)
+	if err != nil {
+		setupLog.Error(err, "unable to resolve cluster TLS profile")
+		os.Exit(1)
+	}
 
 	// Scope the cache to the applications namespace to avoid watching
 	// resources cluster-wide. Injected by the ODH platform operator.
@@ -88,12 +109,10 @@ func main() {
 		setupLog.Info("scoping cache to applications namespace", "namespace", appNS)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme: scheme,
-		Metrics: metricsserver.Options{
-			BindAddress:   metricsAddr,
-			SecureServing: false,
-		},
+	metricsOpts := operatortls.MetricsServerOptions(metricsAddr, secureMetrics, metricsCertPath, tlsResult.TLSOpts)
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metricsOpts,
 		HealthProbeBindAddress: probeAddr,
 		// Cache hardening: label selectors ensure only trainer-managed
 		// resources are cached. ConfigMaps are excluded from the label
@@ -163,7 +182,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := ctrl.SetupSignalHandler()
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	defer cancel()
 
 	if _, err := controller.NewReconciler(ctx, mgr, &controller.ReconcilerConfig{
 		ManifestsPath:    manifestsPath,
@@ -182,6 +202,11 @@ func main() {
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
+	if err := operatortls.SetupWatcher(mgr, tlsResult, cancel, setupLog); err != nil {
+		setupLog.Error(err, "unable to set up TLS profile watcher")
 		os.Exit(1)
 	}
 

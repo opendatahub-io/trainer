@@ -18,8 +18,14 @@ package e2e
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"os/exec"
 	"testing"
@@ -44,7 +50,14 @@ var (
 	ctx       = context.Background()
 )
 
-const namespace = "trainer-operator-system"
+const (
+	namespace             = "trainer-operator-system"
+	metricsServiceName    = "trainer-operator-controller-manager-metrics-service"
+	metricsReaderRoleName = "trainer-operator-metrics-reader"
+	metricsBindingName    = "trainer-operator-metrics-binding"
+	metricsTLSSecretName  = "trainer-operator-metrics-tls"
+	metricsPort           = 8443
+)
 
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "Starting odh-trainer-operator integration test suite")
@@ -96,6 +109,10 @@ func TestMain(m *testing.M) {
 	}
 	if _, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil {
 		log.Fatalf("Failed to create namespace: %v", err)
+	}
+
+	if err := createMetricsTLSSecret(); err != nil {
+		log.Fatalf("Failed to create metrics TLS secret: %v", err)
 	}
 
 	cmd = exec.Command("make", "install")
@@ -178,4 +195,61 @@ func installJobSetCRD() error {
 	}
 
 	return nil
+}
+
+func createMetricsTLSSecret() error {
+	crt, key, err := generateSelfSignedCert()
+	if err != nil {
+		return fmt.Errorf("generating metrics serving cert: %w", err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      metricsTLSSecretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"tls.crt": crt,
+			"tls.key": key,
+		},
+	}
+	if _, err := k8sClient.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating metrics TLS secret: %w", err)
+	}
+	return nil
+}
+
+func generateSelfSignedCert() (crt, key []byte, err error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating key: %w", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		DNSNames:              metricsServiceDNSNames(),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating certificate: %w", err)
+	}
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshalling key: %w", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}),
+		nil
+}
+
+func metricsServiceDNSNames() []string {
+	return []string{
+		metricsServiceName + "." + namespace + ".svc",
+		metricsServiceName + "." + namespace + ".svc.cluster.local",
+	}
 }
