@@ -2,7 +2,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - metrics-auth-clusterrole.yaml
-  - metrics-auth-clusterrolebinding.yaml
-  - metrics-reader-clusterrole.yaml
-  - metrics-reader-clusterrolebinding.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml

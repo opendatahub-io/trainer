@@ -1,6 +1,6 @@
-# Prometheus Service Monitor (Metrics)
+# Prometheus Pod Monitor (Metrics)
 apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+kind: PodMonitor
 metadata:
   name: kubeflow-trainer-controller-manager-metrics-monitor
 spec:
@@ -8,13 +8,8 @@ spec:
     matchLabels:
       app.kubernetes.io/name: trainer
       app.kubernetes.io/component: controller
-  endpoints:
-    - port: monitoring-port
+  podMetricsEndpoints:
+    - port: metrics
       scheme: https
-      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
-        serverName: kubeflow-trainer-controller-manager.NAMESPACE.svc
-        ca:
-          secret:
-            name: kubeflow-trainer-webhook-cert
-            key: ca.crt
+        insecureSkipVerify: true
