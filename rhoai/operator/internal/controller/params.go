@@ -36,9 +36,9 @@ var trainerImageParamMap = map[string]string{
 }
 
 var imageStreamParamMap = map[string]string{
-	"odh-training-universal-workbench-image-cuda-3-5": "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE",
-	"odh-training-universal-workbench-image-rocm-3-5": "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE",
-	"odh-training-universal-workbench-image-cpu-3-5":  "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE",
+	"odh-training-universal-workbench-image-cuda-3-6": "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE",
+	"odh-training-universal-workbench-image-rocm-3-6": "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE",
+	"odh-training-universal-workbench-image-cpu-3-6":  "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE",
 }
 
 var runtimesParamMap = map[string]string{
