@@ -43,6 +43,21 @@ replacements:
     fieldPaths:
     - spec.tags.1.from.name
 
+# training-hub-universal-cpu tag 3.6
+- source:
+    kind: ConfigMap
+    name: imagestream-config
+    version: v1
+    fieldPath: data.odh-training-universal-workbench-image-cpu-3-6
+  targets:
+  - select:
+      group: image.openshift.io
+      kind: ImageStream
+      name: training-hub-universal-cpu
+      version: v1
+    fieldPaths:
+    - spec.tags.2.from.name
+
 # training-hub-universal-cuda tag 3.4
 - source:
     kind: ConfigMap
@@ -73,6 +88,21 @@ replacements:
     fieldPaths:
     - spec.tags.1.from.name
 
+# training-hub-universal-cuda tag 3.6
+- source:
+    kind: ConfigMap
+    name: imagestream-config
+    version: v1
+    fieldPath: data.odh-training-universal-workbench-image-cuda-3-6
+  targets:
+  - select:
+      group: image.openshift.io
+      kind: ImageStream
+      name: training-hub-universal-cuda
+      version: v1
+    fieldPaths:
+    - spec.tags.2.from.name
+
 # training-hub-universal-rocm tag 3.4
 - source:
     kind: ConfigMap
@@ -102,6 +132,21 @@ replacements:
       version: v1
     fieldPaths:
     - spec.tags.1.from.name
+
+# training-hub-universal-rocm tag 3.6
+- source:
+    kind: ConfigMap
+    name: imagestream-config
+    version: v1
+    fieldPath: data.odh-training-universal-workbench-image-rocm-3-6
+  targets:
+  - select:
+      group: image.openshift.io
+      kind: ImageStream
+      name: training-hub-universal-rocm
+      version: v1
+    fieldPaths:
+    - spec.tags.2.from.name
 
 resources:
 - training-hub-universal-cpu-imagestream.yaml

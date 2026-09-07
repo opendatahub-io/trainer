@@ -34,9 +34,9 @@ func TestResolveImageStreamParamsUsesDefaults(t *testing.T) {
 	params, err := readParams(filepath.Join(dir, "params.env"))
 	g.Expect(err).NotTo(HaveOccurred())
 
-	g.Expect(params["odh-training-universal-workbench-image-cuda-3-5"]).To(Equal("quay.io/test/cuda:3.5"))
-	g.Expect(params["odh-training-universal-workbench-image-rocm-3-5"]).To(Equal("quay.io/test/rocm:3.5"))
-	g.Expect(params["odh-training-universal-workbench-image-cpu-3-5"]).To(Equal("quay.io/test/cpu:3.5"))
+	g.Expect(params["odh-training-universal-workbench-image-cuda-3-6"]).To(Equal("quay.io/test/cuda:3.6"))
+	g.Expect(params["odh-training-universal-workbench-image-rocm-3-6"]).To(Equal("quay.io/test/rocm:3.6"))
+	g.Expect(params["odh-training-universal-workbench-image-cpu-3-6"]).To(Equal("quay.io/test/cpu:3.6"))
 }
 
 func TestResolveImageStreamParamsEnvVarOverride(t *testing.T) {
@@ -52,9 +52,9 @@ func TestResolveImageStreamParamsEnvVarOverride(t *testing.T) {
 	params, err := readParams(filepath.Join(dir, "params.env"))
 	g.Expect(err).NotTo(HaveOccurred())
 
-	g.Expect(params["odh-training-universal-workbench-image-cuda-3-5"]).To(Equal("quay.io/custom/cuda:override"))
-	g.Expect(params["odh-training-universal-workbench-image-rocm-3-5"]).To(Equal("quay.io/test/rocm:3.5"))
-	g.Expect(params["odh-training-universal-workbench-image-cpu-3-5"]).To(Equal("quay.io/custom/cpu:override"))
+	g.Expect(params["odh-training-universal-workbench-image-cuda-3-6"]).To(Equal("quay.io/custom/cuda:override"))
+	g.Expect(params["odh-training-universal-workbench-image-rocm-3-6"]).To(Equal("quay.io/test/rocm:3.6"))
+	g.Expect(params["odh-training-universal-workbench-image-cpu-3-6"]).To(Equal("quay.io/custom/cpu:override"))
 }
 
 func TestResolveImageStreamParamsMissingFile(t *testing.T) {
@@ -70,9 +70,9 @@ func createTestImageStreamManifests(t *testing.T) string {
 
 	dir := t.TempDir()
 
-	paramsEnv := `odh-training-universal-workbench-image-cuda-3-5=quay.io/test/cuda:3.5
-odh-training-universal-workbench-image-rocm-3-5=quay.io/test/rocm:3.5
-odh-training-universal-workbench-image-cpu-3-5=quay.io/test/cpu:3.5
+	paramsEnv := `odh-training-universal-workbench-image-cuda-3-6=quay.io/test/cuda:3.6
+odh-training-universal-workbench-image-rocm-3-6=quay.io/test/rocm:3.6
+odh-training-universal-workbench-image-cpu-3-6=quay.io/test/cpu:3.6
 `
 	err := os.WriteFile(filepath.Join(dir, "params.env"), []byte(paramsEnv), 0o644)
 	if err != nil {

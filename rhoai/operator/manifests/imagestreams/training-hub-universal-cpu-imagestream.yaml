@@ -40,7 +40,7 @@ spec:
         type: Source
     - name: "3.5"
       annotations:
-        opendatahub.io/workbench-image-recommended: 'true'
+        opendatahub.io/workbench-image-recommended: 'false'
         opendatahub.io/notebook-build-commit: a66ec72
         opendatahub.io/notebook-software: |
           [
@@ -60,5 +60,29 @@ spec:
       from:
         kind: DockerImage
         name: quay.io/opendatahub/odh-th06-cpu-torch210-py312:odh-3.5-ea1
+      referencePolicy:
+        type: Source
+    - name: "3.6"
+      annotations:
+        opendatahub.io/workbench-image-recommended: 'true'
+        opendatahub.io/notebook-build-commit: 2eb4e11
+        opendatahub.io/notebook-software: |
+          [
+            {"name": "Python", "version": "v3.12"},
+            {"name": "PyTorch", "version": "2.11.0"},
+            {"name": "Training Hub", "version": "v0.9.8"}
+          ]
+        opendatahub.io/notebook-python-dependencies: |
+          [
+            {"name": "transformers", "version": "5.15.0"},
+            {"name": "accelerate", "version": "1.14.0"},
+            {"name": "peft", "version": "0.20.0"},
+            {"name": "trl", "version": "1.10.0"},
+            {"name": "triton", "version": "3.6.0"}
+          ]
+        openshift.io/imported-from: quay.io/opendatahub/odh-th-torch-cpu-py312
+      from:
+        kind: DockerImage
+        name: quay.io/opendatahub/odh-th-torch-cpu-py312:odh-3.6-ea.1
       referencePolicy:
         type: Source
