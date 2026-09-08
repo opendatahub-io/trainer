@@ -237,6 +237,8 @@ sigs.k8s.io/scheduler-plugins v0.34.1-devel h1:tT0/rFgjM7+VVDTKkcjA/XxhpYgRyq+RV
 sigs.k8s.io/scheduler-plugins v0.34.1-devel/go.mod h1:YQJimEVm3dpz9va/BlzgsK1HQ3KGIehABDz+D5PPP50=
 sigs.k8s.io/structured-merge-diff/v6 v6.3.0 h1:jTijUJbW353oVOd9oTlifJqOGEkUw2jB/fXCbTiQEco=
 sigs.k8s.io/structured-merge-diff/v6 v6.3.0/go.mod h1:M3W8sfWvn2HhQDIbGWj3S099YozAsymCo/wrT5ohRUE=
+sigs.k8s.io/structured-merge-diff/v7 v7.0.0 h1:LnKTE1vO6tDITDMVOJ5oCsWauLIAPJnV9egetSfUCpI=
+sigs.k8s.io/structured-merge-diff/v7 v7.0.0/go.mod h1:xKoMSgtnJnkfRR+CTNSQ1dBVhkKJR5OQl5RxX/OqHbI=
 sigs.k8s.io/yaml v1.6.0 h1:G8fkbMSAFqgEFgh4b1wmtzDnioxFCUgTZhlbj5P9QYs=
 sigs.k8s.io/yaml v1.6.0/go.mod h1:796bPqUfzR/0jLAl6XjHl3Ck7MiyVv8dbTdyT3/pMf4=
 volcano.sh/apis v1.13.1-0.20251028070205-46d20c0699e7 h1:uRQSF3S3+nsi1IcE0brZBwzqzh6Ne8Gz3SHyBcCENRA=
