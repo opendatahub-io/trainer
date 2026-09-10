@@ -266,9 +266,8 @@ spec:
                         - message: field is immutable
                           rule: self == oldSelf
                       initializer:
-                        description: |-
-                          initializer defines the configuration of the initializer.
-                          The field is immutable.
+                        description: initializer defines the configuration of the
+                          initializer.
                         properties:
                           dataset:
                             description: dataset defines the configuration for the
@@ -632,6 +631,9 @@ spec:
                                   rule: self == '' || self.matches('^[A-Za-z][A-Za-z0-9+.-]*://.+$')
                             type: object
                         type: object
+                        x-kubernetes-validations:
+                        - message: field is immutable
+                          rule: self == oldSelf
                       managedBy:
                         default: trainer.kubeflow.org/trainjob-controller
                         description: |-
@@ -2556,6 +2558,10 @@ spec:
                                                                 x-kubernetes-list-map-keys:
                                                                 - name
                                                                 x-kubernetes-list-type: map
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                               imagePullSecrets:
                                                                 description: imagePullSecrets
                                                                   patches the image
@@ -2581,6 +2587,10 @@ spec:
                                                                 x-kubernetes-list-map-keys:
                                                                 - name
                                                                 x-kubernetes-list-type: map
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                               initContainers:
                                                                 description: initContainers
                                                                   patches the init
@@ -3224,6 +3234,10 @@ spec:
                                                                 x-kubernetes-list-map-keys:
                                                                 - name
                                                                 x-kubernetes-list-type: map
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                               nodeSelector:
                                                                 additionalProperties:
                                                                   type: string
@@ -3472,6 +3486,10 @@ spec:
                                                                         type: string
                                                                     type: object
                                                                 type: object
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                               serviceAccountName:
                                                                 description: serviceAccountName
                                                                   patches the service
@@ -3480,6 +3498,10 @@ spec:
                                                                   job templates.
                                                                 maxLength: 253
                                                                 type: string
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                               terminationGracePeriodSeconds:
                                                                 description: |-
                                                                   terminationGracePeriodSeconds patches the termination grace period for Pods
@@ -3487,6 +3509,10 @@ spec:
                                                                 format: int64
                                                                 minimum: 0
                                                                 type: integer
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                               tolerations:
                                                                 description: tolerations
                                                                   patches the Pod's
@@ -5894,6 +5920,10 @@ spec:
                                                                 x-kubernetes-list-map-keys:
                                                                 - name
                                                                 x-kubernetes-list-type: map
+                                                                x-kubernetes-validations:
+                                                                - message: field is
+                                                                    immutable
+                                                                  rule: self == oldSelf
                                                             type: object
                                                         type: object
                                                     type: object
@@ -5951,9 +5981,7 @@ spec:
                           TrainJob.
                         type: boolean
                       trainer:
-                        description: |-
-                          trainer defines the configuration of the trainer.
-                          The field is immutable.
+                        description: trainer defines the configuration of the trainer.
                         properties:
                           args:
                             description: args for the entrypoint for the training
@@ -6191,6 +6219,9 @@ spec:
                                 type: object
                             type: object
                         type: object
+                        x-kubernetes-validations:
+                        - message: field is immutable
+                          rule: self == oldSelf
                     required:
                     - runtimeRef
                     type: object
