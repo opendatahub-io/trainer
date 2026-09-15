@@ -26,8 +26,10 @@ type TrainJobSpecApplyConfiguration struct {
 	// runtimeRef is the reference to the training runtime.
 	RuntimeRef *RuntimeRefApplyConfiguration `json:"runtimeRef,omitempty"`
 	// initializer defines the configuration of the initializer.
+	// The field is immutable.
 	Initializer *InitializerApplyConfiguration `json:"initializer,omitempty"`
 	// trainer defines the configuration of the trainer.
+	// The field is immutable.
 	Trainer *TrainerApplyConfiguration `json:"trainer,omitempty"`
 	// runtimePatches defines custom patches applied to the TrainJob's Runtime.
 	// Patches are keyed by manager to provide clear ownership and avoid conflicts between controllers.
