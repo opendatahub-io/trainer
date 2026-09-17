@@ -20,59 +20,116 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	trainerconstants "github.com/kubeflow/trainer/v2/pkg/constants"
 	"github.com/kubeflow/trainer/v2/pkg/rhai/constants"
 	"github.com/kubeflow/trainer/v2/pkg/rhai/progression"
 	testingutil "github.com/kubeflow/trainer/v2/pkg/util/testing"
+
+	_ "embed"
 )
 
 const (
-	timeout  = 5 * time.Minute
-	interval = 2 * time.Second
+	timeout                  = 5 * time.Minute
+	interval                 = 2 * time.Second
+	trainingImageEnvironment = "RHAI_E2E_TRAINING_IMAGE"
+	defaultTrainingImage     = "quay.io/opendatahub/odh-th-torch-cpu-py312:odh-stable"
 )
 
-// loadRuntimeFromFile loads TrainingRuntime from YAML file and sets namespace
-// If uniqueName is provided, it will be used as the runtime name, otherwise uses the name from the file
-func loadRuntimeFromFile(filePath, namespace, uniqueName string) (*trainer.TrainingRuntime, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
+//go:embed testdata/progression.py
+var progressionScript string
 
-	runtime := &trainer.TrainingRuntime{}
-	if err := yaml.Unmarshal(data, runtime); err != nil {
-		return nil, err
-	}
+//go:embed testdata/failing.py
+var failingScript string
 
-	runtime.Namespace = namespace
-	if uniqueName != "" {
-		runtime.Name = uniqueName
+//go:embed testdata/no_metrics.py
+var noMetricsScript string
+
+func trainingImage() string {
+	if image := os.Getenv(trainingImageEnvironment); image != "" {
+		return image
 	}
-	return runtime, nil
+	return defaultTrainingImage
+}
+
+func makeTrainingRuntime(name, namespace string) *trainer.TrainingRuntime {
+	return &trainer.TrainingRuntime{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: trainer.SchemeGroupVersion.String(),
+			Kind:       trainer.TrainingRuntimeKind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: trainer.TrainingRuntimeSpec{
+			MLPolicy: &trainer.MLPolicy{
+				NumNodes: ptr.To(int32(1)),
+				MLPolicySource: trainer.MLPolicySource{
+					Torch: &trainer.TorchMLPolicySource{},
+				},
+			},
+			Template: trainer.JobSetTemplateSpec{
+				Spec: jobsetv1alpha2.JobSetSpec{
+					ReplicatedJobs: []jobsetv1alpha2.ReplicatedJob{{
+						Name: trainerconstants.Node,
+						Template: batchv1.JobTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{
+								Labels: map[string]string{
+									trainerconstants.LabelTrainJobAncestor: trainerconstants.AncestorTrainer,
+								},
+							},
+							Spec: batchv1.JobSpec{
+								BackoffLimit: ptr.To(int32(0)),
+								Template: corev1.PodTemplateSpec{
+									Spec: corev1.PodSpec{
+										Containers: []corev1.Container{{
+											Name:  trainerconstants.Node,
+											Image: trainingImage(),
+										}},
+										RestartPolicy: corev1.RestartPolicyNever,
+									},
+								},
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+}
+
+func withTrainingCommand(t *trainer.Trainer, script string) *trainer.Trainer {
+	t.Command = []string{"python", "-c", script}
+	return t
+}
+
+func withMetricsPort(t *trainer.Trainer, port string) *trainer.Trainer {
+	t.Env = append(t.Env, corev1.EnvVar{
+		Name:  "RHAI_E2E_METRICS_PORT",
+		Value: port,
+	})
+	return t
 }
 
 var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 	var runtime *trainer.TrainingRuntime
 
 	ginkgo.BeforeEach(func() {
-		// Load and create TrainingRuntime from resources in shared namespace
-		// Use unique name to avoid conflicts when tests run serially in same namespace
-		runtimeFile := filepath.Join("resources", "wrapper-test-runtime.yaml")
 		uniqueName := fmt.Sprintf("wrapper-test-runtime-%d", time.Now().UnixNano())
-		var err error
-		runtime, err = loadRuntimeFromFile(runtimeFile, testNs.Name, uniqueName)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		runtime = makeTrainingRuntime(uniqueName, testNs.Name)
 		gomega.Expect(k8sClient.Create(ctx, runtime)).To(gomega.Succeed())
 
 		// Wait for runtime to be created
@@ -96,7 +153,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // minimum poll interval: 5s
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -109,7 +166,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("8Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob with progression tracking enabled")
@@ -217,7 +274,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 		ginkgo.It("should NOT create trainerStatus annotation", func() {
 			trainJob := testingutil.MakeTrainJobWrapper(testNs.Name, "progression-disabled").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -226,7 +283,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob without progression tracking annotation")
@@ -252,7 +309,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.TrainingRuntimeKind), runtime.Name).
 				Annotation(constants.AnnotationProgressionTracking, "enabled"). // Invalid: must be "true"
 				Annotation(constants.AnnotationMetricsPort, "28080").
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -261,7 +318,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob with invalid annotation value")
@@ -288,7 +345,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "8080").        // Custom port
 				Annotation(constants.AnnotationMetricsPollInterval, "15s"). // Custom interval (valid range: 5-300s)
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withMetricsPort(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -297,7 +354,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript), "8080")).
 				Obj()
 
 			ginkgo.By("Creating TrainJob with custom metrics configuration")
@@ -309,6 +366,20 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 
 			gomega.Expect(progression.GetMetricsPort(gotTrainJob)).Should(gomega.Equal("8080"))
 			gomega.Expect(progression.GetMetricsPollInterval(gotTrainJob)).Should(gomega.Equal(15 * time.Second))
+
+			ginkgo.By("Verifying metrics are polled on the custom port")
+			gomega.Eventually(func(g gomega.Gomega) {
+				gotTrainJob := &trainer.TrainJob{}
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(trainJob), gotTrainJob)).Should(gomega.Succeed())
+
+				statusJSON, exists := gotTrainJob.Annotations[constants.AnnotationTrainerStatus]
+				g.Expect(exists).Should(gomega.BeTrue(), "trainerStatus annotation should exist")
+
+				var status progression.AnnotationStatus
+				g.Expect(json.Unmarshal([]byte(statusJSON), &status)).Should(gomega.Succeed())
+				g.Expect(status.CurrentStep).ShouldNot(gomega.BeNil(), "currentStep should be set")
+				g.Expect(status.LastUpdatedTime).ShouldNot(gomega.BeEmpty(), "LastUpdatedTime should be set")
+			}, timeout, interval).Should(gomega.Succeed())
 		})
 
 		ginkgo.It("should handle minimum SDK-recommended poll interval (5s)", func() {
@@ -317,7 +388,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Annotation(constants.AnnotationMetricsPollInterval, "5s"). // SDK minimum
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -326,7 +397,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob with minimum poll interval")
@@ -344,7 +415,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Annotation(constants.AnnotationMetricsPollInterval, "300s"). // SDK maximum (5 minutes)
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -353,7 +424,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob with maximum poll interval")
@@ -371,7 +442,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				// No poll interval annotation - should use default (30s)
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -380,7 +451,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), progressionScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob without poll interval annotation")
@@ -397,12 +468,8 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 		var failingRuntime *trainer.TrainingRuntime
 
 		ginkgo.BeforeEach(func() {
-			// Load and create failing TrainingRuntime with unique name
-			runtimeFile := filepath.Join("resources", "failing-test-runtime.yaml")
 			uniqueName := fmt.Sprintf("failing-test-runtime-%d", time.Now().UnixNano())
-			var err error
-			failingRuntime, err = loadRuntimeFromFile(runtimeFile, testNs.Name, uniqueName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			failingRuntime = makeTrainingRuntime(uniqueName, testNs.Name)
 			gomega.Expect(k8sClient.Create(ctx, failingRuntime)).To(gomega.Succeed())
 
 			gomega.Eventually(func(g gomega.Gomega) {
@@ -423,7 +490,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Annotation(constants.AnnotationMetricsPollInterval, "2s").
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -432,7 +499,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), failingScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob that will fail mid-training")
@@ -481,12 +548,8 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 		var noMetricsRuntime *trainer.TrainingRuntime
 
 		ginkgo.BeforeEach(func() {
-			// Load and create runtime without metrics endpoint with unique name
-			runtimeFile := filepath.Join("resources", "no-metrics-runtime.yaml")
 			uniqueName := fmt.Sprintf("no-metrics-runtime-%d", time.Now().UnixNano())
-			var err error
-			noMetricsRuntime, err = loadRuntimeFromFile(runtimeFile, testNs.Name, uniqueName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			noMetricsRuntime = makeTrainingRuntime(uniqueName, testNs.Name)
 			gomega.Expect(k8sClient.Create(ctx, noMetricsRuntime)).To(gomega.Succeed())
 
 			gomega.Eventually(func(g gomega.Gomega) {
@@ -507,7 +570,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 				Annotation(constants.AnnotationProgressionTracking, "true").
 				Annotation(constants.AnnotationMetricsPort, "28080").
 				Annotation(constants.AnnotationMetricsPollInterval, "2s").
-				Trainer(testingutil.MakeTrainJobTrainerWrapper().
+				Trainer(withTrainingCommand(testingutil.MakeTrainJobTrainerWrapper().
 					NumNodes(1).
 					NumProcPerNode(1).
 					ResourcesPerNode(corev1.ResourceRequirements{
@@ -516,7 +579,7 @@ var _ = ginkgo.Describe("RHAI Progression Tracking E2E Tests", func() {
 							corev1.ResourceMemory: resource.MustParse("4Gi"),
 						},
 					}).
-					Obj()).
+					Obj(), noMetricsScript)).
 				Obj()
 
 			ginkgo.By("Creating TrainJob without metrics endpoint")
