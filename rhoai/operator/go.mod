@@ -1,15 +1,15 @@
 module github.com/opendatahub-io/trainer-operator
 
-go 1.25.7
+go 1.25.12
 
 require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/go-logr/logr v1.4.3
 	github.com/kubeflow/trainer/v2 v2.2.0
 	github.com/onsi/gomega v1.39.1
-	github.com/opendatahub-io/odh-platform-utilities v0.3.0
+	github.com/opendatahub-io/odh-platform-utilities v0.4.0
 	github.com/opendatahub-io/odh-platform-utilities/framework v0.0.0-20260805122551-b8da1945829a
-	github.com/openshift/api v0.0.0-20260317165824-54a3998d81eb
+	github.com/openshift/api v0.0.0-20260610192510-1b2a074e0bd6
 	github.com/openshift/controller-runtime-common v0.0.0-20260625090647-2664adee3442
 	github.com/operator-framework/api v0.42.0
 	gopkg.in/yaml.v3 v3.0.1

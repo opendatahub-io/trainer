@@ -173,6 +173,7 @@ type trainerActions struct {
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get
 // +kubebuilder:rbac:groups=operators.coreos.com,resources=operatorconditions,verbs=list
+// +kubebuilder:rbac:groups=olm.operatorframework.io,resources=clusterextensions,verbs=list
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=jobsetoperators,verbs=get;list;watch
 
 // NewReconciler creates a framework-based reconciler for the Trainer CR.

@@ -297,6 +297,17 @@ func TestCheckJobSetOperatorInstalledWhenNoOperatorFound(t *testing.T) {
 	g.Expect(installed).To(BeFalse())
 }
 
+func TestCheckJobSetOperatorInstalledViaClusterExtension(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	ext := newInstalledClusterExtension("jobset-ext", jobSetOperatorName, "v1.0.0")
+	c := fake.NewClientBuilder().WithObjects(ext).Build()
+
+	installed := checkJobSetOperatorInstalled(ctx, c)
+	g.Expect(installed).To(BeTrue())
+}
+
 func TestGetJobSetOperatorNotInstalledMessage(t *testing.T) {
 	g := NewWithT(t)
 
@@ -405,6 +416,36 @@ func TestIsJobSetOperatorConditionDegraded(t *testing.T) {
 			g.Expect(isJobSetOperatorConditionDegraded(tt.condType, tt.condStatus)).To(Equal(tt.want))
 		})
 	}
+}
+
+func newInstalledClusterExtension(name, packageName, version string) *unstructured.Unstructured {
+	ext := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "olm.operatorframework.io/v1",
+			"kind":       "ClusterExtension",
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"sourceType": "Catalog",
+					"catalog":    map[string]interface{}{"packageName": packageName},
+				},
+			},
+			"metadata": map[string]interface{}{"name": name},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":   "Installed",
+						"status": statusTrue,
+						"reason": "Succeeded",
+					},
+				},
+				"install": map[string]interface{}{
+					"bundle": map[string]interface{}{"version": version},
+				},
+			},
+		},
+	}
+
+	return ext
 }
 
 func newJobSetOperatorCR(conditions []map[string]interface{}) *unstructured.Unstructured {
