@@ -80,6 +80,9 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 			// Create a TrainJob.
 			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-torch").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), torchRuntime).
+				Trainer(&trainer.Trainer{
+					Command: []string{"python", "-c", "print(\"Trainer E2E\")"},
+				}).
 				Obj()
 
 			ginkgo.By("Create a TrainJob with torch-distributed runtime reference", func() {
@@ -135,6 +138,9 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 	ginkgo.When("Creating TrainJob to perform OpenMPI workload", func() {
 		// Verify the `deepspeed-distributed` ClusterTrainingRuntime.
 		ginkgo.It("should create TrainJob with DeepSpeed runtime reference", func() {
+			// TODO: Remove this skip once an OpenShift-compatible MPI runtime image is available.
+			ginkgo.Skip("MPI runtime image is not available")
+
 			// Create a multi-node MPI TrainJob.
 			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-deepspeed").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), deepSpeedRuntime).
