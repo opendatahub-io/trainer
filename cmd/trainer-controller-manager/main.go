@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 
+	configv1 "github.com/openshift/api/config/v1"
 	zaplog "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
@@ -31,6 +32,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlpkg "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -65,6 +67,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(configv1.AddToScheme(scheme))
 	utilruntime.Must(configapi.AddToScheme(scheme))
 	utilruntime.Must(trainer.AddToScheme(scheme))
 	utilruntime.Must(jobsetv1alpha2.AddToScheme(scheme))
@@ -116,9 +119,16 @@ func main() {
 
 	restCfg := ctrl.GetConfigOrDie()
 	config.ApplyClientConnection(restCfg, &cfg)
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	defer cancel()
+	bootstrapClient, err := client.New(restCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "Unable to create TLS bootstrap client")
+		os.Exit(1)
+	}
 
 	// Apply OpenShift cluster TLSSecurityProfile to metrics and webhook servers.
-	tlsResult, tlsErr := pkgtls.Resolve(context.Background(), restCfg)
+	tlsResult, tlsErr := pkgtls.Resolve(ctx, bootstrapClient, setupLog)
 	if tlsErr != nil {
 		setupLog.Error(tlsErr, "Unable to resolve cluster TLS profile")
 		os.Exit(1)
@@ -142,6 +152,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := pkgtls.SetupWatcher(mgr, tlsResult, cancel, setupLog); err != nil {
+		setupLog.Error(err, "Unable to set up TLS profile watcher")
+		os.Exit(1)
+	}
+
 	certsReady := make(chan struct{})
 	if config.IsCertManagementEnabled(&cfg) {
 		setupLog.Info("Setting up certificate management")
@@ -158,8 +173,6 @@ func main() {
 		setupLog.Info("Certificate management is disabled, certificates must be provided externally")
 		close(certsReady)
 	}
-
-	ctx := ctrl.SetupSignalHandler()
 
 	setupProbeEndpoints(mgr, certsReady, options)
 	runtimes, err := runtimecore.New(ctx, mgr.GetClient(), mgr.GetFieldIndexer(), &cfg)
@@ -201,7 +214,7 @@ func setupManagerComponents(mgr ctrl.Manager, runtimes map[string]runtime.Runtim
 		os.Exit(1)
 	}
 
-	if err := metrics.SetupServer(mgr, &cfg.Metrics, cfg.TLS); err != nil {
+	if err := metrics.SetupServer(mgr, &cfg.Metrics, cfg.TLS, clusterTLSOpts...); err != nil {
 		setupLog.Error(err, "Could not create metrics server")
 		os.Exit(1)
 	}

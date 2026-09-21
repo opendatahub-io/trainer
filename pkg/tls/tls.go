@@ -19,201 +19,132 @@ package tls
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
+	configv1 "github.com/openshift/api/config/v1"
+	tlspkg "github.com/openshift/controller-runtime-common/pkg/tls"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
-	ctrl "sigs.k8s.io/controller-runtime"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-var log = ctrl.Log.WithName("tls")
+const bootstrapTimeout = 10 * time.Second
 
-var openSSLToGoCipher = map[string]uint16{
-	"TLS_AES_128_GCM_SHA256":               tls.TLS_AES_128_GCM_SHA256,
-	"TLS_AES_256_GCM_SHA384":               tls.TLS_AES_256_GCM_SHA384,
-	"TLS_CHACHA20_POLY1305_SHA256":         tls.TLS_CHACHA20_POLY1305_SHA256,
-	"ECDHE-ECDSA-AES128-GCM-SHA256":        tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-	"ECDHE-RSA-AES128-GCM-SHA256":          tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-	"ECDHE-ECDSA-AES256-GCM-SHA384":        tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-	"ECDHE-RSA-AES256-GCM-SHA384":          tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-	"ECDHE-ECDSA-CHACHA20-POLY1305-SHA256": tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-	"ECDHE-RSA-CHACHA20-POLY1305-SHA256":   tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-	"ECDHE-ECDSA-CHACHA20-POLY1305":        tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-	"ECDHE-RSA-CHACHA20-POLY1305":          tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-}
-
-var intermediateCiphers = []uint16{
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-}
-
-var tlsVersionMap = map[string]uint16{
-	"VersionTLS10": tls.VersionTLS10,
-	"VersionTLS11": tls.VersionTLS11,
-	"VersionTLS12": tls.VersionTLS12,
-	"VersionTLS13": tls.VersionTLS13,
-}
-
-var apiServerGVR = schema.GroupVersionResource{
-	Group:    "config.openshift.io",
-	Version:  "v1",
-	Resource: "apiservers",
-}
-
-type tlsSecurityProfile struct {
-	Type   string `json:"type"`
-	Custom *struct {
-		Ciphers       []string `json:"ciphers"`
-		MinTLSVersion string   `json:"minTLSVersion"`
-	} `json:"custom,omitempty"`
-}
-
-// Result holds the resolved TLS configuration.
+// Result holds the resolved TLS configuration from the cluster profile.
 type Result struct {
-	TLSOpts []func(*tls.Config)
+	Profile          configv1.TLSProfileSpec
+	ProfileFetched   bool
+	Adherence        configv1.TLSAdherencePolicy
+	AdherenceFetched bool
+	TLSOpts          []func(*tls.Config)
 }
 
-// Resolve reads the cluster TLS profile from the APIServer resource using
-// dynamic client (no openshift/api dependency) and returns TLS option
-// functions for controller-runtime servers.
-// On clusters where the API is not available or temporarily unavailable,
-// it returns hardened Intermediate defaults.
-func Resolve(ctx context.Context, cfg *rest.Config) (Result, error) {
-	var result Result
-
-	resolveCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+// Resolve fetches the cluster TLS profile and adherence policy, returning TLS
+// options for controller-runtime servers. The shared TLS implementation owns
+// profile, cipher, and group conversion.
+func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (*Result, error) {
+	bootstrapCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 	defer cancel()
 
-	dynClient, err := dynamic.NewForConfig(cfg)
+	result := &Result{}
+	profile, err := tlspkg.FetchAPIServerTLSProfile(bootstrapCtx, k8sClient)
 	if err != nil {
-		return result, fmt.Errorf("creating dynamic client for TLS profile: %w", err)
+		if fallbackErr := handleProfileFetchError(err, result, logger); fallbackErr != nil {
+			return nil, fallbackErr
+		}
+		profile = *configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	} else {
+		result.ProfileFetched = true
 	}
+	result.Profile = profile
 
-	obj, err := dynClient.Resource(apiServerGVR).Get(resolveCtx, "cluster", metav1.GetOptions{})
+	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(profile)
+	if len(unsupported) > 0 {
+		logger.Info("TLS profile contains unsupported ciphers", "unsupported", unsupported)
+	}
+	result.TLSOpts = append(result.TLSOpts, tlsConfigFn, tlspkg.SetNextProtos(tlspkg.HTTP2NextProtos...))
+
+	if err := fetchAdherence(bootstrapCtx, k8sClient, result, logger); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func handleProfileFetchError(err error, result *Result, logger logr.Logger) error {
+	switch {
+	case apimeta.IsNoMatchError(err):
+		logger.Info("TLS profile not available (non-OpenShift cluster)")
+	case apierrors.IsNotFound(err):
+		logger.Info("APIServer resource not found, using Intermediate defaults")
+	case apierrors.IsServiceUnavailable(err),
+		apierrors.IsTimeout(err),
+		apierrors.IsServerTimeout(err),
+		apierrors.IsTooManyRequests(err),
+		errors.Is(err, context.DeadlineExceeded):
+		logger.Info("Transient API error, using Intermediate defaults", "error", err)
+		result.ProfileFetched = true
+	default:
+		return fmt.Errorf("reading APIServer TLS profile: %w", err)
+	}
+	return nil
+}
+
+func fetchAdherence(ctx context.Context, k8sClient client.Client, result *Result, logger logr.Logger) error {
+	adherence, err := tlspkg.FetchAPIServerTLSAdherencePolicy(ctx, k8sClient)
 	if err != nil {
 		switch {
-		case meta.IsNoMatchError(err):
-			log.Info("TLS profile API not available, using hardened defaults")
+		case apimeta.IsNoMatchError(err):
+			logger.Info("TLS adherence API not available (non-OpenShift or pre-4.22 cluster)")
 		case apierrors.IsNotFound(err):
-			log.Info("APIServer resource not found, using hardened defaults")
+			logger.Info("APIServer resource not found for adherence, skipping")
 		case apierrors.IsServiceUnavailable(err),
 			apierrors.IsTimeout(err),
 			apierrors.IsServerTimeout(err),
 			apierrors.IsTooManyRequests(err),
+			apierrors.IsInternalError(err),
 			errors.Is(err, context.DeadlineExceeded):
-			log.Info("Transient API error reading TLS profile, using hardened defaults", "error", err)
+			logger.Info("Transient error fetching TLS adherence policy, watcher will retry", "error", err)
+			result.AdherenceFetched = true
 		default:
-			return result, fmt.Errorf("reading APIServer TLS profile: %w", err)
+			return fmt.Errorf("reading APIServer TLS adherence policy: %w", err)
 		}
-		result.TLSOpts = append(result.TLSOpts, intermediateWithALPN)
-		return result, nil
+		return nil
 	}
-
-	profile, err := extractTLSProfile(obj)
-	if err != nil {
-		log.Info("Failed to parse TLS profile from APIServer, using hardened defaults", "error", err)
-		result.TLSOpts = append(result.TLSOpts, intermediateWithALPN)
-		return result, nil
-	}
-
-	minVersion, ciphers := parseProfile(profile)
-	if ciphers != nil && len(ciphers) == 0 {
-		return result, fmt.Errorf("custom TLS profile specified ciphers but none are supported by Go")
-	}
-
-	result.TLSOpts = append(result.TLSOpts, func(c *tls.Config) {
-		c.MinVersion = minVersion
-		if len(ciphers) > 0 {
-			c.CipherSuites = ciphers
-		}
-		c.NextProtos = []string{"h2", "http/1.1"}
-	})
-	return result, nil
+	result.AdherenceFetched = true
+	result.Adherence = adherence
+	return nil
 }
 
-func extractTLSProfile(obj *unstructured.Unstructured) (*tlsSecurityProfile, error) {
-	spec, ok := obj.Object["spec"].(map[string]interface{})
-	if !ok {
-		return nil, nil
-	}
-	profileRaw, ok := spec["tlsSecurityProfile"]
-	if !ok || profileRaw == nil {
-		return nil, nil
-	}
-	data, err := json.Marshal(profileRaw)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling tlsSecurityProfile: %w", err)
-	}
-	var profile tlsSecurityProfile
-	if err := json.Unmarshal(data, &profile); err != nil {
-		return nil, fmt.Errorf("unmarshaling tlsSecurityProfile: %w", err)
-	}
-	return &profile, nil
-}
-
-func intermediateWithALPN(c *tls.Config) {
-	c.MinVersion = tls.VersionTLS12
-	c.CipherSuites = intermediateCiphers
-	c.NextProtos = []string{"h2", "http/1.1"}
-}
-
-func parseProfile(profile *tlsSecurityProfile) (uint16, []uint16) {
-	if profile == nil || profile.Type == "" {
-		return tls.VersionTLS12, intermediateCiphers
+// SetupWatcher registers a TLS profile watcher that cancels the manager when
+// the profile or adherence policy changes. It is a no-op for non-OpenShift
+// clusters where the profile API is unavailable.
+func SetupWatcher(mgr manager.Manager, result *Result, cancel context.CancelFunc, logger logr.Logger) error {
+	if result == nil || !result.ProfileFetched {
+		return nil
 	}
 
-	switch profile.Type {
-	case "Intermediate":
-		return tls.VersionTLS12, intermediateCiphers
-	case "Modern":
-		return tls.VersionTLS13, nil
-	case "Old":
-		return tls.VersionTLS10, nil
-	case "Custom":
-		if profile.Custom == nil {
-			log.Info("Custom TLS profile type specified but custom block is nil, falling back to Intermediate")
-			return tls.VersionTLS12, intermediateCiphers
-		}
-		return parseCustomProfile(profile.Custom)
-	default:
-		log.Info("Unknown TLS profile type, falling back to Intermediate", "type", profile.Type)
-		return tls.VersionTLS12, intermediateCiphers
+	watcher := &tlspkg.SecurityProfileWatcher{
+		Client:                mgr.GetClient(),
+		InitialTLSProfileSpec: result.Profile,
+		OnProfileChange: func(_ context.Context, _, _ configv1.TLSProfileSpec) {
+			logger.Info("TLS profile changed, initiating shutdown to reload")
+			cancel()
+		},
 	}
-}
-
-func parseCustomProfile(custom *struct {
-	Ciphers       []string `json:"ciphers"`
-	MinTLSVersion string   `json:"minTLSVersion"`
-}) (uint16, []uint16) {
-	minVersion, ok := tlsVersionMap[custom.MinTLSVersion]
-	if !ok {
-		log.Info("Unknown minTLSVersion in custom profile, defaulting to TLS 1.2", "minTLSVersion", custom.MinTLSVersion)
-		minVersion = tls.VersionTLS12
-	}
-
-	if len(custom.Ciphers) == 0 {
-		return minVersion, nil
-	}
-
-	ciphers := make([]uint16, 0, len(custom.Ciphers))
-	for _, name := range custom.Ciphers {
-		if id, ok := openSSLToGoCipher[name]; ok {
-			ciphers = append(ciphers, id)
-		} else {
-			log.Info("Dropping unsupported cipher from custom TLS profile", "cipher", name)
+	if result.AdherenceFetched {
+		watcher.InitialTLSAdherencePolicy = result.Adherence
+		watcher.OnAdherencePolicyChange = func(_ context.Context, _, _ configv1.TLSAdherencePolicy) {
+			logger.Info("TLS adherence policy changed, initiating shutdown to reload")
+			cancel()
 		}
 	}
-	return minVersion, ciphers
+
+	if err := watcher.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up TLS profile watcher: %w", err)
+	}
+	return nil
 }
