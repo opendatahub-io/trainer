@@ -68,10 +68,6 @@ type TrainerList struct {
 	Items           []Trainer `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&Trainer{}, &TrainerList{})
-}
-
 var _ fwapi.PlatformObject = &Trainer{}
 
 func (t *Trainer) GetStatus() *fwapi.Status {

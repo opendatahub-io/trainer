@@ -315,5 +315,5 @@ func findModuleCRDPath() string {
 		return ""
 	}
 	gopath := strings.TrimSpace(string(out))
-	return filepath.Join(gopath, "pkg", "mod", "github.com", "kubeflow", "trainer", "v2@v2.2.0", "manifests", "base", "crds")
+	return filepath.Join(gopath, "pkg", "mod", "github.com", "kubeflow", "trainer", "v2@v2.2.1", "manifests", "base", "crds")
 }

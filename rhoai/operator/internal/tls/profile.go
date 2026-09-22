@@ -68,7 +68,7 @@ func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (
 
 	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(profile)
 	if len(unsupported) > 0 {
-		logger.Info("TLS profile contains unsupported ciphers", "unsupported", unsupported)
+		logger.Info("TLS profile contains unsupported ciphers or groups", "unsupported", unsupported)
 	}
 	result.TLSOpts = append(result.TLSOpts, tlsConfigFn, tlspkg.SetNextProtos(tlspkg.HTTP2NextProtos...))
 
