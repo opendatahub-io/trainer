@@ -4,6 +4,9 @@ metadata:
   name: kubeflow-trainer-controller-manager
 spec:
   template:
+    metadata:
+      annotations:
+        trainer.kubeflow.org/metrics-auth: enabled
     spec:
       containers:
       - name: manager
