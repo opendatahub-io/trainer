@@ -4,3 +4,5 @@ kind: Kustomization
 resources:
   - clusterrole.yaml
   - clusterrolebinding.yaml
+  - metrics-reader-clusterrole.yaml
+  - metrics-reader-clusterrolebinding.yaml

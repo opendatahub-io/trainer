@@ -10,11 +10,28 @@ configMapGenerator:
 - name: rhoai-config
   envs:
     - params.env
+- name: kubeflow-trainer-config
+  behavior: replace
+  files:
+    - controller_manager_config.yaml
 
 configurations:
 - params.yaml
 
 replacements:
+- source:
+    kind: Service
+    name: kubeflow-trainer-controller-manager
+    fieldPath: metadata.namespace
+  targets:
+  - select:
+      kind: ServiceMonitor
+      name: kubeflow-trainer-controller-manager-metrics-monitor
+    fieldPaths:
+    - spec.endpoints.0.tlsConfig.serverName
+    options:
+      delimiter: "."
+      index: 1
 # Replace controller image
 - source:
     kind: ConfigMap
@@ -54,19 +71,10 @@ patches:
 # Mount the controller config file for loading manager configurations
 # through a ComponentConfig type
 - path: manager_config_patch.yaml
-- path: manager_metrics_patch.yaml
 # RHAI-specific RBAC for progression tracking
 - path: rbac_progression_patch.yaml
   target:
     group: rbac.authorization.k8s.io
     version: v1
     kind: ClusterRole
-    name: kubeflow-trainer-controller-manager
-- patch: |-
-    - op: remove
-      path: /spec/ports/0
-  target:
-    group: ""
-    version: v1
-    kind: Service
     name: kubeflow-trainer-controller-manager
