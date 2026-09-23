@@ -11,6 +11,7 @@ require (
 	github.com/opendatahub-io/odh-platform-utilities/framework v0.0.0-20260805122551-b8da1945829a
 	github.com/openshift/api v0.0.0-20260805215214-cfb63858e9d7
 	github.com/openshift/controller-runtime-common v0.0.0-20260813135806-e1187ec555fc
+	github.com/openshift/library-go v0.0.0-20260807194649-ee0a87843dda
 	github.com/operator-framework/api v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.2
@@ -78,7 +79,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/openshift/library-go v0.0.0-20260807194649-ee0a87843dda // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

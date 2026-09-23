@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	tlspkg "github.com/openshift/controller-runtime-common/pkg/tls"
+	openshiftcrypto "github.com/openshift/library-go/pkg/crypto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,6 +39,7 @@ const bootstrapTimeout = 10 * time.Second
 type Result struct {
 	Profile          configv1.TLSProfileSpec
 	ProfileFetched   bool
+	ProfileHonored   bool
 	Adherence        configv1.TLSAdherencePolicy
 	AdherenceFetched bool
 	TLSOpts          []func(*tls.Config)
@@ -47,8 +49,11 @@ type Result struct {
 // options for controller-runtime servers.
 //
 // NoMatch / NotFound fall back to Intermediate (non-OpenShift or CRD absent).
-// Transient API errors use Intermediate and still register the watcher so a
-// later profile is not dropped. Unexpected errors (Forbidden, etc.) fail closed.
+// Transient profile API errors use Intermediate and still register the watcher
+// so a later profile is not dropped. Adherence read errors fail closed because
+// the effective TLS profile cannot be determined safely.
+// Legacy or unset adherence uses Intermediate defaults; Strict adherence uses
+// the configured profile.
 func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (*Result, error) {
 	bootstrapCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 	defer cancel()
@@ -66,15 +71,20 @@ func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (
 	}
 	result.Profile = profile
 
-	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(profile)
+	if err := fetchAdherence(bootstrapCtx, k8sClient, result, logger); err != nil {
+		return nil, err
+	}
+
+	result.ProfileHonored = result.ProfileFetched && openshiftcrypto.ShouldHonorClusterTLSProfile(result.Adherence)
+	effectiveProfile := profile
+	if !result.ProfileHonored {
+		effectiveProfile = *configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	}
+	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(effectiveProfile)
 	if len(unsupported) > 0 {
 		logger.Info("TLS profile contains unsupported ciphers or groups", "unsupported", unsupported)
 	}
 	result.TLSOpts = append(result.TLSOpts, tlsConfigFn, tlspkg.SetNextProtos(tlspkg.HTTP2NextProtos...))
-
-	if err := fetchAdherence(bootstrapCtx, k8sClient, result, logger); err != nil {
-		return nil, err
-	}
 
 	return result, nil
 }
@@ -112,8 +122,7 @@ func fetchAdherence(ctx context.Context, k8sClient client.Client, result *Result
 			apierrors.IsTooManyRequests(err),
 			apierrors.IsInternalError(err),
 			errors.Is(err, context.DeadlineExceeded):
-			logger.Info("Transient error fetching TLS adherence policy, watcher will retry", "error", err)
-			result.AdherenceFetched = true
+			return fmt.Errorf("reading APIServer TLS adherence policy: %w", err)
 		default:
 			return fmt.Errorf("reading APIServer TLS adherence policy: %w", err)
 		}
@@ -132,13 +141,24 @@ func SetupWatcher(mgr manager.Manager, result *Result, cancel context.CancelFunc
 		return nil
 	}
 
+	watcher := newSecurityProfileWatcher(mgr.GetClient(), result, cancel, logger)
+
+	if err := watcher.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up TLS profile watcher: %w", err)
+	}
+	return nil
+}
+
+func newSecurityProfileWatcher(k8sClient client.Client, result *Result, cancel context.CancelFunc, logger logr.Logger) *tlspkg.SecurityProfileWatcher {
 	watcher := &tlspkg.SecurityProfileWatcher{
-		Client:                mgr.GetClient(),
+		Client:                k8sClient,
 		InitialTLSProfileSpec: result.Profile,
-		OnProfileChange: func(_ context.Context, _, _ configv1.TLSProfileSpec) {
+	}
+	if result.ProfileHonored {
+		watcher.OnProfileChange = func(_ context.Context, _, _ configv1.TLSProfileSpec) {
 			logger.Info("TLS profile changed, initiating shutdown to reload")
 			cancel()
-		},
+		}
 	}
 	if result.AdherenceFetched {
 		watcher.InitialTLSAdherencePolicy = result.Adherence
@@ -147,9 +167,5 @@ func SetupWatcher(mgr manager.Manager, result *Result, cancel context.CancelFunc
 			cancel()
 		}
 	}
-
-	if err := watcher.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("setting up TLS profile watcher: %w", err)
-	}
-	return nil
+	return watcher
 }
