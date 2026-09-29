@@ -15,10 +15,14 @@ SHELL := /bin/bash
 # Kubernetes CLI tool (kubectl or oc).
 KUBECTL ?= $(shell command -v oc 2>/dev/null || command -v kubectl 2>/dev/null)
 RHOAI_MANIFESTS_DIR ?= $(PROJECT_DIR)/manifests/rhoai
-RHAI_TEST_MANIFESTS_DIR ?= $(PROJECT_DIR)/odh_utils/manifests
+RHAI_TEST_MANIFESTS_DIR ?= $(PROJECT_DIR)/odh_utils/tests/manifests
+APPLICATIONS_NAMESPACE ?= opendatahub
+NFS_PROVISIONER_OPERATOR_MANIFEST ?= $(RHAI_TEST_MANIFESTS_DIR)/nfs-provisioner-operator.yaml
+NFS_PROVISIONER_MANIFEST ?= $(RHAI_TEST_MANIFESTS_DIR)/nfs-provisioner.yaml
 TRAINER_IMAGE ?=
 TRAINER_OPERATOR_RUNTIME_REF ?= main
 TRAINER_OPERATOR_RUNTIME_URL ?= https://github.com/opendatahub-io/trainer-operator//manifests/runtimes?ref=$(TRAINER_OPERATOR_RUNTIME_REF)
+TRAINER_OPERATOR_IMAGESTREAMS_URL ?= https://github.com/opendatahub-io/trainer-operator//manifests/imagestreams?ref=$(TRAINER_OPERATOR_RUNTIME_REF)
 ARTIFACT_DIR ?= $(PROJECT_DIR)/artifacts
 UPSTREAM_JUNIT_REPORT ?= upstream-trainer-junit.xml
 DW_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/distributed-workloads
@@ -26,6 +30,8 @@ DW_SOURCE_URL ?= https://github.com/opendatahub-io/distributed-workloads.git
 DW_SOURCE_REF ?= main
 DW_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-smoke.log
 DW_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-smoke.xml
+DW_TIER1_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-tier1.log
+DW_TIER1_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-tier1.xml
 JUNIT_REPORT ?= $(ARTIFACT_DIR)/junit.xml
 GOTESTSUM ?= gotestsum
 
@@ -99,6 +105,95 @@ install-jobset-operator: install-cert-manager ## Install and enable the OpenShif
 	$(KUBECTL) wait --for=condition=established crd/jobsets.jobset.x-k8s.io --timeout=300s
 	$(KUBECTL) wait --for=condition=Available jobsetoperator/cluster --timeout=300s
 
+.PHONY: install-rhbok
+install-rhbok: install-cert-manager ## Install and enable Red Hat build of Kueue.
+	@echo "Installing Red Hat build of Kueue operator..."
+	$(KUBECTL) apply -f $(RHAI_TEST_MANIFESTS_DIR)/rhbok-operator.yaml
+	echo "Waiting for Red Hat build of Kueue CSV to be created by OLM..."
+	for i in $$(seq 1 60); do
+		CSV=$$($(KUBECTL) get csv -n openshift-kueue-operator \
+			-l operators.coreos.com/kueue-operator.openshift-kueue-operator \
+			-o name 2>/dev/null | head -1)
+		if [[ -n "$$CSV" ]]; then
+			echo "CSV found: $$CSV"
+			break
+		fi
+		echo "  attempt $$i/60, retrying in 10s..."
+		sleep 10
+	done
+	$(KUBECTL) wait --for=jsonpath='{.status.phase}'=Succeeded csv \
+		-n openshift-kueue-operator \
+		-l operators.coreos.com/kueue-operator.openshift-kueue-operator \
+		--timeout=300s
+	echo "Waiting for the RHBoK CRD to be created by the operator..."
+	for i in $$(seq 1 30); do
+		if $(KUBECTL) get crd kueues.kueue.openshift.io >/dev/null 2>&1; then
+			break
+		fi
+		echo "  attempt $$i/30, retrying in 10s..."
+		sleep 10
+	done
+	$(KUBECTL) wait --for=condition=established crd/kueues.kueue.openshift.io --timeout=300s
+	$(KUBECTL) apply -f $(RHAI_TEST_MANIFESTS_DIR)/rhbok.yaml
+	$(KUBECTL) wait --for=condition=Available kueue/cluster --timeout=300s
+	$(KUBECTL) wait --for=condition=available deployment/kueue-controller-manager \
+		-n openshift-kueue-operator --timeout=300s
+	echo "Red Hat build of Kueue deployed successfully!"
+
+.PHONY: install-nfs-provisioner
+install-nfs-provisioner: check-kubectl ## Install the NFS provisioner and RWX StorageClass.
+	@echo "Installing NFS provisioner operator..."
+	$(KUBECTL) apply -f $(NFS_PROVISIONER_OPERATOR_MANIFEST)
+	echo "Waiting for NFS provisioner operator CSV to be created by OLM..."
+	for i in $$(seq 1 60); do
+		CSV=$$($(KUBECTL) get csv -n openshift-operators \
+			-l operators.coreos.com/nfs-provisioner-operator.openshift-operators \
+			-o name 2>/dev/null | head -1)
+		if [[ -n "$$CSV" ]]; then
+			echo "CSV found: $$CSV"
+			break
+		fi
+		echo "  attempt $$i/60, retrying in 10s..."
+		sleep 10
+	done
+	$(KUBECTL) wait --for=jsonpath='{.status.phase}'=Succeeded csv \
+		-n openshift-operators \
+		-l operators.coreos.com/nfs-provisioner-operator.openshift-operators \
+		--timeout=300s
+	echo "Waiting for the NFS provisioner CRD to be created..."
+	for i in $$(seq 1 30); do
+		if $(KUBECTL) get crd nfsprovisioners.cache.jhouse.com >/dev/null 2>&1; then
+			break
+		fi
+		echo "  attempt $$i/30, retrying in 10s..."
+		sleep 10
+	done
+	$(KUBECTL) wait --for=condition=established crd/nfsprovisioners.cache.jhouse.com --timeout=300s
+	nfs_backing_storage_class=$$($(KUBECTL) get storageclass \
+		-o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}' \
+		| head -1)
+	if [[ -z "$$nfs_backing_storage_class" ]]; then
+		echo "Error: No default StorageClass found for the NFS server backing PVC"
+		exit 1
+	fi
+	echo "Using StorageClass '$$nfs_backing_storage_class' for the NFS server backing PVC"
+	nfs_manifest=$$(mktemp)
+	trap 'rm -f "$$nfs_manifest"' EXIT
+	$(SED) "s|__NFS_BACKING_STORAGE_CLASS__|$$nfs_backing_storage_class|" \
+		"$(NFS_PROVISIONER_MANIFEST)" > "$$nfs_manifest"
+	echo "Applying NFS provisioner configuration..."
+	$(KUBECTL) apply -f "$$nfs_manifest"
+	$(KUBECTL) wait --for=jsonpath='{.status.phase}'=Ready \
+		nfsprovisioner/nfs-provisioner -n openshift-operators --timeout=300s
+	$(KUBECTL) wait --for=condition=available deployment/nfs-provisioner \
+		-n openshift-operators --timeout=300s
+	# The community operator creates the NFS StorageClass without mountOptions
+	# on some OLM versions. Explicitly select NFSv4.1 for worker-node mounts.
+	$(KUBECTL) patch storageclass/nfs --type=merge \
+		-p '{"mountOptions":["vers=4.1"]}'
+	$(KUBECTL) get storageclass nfs
+	echo "NFS provisioner and RWX StorageClass deployed successfully!"
+
 .PHONY: deploy-rhoai
 deploy-rhoai: install-jobset-operator ## Install Trainer using RHOAI manifests with kustomize.
 	if [[ -n "$(TRAINER_IMAGE)" ]]; then
@@ -131,6 +226,12 @@ install-test-runtimes: check-kubectl ## Install Trainer runtimes required by the
 		-f manifests/base/runtimes/xgboost_distributed.yaml \
 		-f examples/flux/flux-runtime.yaml
 
+.PHONY: install-test-imagestreams
+install-test-imagestreams: check-kubectl ## Install ImageStreams required by the integration tests.
+	@echo "Installing Trainer test ImageStreams..."
+	$(KUBECTL) create namespace $(APPLICATIONS_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
+	$(KUBECTL) apply --server-side -n $(APPLICATIONS_NAMESPACE) -k '$(TRAINER_OPERATOR_IMAGESTREAMS_URL)'
+
 .PHONY: test-e2e-rhai
 test-e2e-rhai: ginkgo ## Run the upstream Trainer RHAI E2E suite.
 	@mkdir -p "$(ARTIFACT_DIR)"
@@ -154,6 +255,9 @@ test-dw-smoke: ## Run the distributed-workloads Trainer smoke suite.
 	#   through rhods-operator and its expected runtime image set.
 	# TestOpenMPICudaClusterTrainingRuntime is skipped in the test source because
 	# of RHOAIENG-61966.
+	TEST_OUTPUT_DIR="$(ARTIFACT_DIR)" \
+	APPLICATIONS_NAMESPACE="$(APPLICATIONS_NAMESPACE)" \
+	TEST_TIMEOUT_SHORT=5m TEST_TIMEOUT_MEDIUM=10m TEST_TIMEOUT_LONG=20m \
 	TEST_TIER=Smoke $(GOTESTSUM) \
 		--format standard-verbose \
 		--junitfile "$(DW_JUNIT_FILE)" \
@@ -164,6 +268,53 @@ test-dw-smoke: ## Run the distributed-workloads Trainer smoke suite.
 		-- -count=1 -timeout 20m \
 		-skip='TestKubeflowTrainerSmoke|TestDefaultClusterTrainingRuntimes' \
 		./tests/trainer/ 2>&1 | tee "$(DW_TEST_LOG)"
+
+.PHONY: test-dw-tier1
+test-dw-tier1: check-kubectl ## Run the distributed-workloads Trainer tier 1 suite.
+	@test -d "$(DW_SOURCE_DIR)/tests/trainer" || { \
+		echo "Trainer tier 1 tests not found in $(DW_SOURCE_DIR)/tests/trainer"; \
+		exit 1; \
+	}
+	command -v oc >/dev/null 2>&1 || { \
+		echo "Error: 'oc' is required to create the Tier 1 test ServiceAccount token"; \
+		exit 1; \
+	}
+	@mkdir -p "$(ARTIFACT_DIR)"
+	cd "$(DW_SOURCE_DIR)"
+	# Always use a short-lived identity created in the target cluster. Do not
+	# expose the caller's bearer token to the mutable distributed-workloads tests.
+	notebook_service_account=trainer-e2e
+	notebook_service_account_namespace="$(APPLICATIONS_NAMESPACE)"
+	$(KUBECTL) create serviceaccount "$$notebook_service_account" \
+		-n "$$notebook_service_account_namespace" --dry-run=client -o yaml \
+		| $(KUBECTL) apply -f - >/dev/null
+	cleanup_notebook_service_account() {
+		$(KUBECTL) delete serviceaccount "$$notebook_service_account" \
+			-n "$$notebook_service_account_namespace" --ignore-not-found=true >/dev/null 2>&1 || true
+	}
+	trap cleanup_notebook_service_account EXIT
+	notebook_user_name="system:serviceaccount:$$notebook_service_account_namespace:$$notebook_service_account"
+	notebook_user_token=$$(oc create token "$$notebook_service_account" \
+		-n "$$notebook_service_account_namespace" 2>/dev/null || true)
+	[[ -n "$$notebook_user_name" && -n "$$notebook_user_token" ]] || { \
+		echo "Error: Could not obtain a bearer token from the target OpenShift cluster"; \
+		exit 1; \
+	}
+
+	# Pass the temporary target-cluster credentials only to the test process; never persist or print the token.
+	TEST_OUTPUT_DIR="$(ARTIFACT_DIR)" \
+	APPLICATIONS_NAMESPACE="$(APPLICATIONS_NAMESPACE)" \
+	NOTEBOOK_USER_NAME="$$notebook_user_name" NOTEBOOK_USER_TOKEN="$$notebook_user_token" \
+	TEST_TIMEOUT_SHORT=5m TEST_TIMEOUT_MEDIUM=10m TEST_TIMEOUT_LONG=20m \
+	TEST_TIER=Tier1 $(GOTESTSUM) \
+		--format standard-verbose \
+		--junitfile "$(DW_TIER1_JUNIT_FILE)" \
+		--junitfile-testsuite-name short \
+		--junitfile-testcase-classname relative \
+		--junitfile-hide-skipped-tests \
+		--junitfile-project-name=trainer \
+		-- -count=1 -timeout 60m \
+		./tests/trainer/ 2>&1 | tee "$(DW_TIER1_TEST_LOG)"
 
 .PHONY: test-integration-rhai
 test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
@@ -180,7 +331,16 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 		TRAINER_IMAGE="$(TRAINER_IMAGE)" \
 		|| setup_passed=false
 	if [[ "$$setup_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai install-rhbok || setup_passed=false
+	fi
+	if [[ "$$setup_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai install-nfs-provisioner || setup_passed=false
+	fi
+	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-test-runtimes || setup_passed=false
+	fi
+	if [[ "$$setup_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai install-test-imagestreams || setup_passed=false
 	fi
 	if [[ "$$setup_passed" != true ]]; then
 		echo "Trainer integration test setup failed"
@@ -216,11 +376,25 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 			dw_tests_passed=false
 		fi
 	fi
+	if [[ "$$dw_tests_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai test-dw-tier1 \
+			DW_SOURCE_DIR="$(DW_SOURCE_DIR)" \
+			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
+			DW_TIER1_TEST_LOG="$(DW_TIER1_TEST_LOG)" \
+			DW_TIER1_JUNIT_FILE="$(DW_TIER1_JUNIT_FILE)" \
+			|| dw_tests_passed=false
+		# TestMain in the DW Trainer package can exit successfully when a test
+		# fails, so verify the generated JUnit testcases as well.
+		if [[ ! -s "$(DW_TIER1_JUNIT_FILE)" ]] || ! junitparser verify "$(DW_TIER1_JUNIT_FILE)"; then
+			dw_tests_passed=false
+		fi
+	fi
 
 	junit_reports=()
 	for report in \
 		"$(ARTIFACT_DIR)/$(UPSTREAM_JUNIT_REPORT)" \
-		"$(DW_JUNIT_FILE)"; do
+		"$(DW_JUNIT_FILE)" \
+		"$(DW_TIER1_JUNIT_FILE)"; do
 		if [[ -s "$$report" ]]; then
 			junit_reports+=("$$report")
 		fi
