@@ -21,29 +21,20 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: trainer
+      app.kubernetes.io/component: manager
       app.kubernetes.io/part-of: kubeflow
   policyTypes:
     - Egress
   egress:
-    # Kubernetes API access.
+    # Kubernetes API access through OpenShift host-network endpoints.
     - to:
         - namespaceSelector:
             matchLabels:
               policy-group.network.openshift.io/host-network: ""
           podSelector: {}
-        # Service IP is configured by the downstream overlay.
-        - ipBlock:
-            cidr: 172.30.0.1/32
       ports:
         - port: 443
           protocol: TCP
-        - port: 6443
-          protocol: TCP
-    # API node CIDR is configured by the downstream overlay.
-    - to:
-        - ipBlock:
-            cidr: 10.0.0.0/16
-      ports:
         - port: 6443
           protocol: TCP
     # Cluster DNS.
