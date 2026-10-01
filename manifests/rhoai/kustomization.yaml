@@ -44,6 +44,45 @@ replacements:
       name: kubeflow-trainer-controller-manager
     fieldPaths:
     - spec.template.spec.containers.0.image
+# Inject cluster-specific NetworkPolicy peers from params.env.
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.odh-kubeflow-trainer-service-ip
+  targets:
+  - select:
+      kind: NetworkPolicy
+      name: kubeflow-trainer-controller-manager-egress
+    fieldPaths:
+    - spec.egress.0.to.1.ipBlock.cidr
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.odh-kubeflow-trainer-node-cidr
+  targets:
+  - select:
+      kind: NetworkPolicy
+      name: kubeflow-trainer-controller-manager
+    fieldPaths:
+    - spec.ingress.0.from.1.ipBlock.cidr
+  - select:
+      kind: NetworkPolicy
+      name: kubeflow-trainer-controller-manager-egress
+    fieldPaths:
+    - spec.egress.1.to.0.ipBlock.cidr
+- source:
+    kind: ConfigMap
+    name: rhoai-config
+    version: v1
+    fieldPath: data.odh-kubeflow-trainer-pod-cidr
+  targets:
+  - select:
+      kind: NetworkPolicy
+      name: kubeflow-trainer-controller-manager
+    fieldPaths:
+    - spec.ingress.0.from.2.ipBlock.cidr
 
 # Labels to add to all resources and selectors.
 labels:
@@ -59,6 +98,8 @@ resources:
 - ../base/webhook
 # - ../third-party/jobset #uncomment if jobset should be bundled under kubeflow trainer controller manager
 - kubeflow-training-roles.yaml
+- networkpolicy-ingress.yaml
+- networkpolicy-egress.yaml
 - rbac/tls
 - monitor.yaml
 

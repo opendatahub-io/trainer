@@ -33,6 +33,16 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/rhai/constants"
 )
 
+type countingClient struct {
+	client.Client
+	updates int
+}
+
+func (c *countingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	c.updates++
+	return c.Client.Update(ctx, obj, opts...)
+}
+
 func TestGetNetworkPolicyName(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -376,6 +386,63 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReconcileNetworkPolicyDoesNotUpdateMatchingPolicy(t *testing.T) {
+	trainJob := &trainer.TrainJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matching-job",
+			Namespace: "default",
+			UID:       types.UID("matching-uid"),
+		},
+	}
+	existingPolicy := buildNetworkPolicy(trainJob)
+	scheme := runtime.NewScheme()
+	_ = trainer.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
+
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingPolicy).Build()
+	counting := &countingClient{Client: baseClient}
+
+	if err := ReconcileNetworkPolicy(context.Background(), counting, trainJob); err != nil {
+		t.Fatalf("ReconcileNetworkPolicy() error = %v", err)
+	}
+	if counting.updates != 0 {
+		t.Fatalf("ReconcileNetworkPolicy() performed %d updates for an unchanged policy, want 0", counting.updates)
+	}
+}
+
+func TestReconcileNetworkPolicyRepairsOwnerReference(t *testing.T) {
+	trainJob := &trainer.TrainJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "owner-repair-job",
+			Namespace: "default",
+			UID:       types.UID("owner-repair-uid"),
+		},
+	}
+	existingPolicy := buildNetworkPolicy(trainJob)
+	existingPolicy.OwnerReferences = nil
+	scheme := runtime.NewScheme()
+	_ = trainer.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
+
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingPolicy).Build()
+	counting := &countingClient{Client: baseClient}
+
+	if err := ReconcileNetworkPolicy(context.Background(), counting, trainJob); err != nil {
+		t.Fatalf("ReconcileNetworkPolicy() error = %v", err)
+	}
+	if counting.updates != 1 {
+		t.Fatalf("ReconcileNetworkPolicy() updates = %d, want 1", counting.updates)
+	}
+
+	updated := &networkingv1.NetworkPolicy{}
+	if err := counting.Get(context.Background(), client.ObjectKeyFromObject(existingPolicy), updated); err != nil {
+		t.Fatalf("failed to get repaired NetworkPolicy: %v", err)
+	}
+	if len(updated.OwnerReferences) != 1 || updated.OwnerReferences[0].UID != trainJob.UID {
+		t.Fatalf("owner reference = %#v, want TrainJob UID %q", updated.OwnerReferences, trainJob.UID)
 	}
 }
 

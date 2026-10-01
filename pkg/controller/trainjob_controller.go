@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,10 +37,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
@@ -281,12 +280,7 @@ func (r *TrainJobReconciler) SetupWithManager(mgr ctrl.Manager, options controll
 	b := builder.TypedControllerManagedBy[reconcile.Request](mgr).
 		Named("trainjob_controller").
 		WithOptions(options).
-		WatchesRawSource(source.TypedKind(
-			mgr.GetCache(),
-			&trainer.TrainJob{},
-			&handler.TypedEnqueueRequestForObject[*trainer.TrainJob]{},
-			r,
-		))
+		For(&trainer.TrainJob{})
 	for _, runtime := range r.runtimes {
 		for _, registrar := range runtime.EventHandlerRegistrars() {
 			if registrar != nil {
@@ -294,5 +288,6 @@ func (r *TrainJobReconciler) SetupWithManager(mgr ctrl.Manager, options controll
 			}
 		}
 	}
+	b = b.Owns(&networkingv1.NetworkPolicy{})
 	return b.Complete(r)
 }
