@@ -32,6 +32,18 @@ DW_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-smoke.log
 DW_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-smoke.xml
 DW_TIER1_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-tier1.log
 DW_TIER1_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-tier1.xml
+DW_TIER2_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-tier2.log
+DW_TIER2_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-tier2.xml
+# Temporarily run only Tier 2 in the aggregate integration target while its
+# new S4-backed configuration is being validated.
+RUN_DW_SMOKE ?= true
+RUN_DW_TIER1 ?= true
+S4_NAMESPACE ?= s4
+S4_RELEASE ?= s4
+S4_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/s4
+S4_SOURCE_URL ?= https://github.com/rh-aiservices-bu/s4
+S4_SOURCE_REF ?= v0.3.2
+S4_S3_BUCKET ?= training-kubeflow-e2e
 JUNIT_REPORT ?= $(ARTIFACT_DIR)/junit.xml
 GOTESTSUM ?= gotestsum
 
@@ -194,6 +206,42 @@ install-nfs-provisioner: check-kubectl ## Install the NFS provisioner and RWX St
 	$(KUBECTL) get storageclass nfs
 	echo "NFS provisioner and RWX StorageClass deployed successfully!"
 
+.PHONY: install-s4
+install-s4: check-kubectl ## Install S4 S3-compatible storage for distributed-workloads tests.
+	command -v helm >/dev/null 2>&1 || { echo "Error: 'helm' is required to install S4"; exit 1; }
+	if [[ ! -d "$(S4_SOURCE_DIR)/charts/s4" ]]; then
+		mkdir -p "$$(dirname "$(S4_SOURCE_DIR)")"
+		git clone --depth 1 --branch "$(S4_SOURCE_REF)" \
+			"$(S4_SOURCE_URL)" "$(S4_SOURCE_DIR)"
+	fi
+	helm upgrade --install "$(S4_RELEASE)" "$(S4_SOURCE_DIR)/charts/s4" \
+		--namespace "$(S4_NAMESPACE)" --create-namespace \
+		--wait --timeout 10m \
+		--values /dev/stdin <<'EOF'
+	auth: {enabled: true, username: s4admin, password: s4secret}
+	route: {s3Api: {enabled: true}}
+	EOF
+	s4_pod=$$($(KUBECTL) get pods -n "$(S4_NAMESPACE)" \
+		-l "app.kubernetes.io/instance=$(S4_RELEASE),app.kubernetes.io/name=s4" \
+		-o jsonpath='{.items[0].metadata.name}')
+	s4_secret_name="$(S4_RELEASE)-credentials"
+	s4_access_key_id=$$($(KUBECTL) get secret "$$s4_secret_name" -n "$(S4_NAMESPACE)" \
+		-o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
+	s4_secret_access_key=$$($(KUBECTL) get secret "$$s4_secret_name" -n "$(S4_NAMESPACE)" \
+		-o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
+	if ! $(KUBECTL) exec -n "$(S4_NAMESPACE)" "$$s4_pod" -- \
+		env AWS_ACCESS_KEY_ID="$$s4_access_key_id" AWS_SECRET_ACCESS_KEY="$$s4_secret_access_key" \
+		/usr/local/bin/s5cmd --endpoint-url http://localhost:7480 \
+		ls "s3://$(S4_S3_BUCKET)" >/dev/null 2>&1; then
+		$(KUBECTL) exec -n "$(S4_NAMESPACE)" "$$s4_pod" -- \
+			env AWS_ACCESS_KEY_ID="$$s4_access_key_id" AWS_SECRET_ACCESS_KEY="$$s4_secret_access_key" \
+			/usr/local/bin/s5cmd --endpoint-url http://localhost:7480 \
+			mb "s3://$(S4_S3_BUCKET)"
+	fi
+	echo "S4 S3 endpoint: https://$$($(KUBECTL) get route $(S4_RELEASE)-api -n "$(S4_NAMESPACE)" -o jsonpath='{.spec.host}')"
+	echo "S4 internal endpoint: http://$(S4_RELEASE).$(S4_NAMESPACE).svc.cluster.local:7480"
+	echo "S4 bucket '$(S4_S3_BUCKET)' is ready"
+
 .PHONY: deploy-rhoai
 deploy-rhoai: install-jobset-operator ## Install Trainer using RHOAI manifests with kustomize.
 	if [[ -n "$(TRAINER_IMAGE)" ]]; then
@@ -202,6 +250,7 @@ deploy-rhoai: install-jobset-operator ## Install Trainer using RHOAI manifests w
 	fi
 	@echo "Deploying RHOAI Training Operator to namespace: opendatahub"
 	$(KUBECTL) create namespace opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
+	$(KUBECTL) label namespace opendatahub openshift.io/cluster-monitoring=true --overwrite
 	echo "Applying CRDs first..."
 	$(KUBECTL) apply --server-side=true -k $(RHOAI_MANIFESTS_DIR)/../base/crds
 	echo "Waiting for CRDs to be established..."
@@ -316,6 +365,62 @@ test-dw-tier1: check-kubectl ## Run the distributed-workloads Trainer tier 1 sui
 		-- -count=1 -timeout 60m \
 		./tests/trainer/ 2>&1 | tee "$(DW_TIER1_TEST_LOG)"
 
+.PHONY: test-dw-tier2
+test-dw-tier2: install-s4 ## Run the distributed-workloads Trainer tier 2 suite.
+	@test -d "$(DW_SOURCE_DIR)/tests/trainer" || { \
+		echo "Trainer tier 2 tests not found in $(DW_SOURCE_DIR)/tests/trainer"; \
+		exit 1; \
+	}
+	command -v oc >/dev/null 2>&1 || { \
+		echo "Error: 'oc' is required to create the Tier 2 test ServiceAccount token"; \
+		exit 1; \
+	}
+	@mkdir -p "$(ARTIFACT_DIR)"
+	cd "$(DW_SOURCE_DIR)"
+	notebook_service_account=trainer-e2e
+	notebook_service_account_namespace="$(APPLICATIONS_NAMESPACE)"
+	$(KUBECTL) create serviceaccount "$$notebook_service_account" \
+		-n "$$notebook_service_account_namespace" --dry-run=client -o yaml \
+		| $(KUBECTL) apply -f - >/dev/null
+	cleanup_notebook_service_account() {
+		$(KUBECTL) delete serviceaccount "$$notebook_service_account" \
+			-n "$$notebook_service_account_namespace" --ignore-not-found=true >/dev/null 2>&1 || true
+	}
+	trap cleanup_notebook_service_account EXIT
+	notebook_user_name="system:serviceaccount:$$notebook_service_account_namespace:$$notebook_service_account"
+	notebook_user_token=$$(oc create token "$$notebook_service_account" \
+		-n "$$notebook_service_account_namespace" 2>/dev/null || true)
+	[[ -n "$$notebook_user_name" && -n "$$notebook_user_token" ]] || { \
+		echo "Error: Could not obtain a bearer token from the target OpenShift cluster"; \
+		exit 1; \
+	}
+	s4_secret_name="$(S4_RELEASE)-credentials"
+	s4_access_key_id=$$($(KUBECTL) get secret "$$s4_secret_name" -n "$(S4_NAMESPACE)" \
+		-o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
+	s4_secret_access_key=$$($(KUBECTL) get secret "$$s4_secret_name" -n "$(S4_NAMESPACE)" \
+		-o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
+	s4_external_endpoint="https://$$($(KUBECTL) get route $(S4_RELEASE)-api -n "$(S4_NAMESPACE)" -o jsonpath='{.spec.host}')"
+	s4_internal_endpoint="http://$(S4_RELEASE).$(S4_NAMESPACE).svc.cluster.local:7480"
+	[[ -n "$$s4_access_key_id" && -n "$$s4_secret_access_key" && -n "$$s4_external_endpoint" ]] || { \
+		echo "Error: S4 credentials or endpoint are unavailable"; \
+		exit 1; \
+	}
+	TEST_OUTPUT_DIR="$(ARTIFACT_DIR)" \
+	APPLICATIONS_NAMESPACE="$(APPLICATIONS_NAMESPACE)" \
+	NOTEBOOK_USER_NAME="$$notebook_user_name" NOTEBOOK_USER_TOKEN="$$notebook_user_token" \
+	AWS_DEFAULT_ENDPOINT="$$s4_external_endpoint" AWS_INTERNAL_ENDPOINT="$$s4_internal_endpoint" \
+	AWS_ACCESS_KEY_ID="$$s4_access_key_id" AWS_SECRET_ACCESS_KEY="$$s4_secret_access_key" \
+	TEST_TIMEOUT_SHORT=5m TEST_TIMEOUT_MEDIUM=10m TEST_TIMEOUT_LONG=20m \
+	TEST_TIER=Tier2 $(GOTESTSUM) \
+		--format standard-verbose \
+		--junitfile "$(DW_TIER2_JUNIT_FILE)" \
+		--junitfile-testsuite-name short \
+		--junitfile-testcase-classname relative \
+		--junitfile-hide-skipped-tests \
+		--junitfile-project-name=trainer \
+		-- -count=1 -timeout 60m \
+		./tests/trainer/ 2>&1 | tee "$(DW_TIER2_TEST_LOG)"
+
 .PHONY: test-integration-rhai
 test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	@mkdir -p "$(ARTIFACT_DIR)" "$$(dirname "$(JUNIT_REPORT)")"
@@ -335,6 +440,9 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-nfs-provisioner || setup_passed=false
+	fi
+	if [[ "$$setup_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai install-s4 || setup_passed=false
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-test-runtimes || setup_passed=false
@@ -363,7 +471,7 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 				|| dw_tests_passed=false
 		fi
 	fi
-	if [[ "$$dw_tests_passed" = true ]]; then
+	if [[ "$$dw_tests_passed" = true && "$(RUN_DW_SMOKE)" = true ]]; then
 		$(MAKE) -f Makefile.rhai test-dw-smoke \
 			DW_SOURCE_DIR="$(DW_SOURCE_DIR)" \
 			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
@@ -376,7 +484,7 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 			dw_tests_passed=false
 		fi
 	fi
-	if [[ "$$dw_tests_passed" = true ]]; then
+	if [[ "$$dw_tests_passed" = true && "$(RUN_DW_TIER1)" = true ]]; then
 		$(MAKE) -f Makefile.rhai test-dw-tier1 \
 			DW_SOURCE_DIR="$(DW_SOURCE_DIR)" \
 			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
@@ -389,12 +497,26 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 			dw_tests_passed=false
 		fi
 	fi
+	if [[ "$$dw_tests_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai test-dw-tier2 \
+			DW_SOURCE_DIR="$(DW_SOURCE_DIR)" \
+			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
+			DW_TIER2_TEST_LOG="$(DW_TIER2_TEST_LOG)" \
+			DW_TIER2_JUNIT_FILE="$(DW_TIER2_JUNIT_FILE)" \
+			|| dw_tests_passed=false
+		# TestMain in the DW Trainer package can exit successfully when a test
+		# fails, so verify the generated JUnit testcases as well.
+		if [[ ! -s "$(DW_TIER2_JUNIT_FILE)" ]] || ! junitparser verify "$(DW_TIER2_JUNIT_FILE)"; then
+			dw_tests_passed=false
+		fi
+	fi
 
 	junit_reports=()
 	for report in \
 		"$(ARTIFACT_DIR)/$(UPSTREAM_JUNIT_REPORT)" \
 		"$(DW_JUNIT_FILE)" \
-		"$(DW_TIER1_JUNIT_FILE)"; do
+		"$(DW_TIER1_JUNIT_FILE)" \
+		"$(DW_TIER2_JUNIT_FILE)"; do
 		if [[ -s "$$report" ]]; then
 			junit_reports+=("$$report")
 		fi
