@@ -44,7 +44,6 @@ replacements:
       name: kubeflow-trainer-controller-manager
     fieldPaths:
     - spec.template.spec.containers.0.image
-
 # Labels to add to all resources and selectors.
 labels:
 - includeSelectors: true
@@ -59,6 +58,8 @@ resources:
 - ../base/webhook
 # - ../third-party/jobset #uncomment if jobset should be bundled under kubeflow trainer controller manager
 - kubeflow-training-roles.yaml
+- networkpolicy-ingress.yaml
+- networkpolicy-egress.yaml
 - rbac/tls
 - monitor.yaml
 

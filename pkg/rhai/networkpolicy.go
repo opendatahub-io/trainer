@@ -25,6 +25,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -170,8 +171,14 @@ func ReconcileNetworkPolicy(ctx context.Context, c client.Client, trainJob *trai
 		return fmt.Errorf("failed to get NetworkPolicy: %w", err)
 	}
 
+	if equality.Semantic.DeepEqual(existingPolicy.Spec, desiredPolicy.Spec) &&
+		equality.Semantic.DeepEqual(existingPolicy.Labels, desiredPolicy.Labels) &&
+		equality.Semantic.DeepEqual(existingPolicy.OwnerReferences, desiredPolicy.OwnerReferences) {
+		return nil
+	}
 	existingPolicy.Spec = desiredPolicy.Spec
 	existingPolicy.Labels = desiredPolicy.Labels
+	existingPolicy.OwnerReferences = desiredPolicy.OwnerReferences
 	if updateErr := c.Update(ctx, existingPolicy); updateErr != nil {
 		return fmt.Errorf("failed to update NetworkPolicy: %w", updateErr)
 	}
