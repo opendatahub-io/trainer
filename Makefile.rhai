@@ -251,6 +251,16 @@ deploy-rhoai: install-jobset-operator ## Install Trainer using RHOAI manifests w
 	@echo "Deploying RHOAI Training Operator to namespace: opendatahub"
 	$(KUBECTL) create namespace opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
 	$(KUBECTL) label namespace opendatahub openshift.io/cluster-monitoring=true --overwrite
+	# The PR environment deploys Trainer without the full RHOAI operator bundle,
+	# so provide the namespace-scoped discovery permissions normally installed by RHOAI.
+	$(KUBECTL) create role prometheus-k8s-monitoring \
+		--verb=get --verb=list --verb=watch \
+		--resource=pods,services,endpoints \
+		-n opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
+	$(KUBECTL) create rolebinding prometheus-k8s-monitoring \
+		--role=prometheus-k8s-monitoring \
+		--serviceaccount=openshift-monitoring:prometheus-k8s \
+		-n opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
 	echo "Applying CRDs first..."
 	$(KUBECTL) apply --server-side=true -k $(RHOAI_MANIFESTS_DIR)/../base/crds
 	echo "Waiting for CRDs to be established..."
