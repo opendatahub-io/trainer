@@ -97,6 +97,26 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
+// CreateTestNamespace creates a namespace with the given name prefix and deletes it during test cleanup.
+func (c *Client) CreateTestNamespace(t *testing.T, prefix string) *corev1.Namespace {
+	t.Helper()
+	ns, err := c.CoreV1().Namespaces().Create(t.Context(), &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create test namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := c.CoreV1().Namespaces().Delete(cleanupCtx, ns.Name, metav1.DeleteOptions{}); err != nil &&
+			!errors.IsNotFound(err) {
+			t.Errorf("delete test namespace %s: %v", ns.Name, err)
+		}
+	})
+	return ns
+}
+
 const maxDebugLogBytes int64 = 1 << 20
 
 func (c *Client) GetPodLogs(ctx context.Context, name, ns string) (string, error) {
@@ -185,17 +205,25 @@ func (c *Client) dumpDebugInfo(t *testing.T, ctx context.Context, ns string, ext
 	}
 }
 
-func (c *Client) GetControllerLogs(ctx context.Context, ns string) (string, error) {
+func (c *Client) GetControllerPods(ctx context.Context, ns string) ([]corev1.Pod, error) {
 	pods, err := c.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: "control-plane=controller-manager",
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(pods.Items) == 0 {
-		return "", fmt.Errorf("no controller-manager pods found")
+		return nil, fmt.Errorf("no controller-manager pods found")
 	}
-	return c.GetPodLogs(ctx, pods.Items[0].Name, ns)
+	return pods.Items, nil
+}
+
+func (c *Client) GetControllerLogs(ctx context.Context, ns string) (string, error) {
+	pods, err := c.GetControllerPods(ctx, ns)
+	if err != nil {
+		return "", err
+	}
+	return c.GetPodLogs(ctx, pods[0].Name, ns)
 }
 
 func (c *Client) CreateTrainer(ctx context.Context, appNamespace string) error {
