@@ -18,7 +18,6 @@ package rhai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -26,8 +25,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	applymetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	networkingv1apply "k8s.io/client-go/applyconfigurations/networking/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -53,26 +52,21 @@ func getNetworkPolicyName(trainJob *trainer.TrainJob) string {
 	return trainJob.Name
 }
 
-// buildNetworkPolicy creates a NetworkPolicy for the TrainJob's pods.
+// buildNetworkPolicyApplyConfiguration creates a NetworkPolicy apply configuration for the TrainJob's pods.
 // Rule 1 (same-job pods → all ports) is always added for pod isolation.
 // Rule 2 (controller → metrics port) is only added when progression tracking is enabled.
-func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy {
-	ingressRules := []networkingv1.NetworkPolicyIngressRule{}
+func buildNetworkPolicyApplyConfiguration(trainJob *trainer.TrainJob) *networkingv1apply.NetworkPolicyApplyConfiguration {
+	ingressRules := []*networkingv1apply.NetworkPolicyIngressRuleApplyConfiguration{
+		networkingv1apply.NetworkPolicyIngressRule().WithFrom(
+			networkingv1apply.NetworkPolicyPeer().WithPodSelector(
+				applymetav1.LabelSelector().WithMatchLabels(map[string]string{
+					"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
+				}),
+			),
+		),
+	}
 
-	// Rule 1: Same-job pods → all ports (always, for NCCL/MPI/gRPC)
-	ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
-		From: []networkingv1.NetworkPolicyPeer{
-			{
-				PodSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
-					},
-				},
-			},
-		},
-	})
-
-	// Rule 2: Controller → metrics port (only when progression tracking enabled)
+	// Add the controller → metrics-port rule only when progression tracking is enabled.
 	if progression.IsProgressionTrackingEnabled(trainJob) {
 		metricsPort := progression.GetMetricsPort(trainJob)
 		portNum, err := strconv.Atoi(metricsPort)
@@ -84,96 +78,49 @@ func buildNetworkPolicy(trainJob *trainer.TrainJob) *networkingv1.NetworkPolicy 
 		port := intstr.FromInt(portNum)
 		controllerNamespace := getControllerNamespace()
 
-		ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
-			From: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"kubernetes.io/metadata.name": controllerNamespace,
-						},
-					},
-					PodSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							constants.ControllerPodLabelName:      constants.ControllerPodLabelNameValue,
-							constants.ControllerPodLabelComponent: constants.ControllerPodLabelComponentValue,
-						},
-					},
-				},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{
-					Protocol: protocolPtr(corev1.ProtocolTCP),
-					Port:     &port,
-				},
-			},
-		})
+		ingressRules = append(ingressRules, networkingv1apply.NetworkPolicyIngressRule().
+			WithFrom(networkingv1apply.NetworkPolicyPeer().
+				WithNamespaceSelector(applymetav1.LabelSelector().WithMatchLabels(map[string]string{
+					"kubernetes.io/metadata.name": controllerNamespace,
+				})).
+				WithPodSelector(applymetav1.LabelSelector().WithMatchLabels(map[string]string{
+					constants.ControllerPodLabelName:      constants.ControllerPodLabelNameValue,
+					constants.ControllerPodLabelComponent: constants.ControllerPodLabelComponentValue,
+				})),
+			).
+			WithPorts(networkingv1apply.NetworkPolicyPort().
+				WithProtocol(corev1.ProtocolTCP).
+				WithPort(port),
+			),
+		)
 	}
 
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      getNetworkPolicyName(trainJob),
-			Namespace: trainJob.Namespace,
-			Labels: map[string]string{
-				"trainer.kubeflow.org/trainjob-name": trainJob.Name,
-				"trainer.kubeflow.org/component":     "network-policy",
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         trainer.SchemeGroupVersion.String(),
-					Kind:               "TrainJob",
-					Name:               trainJob.Name,
-					UID:                trainJob.UID,
-					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
-				},
-			},
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
-				},
-			},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-			},
-			Ingress: ingressRules,
-		},
-	}
-}
-
-func boolPtr(b bool) *bool {
-	return &b
-}
-
-func protocolPtr(p corev1.Protocol) *corev1.Protocol {
-	return &p
-}
-
-func buildNetworkPolicyApplyConfiguration(trainJob *trainer.TrainJob) (*networkingv1apply.NetworkPolicyApplyConfiguration, error) {
-	policy := buildNetworkPolicy(trainJob)
-	policy.TypeMeta = metav1.TypeMeta{
-		APIVersion: networkingv1.SchemeGroupVersion.String(),
-		Kind:       "NetworkPolicy",
-	}
-	data, err := json.Marshal(policy)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal NetworkPolicy: %w", err)
-	}
-	applyConfiguration := &networkingv1apply.NetworkPolicyApplyConfiguration{}
-	if err := json.Unmarshal(data, applyConfiguration); err != nil {
-		return nil, fmt.Errorf("failed to convert NetworkPolicy to apply configuration: %w", err)
-	}
-	return applyConfiguration, nil
+	return networkingv1apply.NetworkPolicy(getNetworkPolicyName(trainJob), trainJob.Namespace).
+		WithLabels(map[string]string{
+			"trainer.kubeflow.org/trainjob-name": trainJob.Name,
+			"trainer.kubeflow.org/component":     "network-policy",
+		}).
+		WithOwnerReferences(applymetav1.OwnerReference().
+			WithAPIVersion(trainer.SchemeGroupVersion.String()).
+			WithKind("TrainJob").
+			WithName(trainJob.Name).
+			WithUID(trainJob.UID).
+			WithController(true).
+			WithBlockOwnerDeletion(true),
+		).
+		WithSpec(networkingv1apply.NetworkPolicySpec().
+			WithPodSelector(applymetav1.LabelSelector().WithMatchLabels(map[string]string{
+				"jobset.sigs.k8s.io/jobset-name": trainJob.Name,
+			})).
+			WithPolicyTypes(networkingv1.PolicyTypeIngress).
+			WithIngress(ingressRules...),
+		)
 }
 
 // ReconcileNetworkPolicy creates/updates NetworkPolicy for the TrainJob.
 // Uses OwnerReference for automatic cleanup.
 func ReconcileNetworkPolicy(ctx context.Context, c client.Client, trainJob *trainer.TrainJob) error {
-	applyConfiguration, err := buildNetworkPolicyApplyConfiguration(trainJob)
-	if err != nil {
-		return err
-	}
+	applyConfiguration := buildNetworkPolicyApplyConfiguration(trainJob)
 	if err := c.Apply(ctx, applyConfiguration, client.FieldOwner("trainer"), client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to apply NetworkPolicy: %w", err)
 	}

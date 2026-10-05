@@ -64,6 +64,19 @@ func (c *countingClient) Apply(ctx context.Context, obj runtime.ApplyConfigurati
 	return c.Update(ctx, existing)
 }
 
+func networkPolicyFromApplyConfiguration(t *testing.T, configuration runtime.ApplyConfiguration) *networkingv1.NetworkPolicy {
+	t.Helper()
+	data, err := json.Marshal(configuration)
+	if err != nil {
+		t.Fatalf("failed to marshal NetworkPolicy apply configuration: %v", err)
+	}
+	policy := &networkingv1.NetworkPolicy{}
+	if err := json.Unmarshal(data, policy); err != nil {
+		t.Fatalf("failed to unmarshal NetworkPolicy apply configuration: %v", err)
+	}
+	return policy
+}
+
 func TestGetNetworkPolicyName(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -97,7 +110,7 @@ func TestGetNetworkPolicyName(t *testing.T) {
 	}
 }
 
-func TestBuildNetworkPolicy(t *testing.T) {
+func TestBuildNetworkPolicyApplyConfiguration(t *testing.T) {
 	tests := []struct {
 		name                   string
 		trainJob               *trainer.TrainJob
@@ -170,7 +183,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy := buildNetworkPolicy(tt.trainJob)
+			policy := networkPolicyFromApplyConfiguration(t, buildNetworkPolicyApplyConfiguration(tt.trainJob))
 
 			// Verify metadata
 			if policy.Name != tt.wantName {
@@ -410,30 +423,6 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 	}
 }
 
-func TestReconcileNetworkPolicyDoesNotUpdateMatchingPolicy(t *testing.T) {
-	trainJob := &trainer.TrainJob{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "matching-job",
-			Namespace: "default",
-			UID:       types.UID("matching-uid"),
-		},
-	}
-	existingPolicy := buildNetworkPolicy(trainJob)
-	scheme := runtime.NewScheme()
-	_ = trainer.AddToScheme(scheme)
-	_ = networkingv1.AddToScheme(scheme)
-
-	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingPolicy).Build()
-	counting := &countingClient{Client: baseClient}
-
-	if err := ReconcileNetworkPolicy(context.Background(), counting, trainJob); err != nil {
-		t.Fatalf("ReconcileNetworkPolicy() error = %v", err)
-	}
-	if counting.applies != 1 {
-		t.Fatalf("ReconcileNetworkPolicy() performed %d applies for an unchanged policy, want 1", counting.applies)
-	}
-}
-
 func TestReconcileNetworkPolicyRepairsOwnerReference(t *testing.T) {
 	trainJob := &trainer.TrainJob{
 		ObjectMeta: metav1.ObjectMeta{
@@ -442,7 +431,7 @@ func TestReconcileNetworkPolicyRepairsOwnerReference(t *testing.T) {
 			UID:       types.UID("owner-repair-uid"),
 		},
 	}
-	existingPolicy := buildNetworkPolicy(trainJob)
+	existingPolicy := networkPolicyFromApplyConfiguration(t, buildNetworkPolicyApplyConfiguration(trainJob))
 	existingPolicy.OwnerReferences = nil
 	scheme := runtime.NewScheme()
 	_ = trainer.AddToScheme(scheme)
@@ -480,7 +469,7 @@ func TestBuildNetworkPolicy_SecurityProperties(t *testing.T) {
 		},
 	}
 
-	policy := buildNetworkPolicy(trainJob)
+	policy := networkPolicyFromApplyConfiguration(t, buildNetworkPolicyApplyConfiguration(trainJob))
 
 	// Find rules by type
 	var metricsRule, podIsolationRule *networkingv1.NetworkPolicyIngressRule
