@@ -34,10 +34,13 @@ DW_TIER1_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-tier1.log
 DW_TIER1_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-tier1.xml
 DW_TIER2_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-tier2.log
 DW_TIER2_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-tier2.xml
-# Temporarily run only Tier 2 in the aggregate integration target while its
-# new S4-backed configuration is being validated.
+DW_TIER3_TEST_LOG ?= $(ARTIFACT_DIR)/distributed-workloads-tier3.log
+DW_TIER3_JUNIT_FILE ?= $(ARTIFACT_DIR)/distributed-workloads-tier3.xml
+RUN_UPSTREAM_E2E ?= true
 RUN_DW_SMOKE ?= true
 RUN_DW_TIER1 ?= true
+RUN_DW_TIER2 ?= true
+RUN_DW_TIER3 ?= true
 S4_NAMESPACE ?= s4
 S4_RELEASE ?= s4
 S4_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/s4
@@ -431,6 +434,27 @@ test-dw-tier2: install-s4 ## Run the distributed-workloads Trainer tier 2 suite.
 		-- -count=1 -timeout 60m \
 		./tests/trainer/ 2>&1 | tee "$(DW_TIER2_TEST_LOG)"
 
+.PHONY: test-dw-tier3
+test-dw-tier3: check-kubectl ## Run the distributed-workloads Trainer tier 3 suite.
+	@test -d "$(DW_SOURCE_DIR)/tests/trainer" || { \
+		echo "Trainer tier 3 tests not found in $(DW_SOURCE_DIR)/tests/trainer"; \
+		exit 1; \
+	}
+	@mkdir -p "$(ARTIFACT_DIR)"
+	cd "$(DW_SOURCE_DIR)"
+	TEST_OUTPUT_DIR="$(ARTIFACT_DIR)" \
+	APPLICATIONS_NAMESPACE="$(APPLICATIONS_NAMESPACE)" \
+	TEST_TIMEOUT_SHORT=5m TEST_TIMEOUT_MEDIUM=10m TEST_TIMEOUT_LONG=20m \
+	TEST_TIER=Tier3 $(GOTESTSUM) \
+		--format standard-verbose \
+		--junitfile "$(DW_TIER3_JUNIT_FILE)" \
+		--junitfile-testsuite-name short \
+		--junitfile-testcase-classname relative \
+		--junitfile-hide-skipped-tests \
+		--junitfile-project-name=trainer \
+		-- -count=1 -timeout 60m \
+		./tests/trainer/ 2>&1 | tee "$(DW_TIER3_TEST_LOG)"
+
 .PHONY: test-integration-rhai
 test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	@mkdir -p "$(ARTIFACT_DIR)" "$$(dirname "$(JUNIT_REPORT)")"
@@ -466,9 +490,11 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	fi
 
 	upstream_tests_passed=true
-	$(MAKE) -f Makefile.rhai test-e2e-rhai \
-		ARTIFACT_DIR="$(ARTIFACT_DIR)" \
-		|| upstream_tests_passed=false
+	if [[ "$(RUN_UPSTREAM_E2E)" = true ]]; then
+		$(MAKE) -f Makefile.rhai test-e2e-rhai \
+			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
+			|| upstream_tests_passed=false
+	fi
 
 	dw_tests_passed=true
 	if [[ ! -d "$(DW_SOURCE_DIR)/tests/trainer" ]]; then
@@ -507,7 +533,7 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 			dw_tests_passed=false
 		fi
 	fi
-	if [[ "$$dw_tests_passed" = true ]]; then
+	if [[ "$$dw_tests_passed" = true && "$(RUN_DW_TIER2)" = true ]]; then
 		$(MAKE) -f Makefile.rhai test-dw-tier2 \
 			DW_SOURCE_DIR="$(DW_SOURCE_DIR)" \
 			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
@@ -520,13 +546,27 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 			dw_tests_passed=false
 		fi
 	fi
+	if [[ "$$dw_tests_passed" = true && "$(RUN_DW_TIER3)" = true ]]; then
+		$(MAKE) -f Makefile.rhai test-dw-tier3 \
+			DW_SOURCE_DIR="$(DW_SOURCE_DIR)" \
+			ARTIFACT_DIR="$(ARTIFACT_DIR)" \
+			DW_TIER3_TEST_LOG="$(DW_TIER3_TEST_LOG)" \
+			DW_TIER3_JUNIT_FILE="$(DW_TIER3_JUNIT_FILE)" \
+			|| dw_tests_passed=false
+		# TestMain in the DW Trainer package can exit successfully when a test
+		# fails, so verify the generated JUnit testcases as well.
+		if [[ ! -s "$(DW_TIER3_JUNIT_FILE)" ]] || ! junitparser verify "$(DW_TIER3_JUNIT_FILE)"; then
+			dw_tests_passed=false
+		fi
+	fi
 
 	junit_reports=()
 	for report in \
 		"$(ARTIFACT_DIR)/$(UPSTREAM_JUNIT_REPORT)" \
 		"$(DW_JUNIT_FILE)" \
 		"$(DW_TIER1_JUNIT_FILE)" \
-		"$(DW_TIER2_JUNIT_FILE)"; do
+		"$(DW_TIER2_JUNIT_FILE)" \
+		"$(DW_TIER3_JUNIT_FILE)"; do
 		if [[ -s "$$report" ]]; then
 			junit_reports+=("$$report")
 		fi
