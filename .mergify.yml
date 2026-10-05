@@ -1,4 +1,12 @@
 pull_request_rules:
+  - name: Check trainer-ci on all pull requests
+    conditions:
+      - base=main
+      - -closed
+    actions:
+      post_check:
+        success_conditions:
+          - check-success~=^Red Hat Konflux / trainer-ci-its-manual.*
   - name: Auto-approve lake-gate PRs
     conditions:
       - base=stable
