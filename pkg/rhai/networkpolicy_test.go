@@ -51,9 +51,9 @@ func (c *countingClient) Apply(ctx context.Context, obj runtime.ApplyConfigurati
 		return err
 	}
 	existing := &networkingv1.NetworkPolicy{}
-	err = c.Client.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	err = c.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	if apierrors.IsNotFound(err) {
-		return c.Client.Create(ctx, desired)
+		return c.Create(ctx, desired)
 	}
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func (c *countingClient) Apply(ctx context.Context, obj runtime.ApplyConfigurati
 	existing.Spec = desired.Spec
 	existing.Labels = desired.Labels
 	existing.OwnerReferences = desired.OwnerReferences
-	return c.Client.Update(ctx, existing)
+	return c.Update(ctx, existing)
 }
 
 func TestGetNetworkPolicyName(t *testing.T) {
