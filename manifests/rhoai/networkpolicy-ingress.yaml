@@ -15,24 +15,12 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # API server webhooks and health checks.
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              policy-group.network.openshift.io/host-network: ""
-          podSelector: {}
-      ports:
-        - port: health
-          protocol: TCP
+    # Admission webhooks can be called by the API server through the service.
+    - ports:
         - port: webhook
           protocol: TCP
     # TrainJob status updates.
     - from:
-        - namespaceSelector: {}
-          podSelector:
-            matchExpressions:
-              - key: jobset.sigs.k8s.io/jobset-name
-                operator: Exists
         - namespaceSelector: {}
           podSelector:
             matchExpressions:
@@ -45,7 +33,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              network.openshift.io/policy-group: monitoring
+              kubernetes.io/metadata.name: openshift-monitoring
       ports:
         - port: metrics
           protocol: TCP

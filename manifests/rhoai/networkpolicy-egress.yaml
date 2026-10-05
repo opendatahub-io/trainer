@@ -26,41 +26,5 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # Kubernetes API access through OpenShift host-network endpoints.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              policy-group.network.openshift.io/host-network: ""
-          podSelector: {}
-      ports:
-        - port: 443
-          protocol: TCP
-        - port: 6443
-          protocol: TCP
-    # Cluster DNS.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-dns
-          podSelector: {}
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    # Progress metrics use a configurable non-privileged port.
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchExpressions:
-              - key: jobset.sigs.k8s.io/jobset-name
-                operator: Exists
-        - namespaceSelector: {}
-          podSelector:
-            matchExpressions:
-              - key: training.kubeflow.org/job-name
-                operator: Exists
-      ports:
-        - port: 1024
-          endPort: 65535
-          protocol: TCP
+    # The controller requires unrestricted egress for Kubernetes API access.
+    - {}

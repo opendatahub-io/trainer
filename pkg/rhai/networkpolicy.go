@@ -18,6 +18,7 @@ package rhai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -25,10 +26,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	networkingv1apply "k8s.io/client-go/applyconfigurations/networking/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -150,37 +150,32 @@ func protocolPtr(p corev1.Protocol) *corev1.Protocol {
 	return &p
 }
 
+func buildNetworkPolicyApplyConfiguration(trainJob *trainer.TrainJob) (*networkingv1apply.NetworkPolicyApplyConfiguration, error) {
+	policy := buildNetworkPolicy(trainJob)
+	policy.TypeMeta = metav1.TypeMeta{
+		APIVersion: networkingv1.SchemeGroupVersion.String(),
+		Kind:       "NetworkPolicy",
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal NetworkPolicy: %w", err)
+	}
+	applyConfiguration := &networkingv1apply.NetworkPolicyApplyConfiguration{}
+	if err := json.Unmarshal(data, applyConfiguration); err != nil {
+		return nil, fmt.Errorf("failed to convert NetworkPolicy to apply configuration: %w", err)
+	}
+	return applyConfiguration, nil
+}
+
 // ReconcileNetworkPolicy creates/updates NetworkPolicy for the TrainJob.
 // Uses OwnerReference for automatic cleanup.
 func ReconcileNetworkPolicy(ctx context.Context, c client.Client, trainJob *trainer.TrainJob) error {
-	desiredPolicy := buildNetworkPolicy(trainJob)
-	existingPolicy := &networkingv1.NetworkPolicy{}
-	err := c.Get(ctx, client.ObjectKey{
-		Namespace: trainJob.Namespace,
-		Name:      getNetworkPolicyName(trainJob),
-	}, existingPolicy)
-
-	if apierrors.IsNotFound(err) {
-		if createErr := c.Create(ctx, desiredPolicy); createErr != nil {
-			return fmt.Errorf("failed to create NetworkPolicy: %w", createErr)
-		}
-		return nil
-	}
-
+	applyConfiguration, err := buildNetworkPolicyApplyConfiguration(trainJob)
 	if err != nil {
-		return fmt.Errorf("failed to get NetworkPolicy: %w", err)
+		return err
 	}
-
-	if equality.Semantic.DeepEqual(existingPolicy.Spec, desiredPolicy.Spec) &&
-		equality.Semantic.DeepEqual(existingPolicy.Labels, desiredPolicy.Labels) &&
-		equality.Semantic.DeepEqual(existingPolicy.OwnerReferences, desiredPolicy.OwnerReferences) {
-		return nil
-	}
-	existingPolicy.Spec = desiredPolicy.Spec
-	existingPolicy.Labels = desiredPolicy.Labels
-	existingPolicy.OwnerReferences = desiredPolicy.OwnerReferences
-	if updateErr := c.Update(ctx, existingPolicy); updateErr != nil {
-		return fmt.Errorf("failed to update NetworkPolicy: %w", updateErr)
+	if err := c.Apply(ctx, applyConfiguration, client.FieldOwner("trainer"), client.ForceOwnership); err != nil {
+		return fmt.Errorf("failed to apply NetworkPolicy: %w", err)
 	}
 
 	return nil

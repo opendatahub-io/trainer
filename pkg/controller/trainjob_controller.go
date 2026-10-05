@@ -37,8 +37,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 	jobsetv1alpha2 "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
@@ -280,7 +282,12 @@ func (r *TrainJobReconciler) SetupWithManager(mgr ctrl.Manager, options controll
 	b := builder.TypedControllerManagedBy[reconcile.Request](mgr).
 		Named("trainjob_controller").
 		WithOptions(options).
-		For(&trainer.TrainJob{})
+		WatchesRawSource(source.TypedKind(
+			mgr.GetCache(),
+			&trainer.TrainJob{},
+			&handler.TypedEnqueueRequestForObject[*trainer.TrainJob]{},
+			r,
+		))
 	for _, runtime := range r.runtimes {
 		for _, registrar := range runtime.EventHandlerRegistrars() {
 			if registrar != nil {
@@ -288,6 +295,15 @@ func (r *TrainJobReconciler) SetupWithManager(mgr ctrl.Manager, options controll
 			}
 		}
 	}
-	b = b.Owns(&networkingv1.NetworkPolicy{})
+	b = b.WatchesRawSource(source.TypedKind(
+		mgr.GetCache(),
+		&networkingv1.NetworkPolicy{},
+		handler.TypedEnqueueRequestForOwner[*networkingv1.NetworkPolicy](
+			mgr.GetScheme(),
+			mgr.GetRESTMapper(),
+			&trainer.TrainJob{},
+			handler.OnlyControllerOwner(),
+		),
+	))
 	return b.Complete(r)
 }

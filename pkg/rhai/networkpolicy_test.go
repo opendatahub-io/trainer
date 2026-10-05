@@ -18,10 +18,12 @@ package rhai
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,12 +37,31 @@ import (
 
 type countingClient struct {
 	client.Client
-	updates int
+	applies int
 }
 
-func (c *countingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	c.updates++
-	return c.Client.Update(ctx, obj, opts...)
+func (c *countingClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	c.applies++
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	desired := &networkingv1.NetworkPolicy{}
+	if err := json.Unmarshal(data, desired); err != nil {
+		return err
+	}
+	existing := &networkingv1.NetworkPolicy{}
+	err = c.Client.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	if apierrors.IsNotFound(err) {
+		return c.Client.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	existing.Spec = desired.Spec
+	existing.Labels = desired.Labels
+	existing.OwnerReferences = desired.OwnerReferences
+	return c.Client.Update(ctx, existing)
 }
 
 func TestGetNetworkPolicyName(t *testing.T) {
@@ -334,7 +355,7 @@ func TestReconcileNetworkPolicy(t *testing.T) {
 			if tt.existingPolicy != nil {
 				clientBuilder = clientBuilder.WithObjects(tt.existingPolicy)
 			}
-			fakeClient := clientBuilder.Build()
+			fakeClient := &countingClient{Client: clientBuilder.Build()}
 
 			ctx := context.Background()
 			err := ReconcileNetworkPolicy(ctx, fakeClient, tt.trainJob)
@@ -408,8 +429,8 @@ func TestReconcileNetworkPolicyDoesNotUpdateMatchingPolicy(t *testing.T) {
 	if err := ReconcileNetworkPolicy(context.Background(), counting, trainJob); err != nil {
 		t.Fatalf("ReconcileNetworkPolicy() error = %v", err)
 	}
-	if counting.updates != 0 {
-		t.Fatalf("ReconcileNetworkPolicy() performed %d updates for an unchanged policy, want 0", counting.updates)
+	if counting.applies != 1 {
+		t.Fatalf("ReconcileNetworkPolicy() performed %d applies for an unchanged policy, want 1", counting.applies)
 	}
 }
 
@@ -433,8 +454,8 @@ func TestReconcileNetworkPolicyRepairsOwnerReference(t *testing.T) {
 	if err := ReconcileNetworkPolicy(context.Background(), counting, trainJob); err != nil {
 		t.Fatalf("ReconcileNetworkPolicy() error = %v", err)
 	}
-	if counting.updates != 1 {
-		t.Fatalf("ReconcileNetworkPolicy() updates = %d, want 1", counting.updates)
+	if counting.applies != 1 {
+		t.Fatalf("ReconcileNetworkPolicy() applies = %d, want 1", counting.applies)
 	}
 
 	updated := &networkingv1.NetworkPolicy{}
