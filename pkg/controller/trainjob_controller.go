@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -294,5 +295,15 @@ func (r *TrainJobReconciler) SetupWithManager(mgr ctrl.Manager, options controll
 			}
 		}
 	}
+	b = b.WatchesRawSource(source.TypedKind(
+		mgr.GetCache(),
+		&networkingv1.NetworkPolicy{},
+		handler.TypedEnqueueRequestForOwner[*networkingv1.NetworkPolicy](
+			mgr.GetScheme(),
+			mgr.GetRESTMapper(),
+			&trainer.TrainJob{},
+			handler.OnlyControllerOwner(),
+		),
+	))
 	return b.Complete(r)
 }
