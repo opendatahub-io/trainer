@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeflow-trainer-controller-manager
+  labels:
+    app.kubernetes.io/name: trainer
+    app.kubernetes.io/component: manager
+    app.kubernetes.io/part-of: kubeflow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: trainer
+      app.kubernetes.io/component: manager
+      app.kubernetes.io/part-of: kubeflow
+  policyTypes:
+    - Ingress
+  ingress:
+    # Use explicit listener ports so enforcement does not depend on named-port resolution.
+    # Admission webhooks can be called by the API server through the service.
+    - ports:
+        - port: 9443
+          protocol: TCP
+    # TrainJob status updates.
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchExpressions:
+              - key: training.kubeflow.org/job-name
+                operator: Exists
+      ports:
+        - port: 10443
+          protocol: TCP
+    # Secure Prometheus metrics.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-monitoring
+      ports:
+        - port: 8443
+          protocol: TCP
