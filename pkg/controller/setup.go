@@ -47,13 +47,17 @@ func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, opt
 	).SetupWithManager(mgr, options); err != nil {
 		return trainer.TrainJobKind, err
 	}
-	if err := NewOptimizationJobReconciler(
-		mgr.GetClient(),
-		mgr.GetScheme(),
-		mgr.GetEventRecorder("optimizationjob-controller"),
-		suggestionClient,
-	).SetupWithManager(mgr, options); err != nil {
-		return trainer.OptimizationJobKind, err
+	// disable OptimizationJob controller whilst it is under development.
+	// Do not re-enable without removing the tls compliance suppression in .github/semgrep-tls-excludes
+	if false {
+		if err := NewOptimizationJobReconciler(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			mgr.GetEventRecorder("optimizationjob-controller"),
+			suggestionClient,
+		).SetupWithManager(mgr, options); err != nil {
+			return trainer.OptimizationJobKind, err
+		}
 	}
 	return "", nil
 }

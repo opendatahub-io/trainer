@@ -175,7 +175,10 @@ func getChildTrainJobs(optJob *trainer.OptimizationJob) ([]trainer.TrainJob, err
 	return owned, nil
 }
 
-var _ = ginkgo.Describe("OptimizationJob Controller", ginkgo.Ordered, func() {
+// TODO: Re-enable once we release OpenShift-compatible images for OptimizationJob.
+// OptimizationJob is disabled on ODH / RHOAI.
+var _ = ginkgo.PDescribe("OptimizationJob Controller", ginkgo.Ordered, func() {
+
 	var ns *corev1.Namespace
 
 	ginkgo.BeforeAll(func() {

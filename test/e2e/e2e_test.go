@@ -879,7 +879,10 @@ func jobStatusByName(statuses []trainer.JobStatus, name string) (trainer.JobStat
 	return trainer.JobStatus{}, false
 }
 
-var _ = ginkgo.Describe("OptimizationJob e2e", func() {
+// TODO: Re-enable once we release OpenShift-compatible images for OptimizationJob.
+// OptimizationJob is disabled on ODH / RHOAI.
+var _ = ginkgo.PDescribe("OptimizationJob e2e", func() {
+
 	var ns *corev1.Namespace
 
 	// Create test namespace before each test.
