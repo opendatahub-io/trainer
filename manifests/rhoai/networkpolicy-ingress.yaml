@@ -15,9 +15,10 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    # Use explicit listener ports so enforcement does not depend on named-port resolution.
     # Admission webhooks can be called by the API server through the service.
     - ports:
-        - port: webhook
+        - port: 9443
           protocol: TCP
     # TrainJob status updates.
     - from:
@@ -27,7 +28,7 @@ spec:
               - key: training.kubeflow.org/job-name
                 operator: Exists
       ports:
-        - port: status-server
+        - port: 10443
           protocol: TCP
     # Secure Prometheus metrics.
     - from:
@@ -35,5 +36,5 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: openshift-monitoring
       ports:
-        - port: metrics
+        - port: 8443
           protocol: TCP
