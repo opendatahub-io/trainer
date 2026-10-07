@@ -21,8 +21,12 @@ NFS_PROVISIONER_OPERATOR_MANIFEST ?= $(RHAI_TEST_MANIFESTS_DIR)/nfs-provisioner-
 NFS_PROVISIONER_MANIFEST ?= $(RHAI_TEST_MANIFESTS_DIR)/nfs-provisioner.yaml
 TRAINER_IMAGE ?=
 TRAINER_OPERATOR_RUNTIME_REF ?= main
-TRAINER_OPERATOR_RUNTIME_URL ?= https://github.com/opendatahub-io/trainer-operator//manifests/runtimes?ref=$(TRAINER_OPERATOR_RUNTIME_REF)
-TRAINER_OPERATOR_IMAGESTREAMS_URL ?= https://github.com/opendatahub-io/trainer-operator//manifests/imagestreams?ref=$(TRAINER_OPERATOR_RUNTIME_REF)
+TRAINER_OPERATOR_SOURCE_URL ?= https://github.com/opendatahub-io/trainer-operator.git
+TRAINER_OPERATOR_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/trainer-operator
+export ODH_TH_TORCH_CUDA_IMAGE ?=
+export ODH_TH_TORCH_ROCM_IMAGE ?=
+export ODH_TH_TORCH_CPU_IMAGE ?=
+export ODH_OPENMPI_CUDA_IMAGE ?=
 ARTIFACT_DIR ?= $(PROJECT_DIR)/artifacts
 UPSTREAM_JUNIT_REPORT ?= upstream-trainer-junit.xml
 DW_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/distributed-workloads
@@ -278,10 +282,54 @@ deploy-rhoai: install-jobset-operator ## Install Trainer using RHOAI manifests w
 		deployment/kubeflow-trainer-controller-manager -n opendatahub 2>/dev/null
 	echo "RHOAI Training Operator deployed successfully!"
 
+.PHONY: prepare-trainer-operator-source
+prepare-trainer-operator-source: ## Clone trainer-operator and inject any runtime image overrides.
+	@if [[ -d "$(TRAINER_OPERATOR_SOURCE_DIR)/manifests" ]]; then
+		echo "Using existing trainer-operator source: $(TRAINER_OPERATOR_SOURCE_DIR)"
+	else
+		mkdir -p "$$(dirname "$(TRAINER_OPERATOR_SOURCE_DIR)")"
+		git clone --depth 1 --branch "$(TRAINER_OPERATOR_RUNTIME_REF)" \
+			"$(TRAINER_OPERATOR_SOURCE_URL)" "$(TRAINER_OPERATOR_SOURCE_DIR)"
+	fi
+	# Reset the params.env files so an empty override cannot keep values from a
+	# previous preparation of a reused checkout.
+	git -C "$(TRAINER_OPERATOR_SOURCE_DIR)" checkout -- \
+		manifests/runtimes/params.env manifests/imagestreams/params.env
+	replace_param() {
+		local key="$$1" value="$$2" file="$$3"
+		if ! grep -q "^$${key}=" "$$file"; then
+			echo "Error: key '$${key}' not found in $$file" >&2
+			return 1
+		fi
+		$(SED) -i "s|^$${key}=.*|$${key}=$${value}|" "$$file"
+	}
+	if [[ -n "$${ODH_TH_TORCH_CUDA_IMAGE:-}" ]]; then
+		replace_param odh-th-torch-cuda-py312-image "$${ODH_TH_TORCH_CUDA_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
+		replace_param odh-training-universal-workbench-image-cuda-3-6 "$${ODH_TH_TORCH_CUDA_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams/params.env"
+	fi
+	if [[ -n "$${ODH_TH_TORCH_ROCM_IMAGE:-}" ]]; then
+		replace_param odh-th-torch-rocm-py312-image "$${ODH_TH_TORCH_ROCM_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
+		replace_param odh-training-universal-workbench-image-rocm-3-6 "$${ODH_TH_TORCH_ROCM_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams/params.env"
+	fi
+	if [[ -n "$${ODH_TH_TORCH_CPU_IMAGE:-}" ]]; then
+		replace_param odh-th-torch-cpu-py312-image "$${ODH_TH_TORCH_CPU_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
+		replace_param odh-training-universal-workbench-image-cpu-3-6 "$${ODH_TH_TORCH_CPU_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams/params.env"
+	fi
+	if [[ -n "$${ODH_OPENMPI_CUDA_IMAGE:-}" ]]; then
+		replace_param odh-openmpi-cuda-image "$${ODH_OPENMPI_CUDA_IMAGE}" \
+			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
+	fi
+
 .PHONY: install-test-runtimes
-install-test-runtimes: check-kubectl ## Install Trainer runtimes required by the integration tests.
+install-test-runtimes: check-kubectl prepare-trainer-operator-source ## Install Trainer runtimes required by the integration tests.
 	@echo "Installing midstream Trainer runtimes..."
-	$(KUBECTL) apply --server-side -k '$(TRAINER_OPERATOR_RUNTIME_URL)'
+	$(KUBECTL) apply --server-side -k "$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes"
 	echo "Installing upstream E2E-only runtimes..."
 	$(KUBECTL) apply --server-side \
 		-f manifests/base/runtimes/jax_distributed.yaml \
@@ -289,10 +337,11 @@ install-test-runtimes: check-kubectl ## Install Trainer runtimes required by the
 		-f examples/flux/flux-runtime.yaml
 
 .PHONY: install-test-imagestreams
-install-test-imagestreams: check-kubectl ## Install ImageStreams required by the integration tests.
+install-test-imagestreams: check-kubectl prepare-trainer-operator-source ## Install ImageStreams required by the integration tests.
 	@echo "Installing Trainer test ImageStreams..."
 	$(KUBECTL) create namespace $(APPLICATIONS_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
-	$(KUBECTL) apply --server-side -n $(APPLICATIONS_NAMESPACE) -k '$(TRAINER_OPERATOR_IMAGESTREAMS_URL)'
+	$(KUBECTL) apply --server-side -n $(APPLICATIONS_NAMESPACE) \
+		-k "$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams"
 
 .PHONY: test-e2e-rhai
 test-e2e-rhai: ginkgo ## Run the upstream Trainer RHAI E2E suite.
