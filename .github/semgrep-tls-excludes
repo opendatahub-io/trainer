@@ -10,4 +10,4 @@
 go-tls-bypass:/pkg/statusserver/setup.go
 
 # pkg/controller/optimizationjob_controller.go: is disabled and not included in the release
-go-tls-bypass:/pkg/controller/optimizationjob_controller.go
+go-grpc-tls-credential-override:/pkg/controller/optimizationjob_controller.go
