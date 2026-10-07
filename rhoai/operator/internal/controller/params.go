@@ -29,6 +29,11 @@ import (
 const (
 	imageParamControllerImage = "odh-kubeflow-trainer-controller-image"
 	paramOperatorNamespace    = "operator-namespace"
+	relatedImageThTorchCuda   = "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE"
+	relatedImageThTorchRocm   = "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE"
+	relatedImageThTorchCpu    = "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE"
+	relatedImageModelOptCuda  = "RELATED_IMAGE_RHAII_MODEL_OPT_CUDA_IMAGE"
+	relatedImageVllm          = "RELATED_IMAGE_RHAII_VLLM_CUDA_IMAGE"
 )
 
 var trainerImageParamMap = map[string]string{
@@ -36,17 +41,18 @@ var trainerImageParamMap = map[string]string{
 }
 
 var imageStreamParamMap = map[string]string{
-	"odh-training-universal-workbench-image-cuda-3-6": "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE",
-	"odh-training-universal-workbench-image-rocm-3-6": "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE",
-	"odh-training-universal-workbench-image-cpu-3-6":  "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE",
+	"odh-training-universal-workbench-image-cuda-3-6": relatedImageThTorchCuda,
+	"odh-training-universal-workbench-image-rocm-3-6": relatedImageThTorchRocm,
+	"odh-training-universal-workbench-image-cpu-3-6":  relatedImageThTorchCpu,
 }
 
 var runtimesParamMap = map[string]string{
-	"odh-th-torch-cuda-py312-image":       "RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE",
-	"odh-th-torch-rocm-py312-image":       "RELATED_IMAGE_ODH_TH_TORCH_ROCM_PY312_IMAGE",
-	"odh-th-torch-cpu-py312-image":        "RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE",
-	"odh-speculator-model-opt-cuda-image": "RELATED_IMAGE_RHAII_MODEL_OPT_CUDA_IMAGE",
-	"odh-vllm-cuda-image":                 "RELATED_IMAGE_RHAII_VLLM_CUDA_IMAGE",
+	"odh-th-torch-cuda-py312-image":       relatedImageThTorchCuda,
+	"odh-th-torch-rocm-py312-image":       relatedImageThTorchRocm,
+	"odh-th-torch-cpu-py312-image":        relatedImageThTorchCpu,
+	"odh-openmpi-cuda-image":              relatedImageThTorchCuda,
+	"odh-speculator-model-opt-cuda-image": relatedImageModelOptCuda,
+	"odh-vllm-cuda-image":                 relatedImageVllm,
 }
 
 // applyStaticParams sets params.env keys directly to the given values,

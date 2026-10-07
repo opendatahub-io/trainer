@@ -208,6 +208,20 @@ replacements:
     fieldPaths:
     - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
 
+# openmpi-cuda (launcher + node share the CUDA-aware OpenMPI image)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-openmpi-cuda-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: openmpi-cuda
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=launcher].template.spec.template.spec.containers.[name=node].image
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
 resources:
 - torch-distributed.yaml
 - torch-distributed-rocm.yaml
@@ -223,3 +237,4 @@ resources:
 - training-hub-th09-cpu-torch211-py312.yaml
 - speculator-model-opt-cuda.yaml
 - vllm-extract-cuda.yaml
+- openmpi-cuda.yaml

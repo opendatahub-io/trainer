@@ -95,3 +95,19 @@ func TestApplyStaticParamsMissingParamsEnv(t *testing.T) {
 
 	g.Expect(applyStaticParams(t.TempDir(), map[string]string{paramOperatorNamespace: "redhat-ods-applications"})).To(Succeed())
 }
+
+func TestApplyParamOverridesOpenMPICUDAImage(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("odh-openmpi-cuda-image=quay.io/opendatahub/odh-th-torch-cuda-py312:odh-stable\n"), 0o644)).To(Succeed())
+
+	t.Setenv("RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE", "quay.io/custom/universal-cuda@sha256:abc")
+
+	g.Expect(applyParamOverrides(dir, runtimesParamMap)).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params["odh-openmpi-cuda-image"]).To(Equal("quay.io/custom/universal-cuda@sha256:abc"))
+}
