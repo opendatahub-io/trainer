@@ -26,15 +26,16 @@ spec:
                         - -c
                       args:
                         - |
+                          SPECULATOR_DEFAULT_SPECULATIVE_CONFIG='{"method":"extract_hidden_states",
+                              "num_speculative_tokens":1,
+                              "draft_model_config":{"hf_config":{
+                                "eagle_aux_hidden_state_layer_ids":['"$SPECULATOR_TARGET_LAYER_IDS"']}}}'
                           TP=${SPECULATOR_VLLM_GPU_COUNT:-1}
                           TF=""
                           [ "$TP" -gt 1 ] && TF="--tensor-parallel-size $TP"
                           python3 -m vllm.entrypoints.cli.main serve \
                             "$SPECULATOR_VERIFIER_MODEL" \
-                            --speculative-config '{"method":"extract_hidden_states",
-                              "num_speculative_tokens":1,
-                              "draft_model_config":{"hf_config":{
-                                "eagle_aux_hidden_state_layer_ids":['"$SPECULATOR_TARGET_LAYER_IDS"']}}}' \
+                            --speculative-config "${SPECULATOR_VLLM_SPECULATIVE_CONFIG:-$SPECULATOR_DEFAULT_SPECULATIVE_CONFIG}" \
                             --kv-transfer-config '{"kv_connector":"ExampleHiddenStatesConnector",
                               "kv_role":"kv_producer",
                               "kv_connector_extra_config":{
