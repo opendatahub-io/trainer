@@ -24,7 +24,7 @@ import (
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 )
 
-func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, options controller.Options) (string, error) {
+func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, options controller.Options, suggestionClient SearchAlgorithmClient) (string, error) {
 	runtimeRec := NewTrainingRuntimeReconciler(
 		mgr.GetClient(),
 		mgr.GetEventRecorder("trainer-trainingruntime-controller"),
@@ -46,6 +46,18 @@ func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, opt
 		runtimes,
 	).SetupWithManager(mgr, options); err != nil {
 		return trainer.TrainJobKind, err
+	}
+	// disable OptimizationJob controller whilst it is under development.
+	// Do not re-enable without removing the tls compliance suppression in .github/semgrep-tls-excludes
+	if false {
+		if err := NewOptimizationJobReconciler(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			mgr.GetEventRecorder("optimizationjob-controller"),
+			suggestionClient,
+		).SetupWithManager(mgr, options); err != nil {
+			return trainer.OptimizationJobKind, err
+		}
 	}
 	return "", nil
 }
