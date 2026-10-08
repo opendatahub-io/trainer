@@ -111,3 +111,19 @@ func TestApplyParamOverridesOpenMPICUDAImage(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(params["odh-openmpi-cuda-image"]).To(Equal("quay.io/custom/universal-cuda@sha256:abc"))
 }
+
+func TestApplyParamOverridesOpenMPICPUImage(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("odh-openmpi-cpu-image=quay.io/opendatahub/odh-th-torch-cpu-py312:odh-stable\n"), 0o644)).To(Succeed())
+
+	t.Setenv("RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE", "quay.io/custom/universal-cpu@sha256:abc")
+
+	g.Expect(applyParamOverrides(dir, runtimesParamMap)).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params["odh-openmpi-cpu-image"]).To(Equal("quay.io/custom/universal-cpu@sha256:abc"))
+}

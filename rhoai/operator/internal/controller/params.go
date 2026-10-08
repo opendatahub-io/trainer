@@ -51,6 +51,7 @@ var runtimesParamMap = map[string]string{
 	"odh-th-torch-rocm-py312-image":       relatedImageThTorchRocm,
 	"odh-th-torch-cpu-py312-image":        relatedImageThTorchCpu,
 	"odh-openmpi-cuda-image":              relatedImageThTorchCuda,
+	"odh-openmpi-cpu-image":               relatedImageThTorchCpu,
 	"odh-speculator-model-opt-cuda-image": relatedImageModelOptCuda,
 	"odh-vllm-cuda-image":                 relatedImageVllm,
 }

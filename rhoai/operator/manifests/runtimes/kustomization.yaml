@@ -222,6 +222,20 @@ replacements:
     - spec.template.spec.replicatedJobs.[name=launcher].template.spec.template.spec.containers.[name=node].image
     - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
 
+# openmpi-cpu (launcher + node share the CPU OpenMPI image)
+- source:
+    kind: ConfigMap
+    name: runtimes-config
+    version: v1
+    fieldPath: data.odh-openmpi-cpu-image
+  targets:
+  - select:
+      kind: ClusterTrainingRuntime
+      name: openmpi-cpu
+    fieldPaths:
+    - spec.template.spec.replicatedJobs.[name=launcher].template.spec.template.spec.containers.[name=node].image
+    - spec.template.spec.replicatedJobs.[name=node].template.spec.template.spec.containers.[name=node].image
+
 resources:
 - torch-distributed.yaml
 - torch-distributed-rocm.yaml
@@ -238,3 +252,4 @@ resources:
 - speculator-model-opt-cuda.yaml
 - vllm-extract-cuda.yaml
 - openmpi-cuda.yaml
+- openmpi-cpu.yaml
