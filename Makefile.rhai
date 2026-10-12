@@ -213,20 +213,26 @@ install-nfs-provisioner: check-kubectl ## Install the NFS provisioner and RWX St
 	$(KUBECTL) get storageclass nfs
 	echo "NFS provisioner and RWX StorageClass deployed successfully!"
 
+# Tier 2 workload pods use the S3 API Route; rotate credentials for each install.
 .PHONY: install-s4
 install-s4: check-kubectl ## Install S4 S3-compatible storage for distributed-workloads tests.
-	command -v helm >/dev/null 2>&1 || { echo "Error: 'helm' is required to install S4"; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "Error: 'helm' is required to install S4"; exit 1; }
+	command -v openssl >/dev/null 2>&1 || { echo "Error: 'openssl' is required to generate S4 credentials"; exit 1; }
 	if [[ ! -d "$(S4_SOURCE_DIR)/charts/s4" ]]; then
 		mkdir -p "$$(dirname "$(S4_SOURCE_DIR)")"
 		git clone --depth 1 --branch "$(S4_SOURCE_REF)" \
 			"$(S4_SOURCE_URL)" "$(S4_SOURCE_DIR)"
 	fi
+	s4_access_key_id=$$(openssl rand -hex 16)
+	s4_secret_access_key=$$(openssl rand -hex 32)
+	s4_ui_password=$$(openssl rand -hex 32)
 	helm upgrade --install "$(S4_RELEASE)" "$(S4_SOURCE_DIR)/charts/s4" \
 		--namespace "$(S4_NAMESPACE)" --create-namespace \
 		--wait --timeout 10m \
-		--values /dev/stdin <<'EOF'
-	auth: {enabled: true, username: s4admin, password: s4secret}
-	route: {s3Api: {enabled: true}}
+		--values /dev/stdin <<-EOF
+	auth: {enabled: true, username: s4admin, password: $$s4_ui_password}
+	s3: {accessKeyId: $$s4_access_key_id, secretAccessKey: $$s4_secret_access_key}
+	route: {enabled: false, s3Api: {enabled: true}}
 	EOF
 	s4_pod=$$($(KUBECTL) get pods -n "$(S4_NAMESPACE)" \
 		-l "app.kubernetes.io/instance=$(S4_RELEASE),app.kubernetes.io/name=s4" \
@@ -523,9 +529,6 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-nfs-provisioner || setup_passed=false
-	fi
-	if [[ "$$setup_passed" = true ]]; then
-		$(MAKE) -f Makefile.rhai install-s4 || setup_passed=false
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-test-runtimes || setup_passed=false
