@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/features"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 )
 
@@ -112,8 +113,13 @@ func (w *TrainJobValidator) ValidateCreate(ctx context.Context, obj *trainer.Tra
 	log := ctrl.LoggerFrom(ctx).WithName("trainJob-webhook")
 	log.V(5).Info("Validating create", "TrainJob", klog.KObj(obj))
 
+<<<<<<< HEAD
 	if errs := validateRHOAISecurity(obj); len(errs) > 0 {
 		return nil, errs.ToAggregate()
+=======
+	if !features.Enabled(features.TrainJobDynamicResourceAllocation) && usesDRA(obj) {
+		return nil, draFieldPaths(obj).ToAggregate()
+>>>>>>> upstream/master
 	}
 
 	runtimeRefGK := runtime.RuntimeRefToRuntimeRegistryKey(obj.Spec.RuntimeRef)
@@ -129,8 +135,16 @@ func (w *TrainJobValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *
 	log := ctrl.LoggerFrom(ctx).WithName("trainJob-webhook")
 	log.V(5).Info("Validating update", "TrainJob", klog.KObj(newObj))
 
+<<<<<<< HEAD
 	if errs := validateRHOAISecurity(newObj); len(errs) > 0 {
 		return nil, errs.ToAggregate()
+=======
+	// spec.trainer is immutable, but spec.runtimePatches entries can still be appended on update,
+	// so only reject an update that introduces DRA fields; a TrainJob created with them while the
+	// gate was enabled stays updatable (e.g. suspend) after the gate is disabled.
+	if !features.Enabled(features.TrainJobDynamicResourceAllocation) && usesDRA(newObj) && !usesDRA(oldObj) {
+		return nil, draFieldPaths(newObj).ToAggregate()
+>>>>>>> upstream/master
 	}
 
 	runtimeRefGK := runtime.RuntimeRefToRuntimeRegistryKey(newObj.Spec.RuntimeRef)
@@ -174,4 +188,89 @@ func validateTrainJobImmutability(oldObj, newObj *trainer.TrainJob) field.ErrorL
 
 func (w *TrainJobValidator) ValidateDelete(ctx context.Context, obj *trainer.TrainJob) (admission.Warnings, error) {
 	return nil, nil
+}
+
+// usesDRA reports whether the TrainJob references any DRA fields.
+func usesDRA(trainJob *trainer.TrainJob) bool {
+	if trainJob.Spec.Trainer != nil && len(trainJob.Spec.Trainer.ResourceClaimsPerNode) > 0 {
+		return true
+	}
+	for _, patch := range trainJob.Spec.RuntimePatches {
+		if patch.TrainingRuntimeSpec == nil || patch.TrainingRuntimeSpec.Template == nil ||
+			patch.TrainingRuntimeSpec.Template.Spec == nil {
+			continue
+		}
+		for _, rJob := range patch.TrainingRuntimeSpec.Template.Spec.ReplicatedJobs {
+			if rJob.Template == nil || rJob.Template.Spec == nil ||
+				rJob.Template.Spec.Template == nil || rJob.Template.Spec.Template.Spec == nil {
+				continue
+			}
+			podSpec := rJob.Template.Spec.Template.Spec
+			if len(podSpec.ResourceClaims) > 0 {
+				return true
+			}
+			for _, c := range podSpec.Containers {
+				if c.Resources != nil && len(c.Resources.Claims) > 0 {
+					return true
+				}
+			}
+			for _, c := range podSpec.InitContainers {
+				if c.Resources != nil && len(c.Resources.Claims) > 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// draFieldPaths returns field.Forbidden errors for every DRA field set on the TrainJob.
+func draFieldPaths(trainJob *trainer.TrainJob) field.ErrorList {
+	var allErrs field.ErrorList
+	specPath := field.NewPath("spec")
+	msg := "TrainJobDynamicResourceAllocation feature gate is disabled"
+
+	if trainJob.Spec.Trainer != nil && len(trainJob.Spec.Trainer.ResourceClaimsPerNode) > 0 {
+		allErrs = append(allErrs, field.Forbidden(
+			specPath.Child("trainer", "resourceClaimsPerNode"), msg,
+		))
+	}
+
+	for i, patch := range trainJob.Spec.RuntimePatches {
+		if patch.TrainingRuntimeSpec == nil || patch.TrainingRuntimeSpec.Template == nil ||
+			patch.TrainingRuntimeSpec.Template.Spec == nil {
+			continue
+		}
+		for j, rJob := range patch.TrainingRuntimeSpec.Template.Spec.ReplicatedJobs {
+			if rJob.Template == nil || rJob.Template.Spec == nil ||
+				rJob.Template.Spec.Template == nil || rJob.Template.Spec.Template.Spec == nil {
+				continue
+			}
+			podSpec := rJob.Template.Spec.Template.Spec
+			rJobPath := specPath.Child("runtimePatches").Index(i).
+				Child("trainingRuntimeSpec", "template", "spec", "replicatedJobs").Index(j).
+				Child("template", "spec", "template", "spec")
+
+			if len(podSpec.ResourceClaims) > 0 {
+				allErrs = append(allErrs, field.Forbidden(
+					rJobPath.Child("resourceClaims"), msg,
+				))
+			}
+			for k, c := range podSpec.Containers {
+				if c.Resources != nil && len(c.Resources.Claims) > 0 {
+					allErrs = append(allErrs, field.Forbidden(
+						rJobPath.Child("containers").Index(k).Child("resources", "claims"), msg,
+					))
+				}
+			}
+			for k, c := range podSpec.InitContainers {
+				if c.Resources != nil && len(c.Resources.Claims) > 0 {
+					allErrs = append(allErrs, field.Forbidden(
+						rJobPath.Child("initContainers").Index(k).Child("resources", "claims"), msg,
+					))
+				}
+			}
+		}
+	}
+	return allErrs
 }

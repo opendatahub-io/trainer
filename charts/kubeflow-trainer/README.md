@@ -44,6 +44,10 @@ helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
 > If you manage the CRDs out-of-band (previously via Helm's `--skip-crds` flag), set `--set crds.enabled=false` to skip
 > installing them with the chart.
 
+> [!NOTE]
+> Setting `dataCache.enabled=true` also installs LeaderWorkerSet as a chart dependency.
+> If LeaderWorkerSet is already installed in the cluster, add `--set dataCache.lws.install=false`.
+
 ### Install with ClusterTrainingRuntimes
 
 You can enable the default ClusterTrainingRuntimes together with the control plane in a single
@@ -80,6 +84,19 @@ helm uninstall [RELEASE_NAME]
 ```
 
 This removes all the Kubernetes resources associated with the chart and deletes the release, except for the `crds`, those will have to be removed manually.
+The CRDs are kept through the `helm.sh/resource-policy: keep` annotation (`crds.keep`, enabled by default), because deleting
+them would also delete every TrainJob and runtime in the cluster. To remove them with the release instead, set `crds.keep=false`
+on the release (for example with `helm upgrade --reuse-values --set crds.keep=false`) before uninstalling.
+
+Reinstalling the chart with the same release name and namespace adopts the kept CRDs, so they do not have to be removed first.
+Installing it under a different release name or namespace fails Helm's ownership check on the kept CRDs; either pass
+`--take-ownership` to `helm install` (Helm 3.17+), or point the CRDs at the new release before installing:
+
+```shell
+kubectl annotate crd trainjobs.trainer.kubeflow.org trainingruntimes.trainer.kubeflow.org \
+  clustertrainingruntimes.trainer.kubeflow.org optimizationjobs.trainer.kubeflow.org \
+  meta.helm.sh/release-name=[RELEASE_NAME] meta.helm.sh/release-namespace=[NAMESPACE] --overwrite
+```
 
 See [helm uninstall](https://helm.sh/docs/helm/helm_uninstall) for command documentation.
 
@@ -100,6 +117,7 @@ manager:
 | nameOverride | string | `""` | String to partially override release name. |
 | fullnameOverride | string | `""` | String to fully override release name. |
 | crds.enabled | bool | `true` | Whether to install the Trainer CRDs (TrainJob, TrainingRuntime, ClusterTrainingRuntime) with the chart. Set to `false` if you manage the CRDs outside of the chart (for example, applying them separately). This replaces Helm's built-in `--skip-crds` flag, which no longer applies now that the CRDs are chart templates. |
+| crds.keep | bool | `true` | Keep the CRDs on `helm uninstall` via the `helm.sh/resource-policy: keep` annotation. Deleting a CRD deletes every TrainJob, TrainingRuntime, ClusterTrainingRuntime and OptimizationJob in the cluster, so this is on by default; set to `false` to remove the CRDs with the release. |
 | jobset.install | bool | `true` | Whether to install jobset as a dependency managed by trainer. This must be set to `false` if jobset controller/webhook has already been installed into the cluster. |
 | jobset.fullnameOverride | string | `"jobset"` | String to fully override jobset release name. |
 | commonLabels | object | `{}` | Common labels to add to the resources. |
@@ -129,7 +147,6 @@ manager:
 | manager.config.statusServer.burst | int | `10` | Burst rate limit for the TrainJob Status Server api client |
 | webhook.failurePolicy | string | `"Fail"` | Specifies how unrecognized errors are handled. Available options are `Ignore` or `Fail`. |
 | dataCache.enabled | bool | `false` | Enable/disable data cache support (LWS dependency, ClusterRole). Set to `true` to install data cache components. |
-| dataCache.lws.install | bool | `true` | Whether to install LeaderWorkerSet as a dependency. Set to `false` if LeaderWorkerSet is already installed in the cluster. |
 | dataCache.lws.fullnameOverride | string | `"lws"` | String to fully override LeaderWorkerSet release name. |
 | dataCache.cacheImage.registry | string | `"ghcr.io"` | Data cache image registry |
 | dataCache.cacheImage.repository | string | `"kubeflow/trainer/data-cache"` | Data cache image repository |
