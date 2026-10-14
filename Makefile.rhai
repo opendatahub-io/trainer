@@ -434,7 +434,7 @@ test-dw-tier1: check-kubectl ## Run the distributed-workloads Trainer tier 1 sui
 		./tests/trainer/ 2>&1 | tee "$(DW_TIER1_TEST_LOG)"
 
 .PHONY: test-dw-tier2
-test-dw-tier2: install-s4 ## Run the distributed-workloads Trainer tier 2 suite.
+test-dw-tier2: check-kubectl ## Run the distributed-workloads Trainer tier 2 suite.
 	@test -d "$(DW_SOURCE_DIR)/tests/trainer" || { \
 		echo "Trainer tier 2 tests not found in $(DW_SOURCE_DIR)/tests/trainer"; \
 		exit 1; \
@@ -535,6 +535,9 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-test-imagestreams || setup_passed=false
+	fi
+	if [[ "$$setup_passed" = true ]]; then
+		$(MAKE) -f Makefile.rhai install-s4 || setup_passed=false
 	fi
 	if [[ "$$setup_passed" != true ]]; then
 		echo "Trainer integration test setup failed"
