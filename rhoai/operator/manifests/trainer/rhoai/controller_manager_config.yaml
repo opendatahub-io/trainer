@@ -57,3 +57,6 @@ statusServer:
   port: 10443
   qps: 5
   burst: 10
+
+featureGates:
+  TrainJobDynamicResourceAllocation: true
