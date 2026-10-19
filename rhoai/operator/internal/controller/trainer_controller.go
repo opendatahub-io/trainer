@@ -40,7 +40,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/gc"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
@@ -67,7 +66,7 @@ const (
 	defaultNamespace = "opendatahub"
 	finalizerName    = "components.platform.opendatahub.io/trainer-cleanup"
 
-	degradedCondition = string(common.ConditionTypeDegraded)
+	degradedCondition = fwapi.ConditionTypeDegraded
 
 	trainerKubeflowGroup   = "trainer.kubeflow.org"
 	trainerKubeflowVersion = "v1alpha1"
@@ -225,7 +224,7 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 			fwgc.WithOnlyCollectOwned(false),
 			fwgc.WithUnremovables(clusterTrainingRuntimeGVK, trainingRuntimeGVK))).
 		WithFinalizer(m.cleanup).
-		WithConditions("DeploymentsAvailable").
+		WithConditions(conditions.Dependent(fwapi.ConditionType("DeploymentsAvailable"), conditions.HealthyWhenTrue)).
 		WithReconcilerOpts(reconciler.WithFinalizerName(finalizerName)).
 		Build(ctx)
 	if err != nil {
@@ -269,7 +268,7 @@ func (m *trainerActions) checkDependencies(ctx context.Context, rr *types.Reconc
 	if err != nil {
 		rr.Conditions.MarkTrue(degradedCondition,
 			conditions.WithReason("ClusterDetectionFailed"),
-			conditions.WithMessage("Failed to detect cluster type: %v", err))
+			conditions.WithMessagef("Failed to detect cluster type: %v", err))
 		return fmt.Errorf("failed to detect cluster type: %w", err)
 	}
 
@@ -304,7 +303,7 @@ func (m *trainerActions) checkDependencies(ctx context.Context, rr *types.Reconc
 func (m *trainerActions) degradeDependency(rr *types.ReconciliationRequest, reason, message string) error {
 	rr.Conditions.MarkTrue(degradedCondition,
 		conditions.WithReason(reason),
-		conditions.WithMessage("%s", message))
+		conditions.WithMessage(message))
 	return fmt.Errorf("dependency not met: %s", message)
 }
 

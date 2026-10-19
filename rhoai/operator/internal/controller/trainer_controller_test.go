@@ -546,12 +546,12 @@ func newTestReconciler(t *testing.T) *reconciler.Reconciler {
 	t.Helper()
 
 	m := newTestActions()
-	// Only register ProvisioningSucceeded as dependent — the test pipeline
-	// omits deployments.NewAction, so DeploymentsAvailable would never be set
-	// and CleanupStaleConditions would mark it as an error.
+	// NewReconciler defaults already wire Ready + ProvisioningSucceeded.
+	// Do not register DeploymentsAvailable here — the test pipeline omits
+	// deployments.NewAction, so that condition would never be set and
+	// CleanupStaleConditions would mark it as an error.
 	r, err := reconciler.NewReconciler(testMgr, "trainer", &componentsv1alpha1.Trainer{},
 		reconciler.WithFinalizerName(finalizerName),
-		reconciler.WithConditionsManagerFactory("Ready", "ProvisioningSucceeded"),
 	)
 	if err != nil {
 		t.Fatalf("failed to create reconciler: %v", err)

@@ -7,8 +7,8 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/kubeflow/trainer/v2 v2.2.1
 	github.com/onsi/gomega v1.40.0
-	github.com/opendatahub-io/odh-platform-utilities v0.4.0
-	github.com/opendatahub-io/odh-platform-utilities/framework v0.0.0-20260805122551-b8da1945829a
+	github.com/opendatahub-io/odh-platform-utilities v0.5.0
+	github.com/opendatahub-io/odh-platform-utilities/framework v0.0.0-20261008120904-ac2a1a5991a3
 	github.com/openshift/api v0.0.0-20260805215214-cfb63858e9d7
 	github.com/openshift/controller-runtime-common v0.0.0-20260813135806-e1187ec555fc
 	github.com/openshift/library-go v0.0.0-20260807194649-ee0a87843dda
