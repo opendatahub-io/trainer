@@ -20,31 +20,40 @@ spec:
           expr: |
             label_replace(
               sum by (le) (
-                kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
-                  job="kubeflow-trainer-controller-manager",
-                  runtime_ref=~".*/torch-distributed(-.*)?$",
-                  le=~"^(4(\\.0)?|[+]Inf)$"
-                }
+                label_replace(
+                  kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                    job="kubeflow-trainer-controller-manager",
+                    runtime_ref=~"^trainer[.]kubeflow[.]org/ClusterTrainingRuntime//(torch-distributed|torch-distributed-with-cache|torch-distributed-cpu|torch-distributed-rocm|torch-distributed-cuda130-torch211-py312|torch-distributed-rocm714-torch211-py312|torch-distributed-cpu-torch211-py312)$",
+                    le=~"^(4(\\.0)?|[+]Inf)$"
+                  },
+                  "le", "4.0", "le", "^4(\\.0)?$"
+                )
               ),
               "runtime_ref", "torch-distributed", "le", ".*"
             )
             or label_replace(
               sum by (le) (
-                kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
-                  job="kubeflow-trainer-controller-manager",
-                  runtime_ref=~".*/training-hub(-.*)?$",
-                  le=~"^(4(\\.0)?|[+]Inf)$"
-                }
+                label_replace(
+                  kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                    job="kubeflow-trainer-controller-manager",
+                    runtime_ref=~"^trainer[.]kubeflow[.]org/ClusterTrainingRuntime//(training-hub|training-hub-cpu|training-hub-rocm|training-hub-th09-cpu-torch211-py312|training-hub-th09-cuda130-torch211-py312|training-hub-th09-rocm714-torch211-py312)$",
+                    le=~"^(4(\\.0)?|[+]Inf)$"
+                  },
+                  "le", "4.0", "le", "^4(\\.0)?$"
+                )
               ),
               "runtime_ref", "training-hub", "le", ".*"
             )
             or label_replace(
               sum by (le) (
-                kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
-                  job="kubeflow-trainer-controller-manager",
-                  runtime_ref=~".*/openmpi(-.*)?$",
-                  le=~"^(4(\\.0)?|[+]Inf)$"
-                }
+                label_replace(
+                  kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                    job="kubeflow-trainer-controller-manager",
+                    runtime_ref=~"^trainer[.]kubeflow[.]org/ClusterTrainingRuntime//(openmpi-cpu|openmpi-cuda)$",
+                    le=~"^(4(\\.0)?|[+]Inf)$"
+                  },
+                  "le", "4.0", "le", "^4(\\.0)?$"
+                )
               ),
               "runtime_ref", "openmpi", "le", ".*"
             )
@@ -52,8 +61,14 @@ spec:
         - record: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket
           expr: |
             sum by (le) (
-              kubeflow_trainer_trainjob_lifetime_seconds_bucket{
-                job="kubeflow-trainer-controller-manager",
-                le=~"^(43200(\\.0)?|345600(\\.0)?|[+]Inf)$"
-              }
+              label_replace(
+                label_replace(
+                  kubeflow_trainer_trainjob_lifetime_seconds_bucket{
+                    job="kubeflow-trainer-controller-manager",
+                    le=~"^(43200(\\.0)?|345600(\\.0)?|[+]Inf)$"
+                  },
+                  "le", "43200.0", "le", "^43200(\\.0)?$"
+                ),
+                "le", "345600.0", "le", "^345600(\\.0)?$"
+              )
             )
