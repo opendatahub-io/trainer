@@ -1,0 +1,54 @@
+# Native Prometheus rule groups for promtool. PrometheusRule CRs are not a
+# supported rule_files format, so keep these groups aligned with prometheus_rules.yaml.
+groups:
+  - name: trainer.telemetry
+    rules:
+      - record: rhoai_kubeflow_trainer_trainjob_created_total
+        expr: |
+          sum(
+            kubeflow_trainer_trainjob_created_total{
+              job="kubeflow-trainer-controller-manager"
+            }
+          )
+
+      - record: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket
+        expr: |
+          label_replace(
+            sum by (le) (
+              kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                job="kubeflow-trainer-controller-manager",
+                runtime_ref=~".*/torch-distributed(-.*)?$",
+                le=~"^(4(\\.0)?|[+]Inf)$"
+              }
+            ),
+            "runtime_ref", "torch-distributed", "le", ".*"
+          )
+          or label_replace(
+            sum by (le) (
+              kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                job="kubeflow-trainer-controller-manager",
+                runtime_ref=~".*/training-hub(-.*)?$",
+                le=~"^(4(\\.0)?|[+]Inf)$"
+              }
+            ),
+            "runtime_ref", "training-hub", "le", ".*"
+          )
+          or label_replace(
+            sum by (le) (
+              kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                job="kubeflow-trainer-controller-manager",
+                runtime_ref=~".*/openmpi(-.*)?$",
+                le=~"^(4(\\.0)?|[+]Inf)$"
+              }
+            ),
+            "runtime_ref", "openmpi", "le", ".*"
+          )
+
+      - record: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket
+        expr: |
+          sum by (le) (
+            kubeflow_trainer_trainjob_lifetime_seconds_bucket{
+              job="kubeflow-trainer-controller-manager",
+              le=~"^(43200(\\.0)?|345600(\\.0)?|[+]Inf)$"
+            }
+          )
