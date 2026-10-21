@@ -1,0 +1,55 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubeflow-trainer-telemetry
+  labels:
+    openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus
+spec:
+  groups:
+    - name: trainer.telemetry
+      rules:
+        - record: rhoai_kubeflow_trainer_trainjob_created_total
+          expr: |
+            sum(
+              kubeflow_trainer_trainjob_created_total{
+                job="kubeflow-trainer-controller-manager"
+              }
+            )
+
+        - record: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket
+          expr: |
+            sum by (le, runtime_ref) (
+              label_replace(
+                kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                  job="kubeflow-trainer-controller-manager",
+                  runtime_ref=~".*/torch-distributed(-.*)?$",
+                  le=~"^(4.0|[+]Inf)$"
+                },
+                "runtime_ref", "torch-distributed", "runtime_ref", ".*"
+              )
+              or label_replace(
+                kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                  job="kubeflow-trainer-controller-manager",
+                  runtime_ref=~".*/training-hub(-.*)?$",
+                  le=~"^(4.0|[+]Inf)$"
+                },
+                "runtime_ref", "training-hub", "runtime_ref", ".*"
+              )
+              or label_replace(
+                kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
+                  job="kubeflow-trainer-controller-manager",
+                  runtime_ref=~".*/openmpi(-.*)?$",
+                  le=~"^(4.0|[+]Inf)$"
+                },
+                "runtime_ref", "openmpi", "runtime_ref", ".*"
+              )
+            )
+
+        - record: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket
+          expr: |
+            sum by (le) (
+              kubeflow_trainer_trainjob_lifetime_seconds_bucket{
+                job="kubeflow-trainer-controller-manager",
+                le=~"^(43200.0|345600.0|[+]Inf)$"
+              }
+            )
