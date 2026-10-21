@@ -5,95 +5,95 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  - name: bounded Trainer telemetry aggregation
+  - name: bounded Trainer telemetry aggregation handles a pod counter reset
     interval: 1m
     input_series:
       - series: 'kubeflow_trainer_trainjob_created_total{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1"}'
-        values: '3'
+        values: '0 180 360 540 0 180'
       - series: 'kubeflow_trainer_trainjob_created_total{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2"}'
-        values: '5'
+        values: '0 300 600 900 1200 1500'
       - series: 'kubeflow_trainer_trainjob_created_total{job="other",namespace="team-c",pod="manager-3"}'
-        values: '100'
+        values: '0 6000 12000 18000 24000 30000'
 
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed",le="4.0"}'
-        values: '2'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed",le="+Inf"}'
-        values: '3'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed-cuda",le="4.0"}'
-        values: '1'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed-cuda",le="+Inf"}'
-        values: '1'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="4.0"}'
+        values: '0 120 240 360 480 600'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="+Inf"}'
+        values: '0 180 360 540 720 900'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed-cuda",le="4.0"}'
+        values: '0 60 120 180 240 300'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed-cuda",le="+Inf"}'
+        values: '0 60 120 180 240 300'
 
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/training-hub",le="4.0"}'
-        values: '1'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/training-hub",le="+Inf"}'
-        values: '2'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/openmpi",le="4.0"}'
-        values: '1'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/openmpi",le="+Inf"}'
-        values: '1'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/openmpi-cuda",le="4.0"}'
-        values: '2'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/openmpi-cuda",le="+Inf"}'
-        values: '2'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//training-hub",le="4.0"}'
+        values: '0 60 120 180 240 300'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//training-hub",le="+Inf"}'
+        values: '0 120 240 360 480 600'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//openmpi-cpu",le="4.0"}'
+        values: '0 60 120 180 240 300'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//openmpi-cpu",le="+Inf"}'
+        values: '0 60 120 180 240 300'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//openmpi-cuda",le="4.0"}'
+        values: '0 120 240 360 480 600'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//openmpi-cuda",le="+Inf"}'
+        values: '0 120 240 360 480 600'
       - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-c",pod="manager-3",runtime_ref="example.org/custom-runtime",le="4.0"}'
-        values: '100'
+        values: '0 6000 12000 18000 24000 30000'
       - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-c",pod="manager-3",runtime_ref="example.org/custom-runtime",le="+Inf"}'
-        values: '100'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="other",namespace="team-c",pod="manager-3",runtime_ref="kubeflow.org/torch-distributed",le="4.0"}'
-        values: '100'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="other",namespace="team-c",pod="manager-3",runtime_ref="kubeflow.org/torch-distributed",le="+Inf"}'
-        values: '100'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed",le="3"}'
-        values: '1'
+        values: '0 6000 12000 18000 24000 30000'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="other",namespace="team-c",pod="manager-3",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="4.0"}'
+        values: '0 6000 12000 18000 24000 30000'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="other",namespace="team-c",pod="manager-3",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="+Inf"}'
+        values: '0 6000 12000 18000 24000 30000'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="3"}'
+        values: '0 60 120 180 240 300'
 
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",le="43200.0"}'
-        values: '2'
+        values: '0 120 240 360 480 600'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",le="345600.0"}'
-        values: '3'
+        values: '0 180 360 540 720 900'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",le="+Inf"}'
-        values: '3'
+        values: '0 180 360 540 720 900'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="43200.0"}'
-        values: '1'
+        values: '0 60 120 180 240 300'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="345600.0"}'
-        values: '2'
+        values: '0 120 240 360 480 600'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="+Inf"}'
-        values: '4'
+        values: '0 240 480 720 960 1200'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="86400"}'
-        values: '2'
+        values: '0 120 240 360 480 600'
 
     promql_expr_test:
-      - expr: rhoai_kubeflow_trainer_trainjob_created_total
-        eval_time: 0m
+      - expr: rhoai_kubeflow_trainer_trainjob_created_per_second
+        eval_time: 5m
         exp_samples:
-          - labels: 'rhoai_kubeflow_trainer_trainjob_created_total'
-            value: 8
-      - expr: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket
-        eval_time: 0m
+          - labels: 'rhoai_kubeflow_trainer_trainjob_created_per_second'
+            value: 7.25
+      - expr: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket
+        eval_time: 5m
         exp_samples:
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="+Inf",runtime_ref="openmpi"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="+Inf",runtime_ref="openmpi"}'
             value: 3
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="+Inf",runtime_ref="torch-distributed"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="+Inf",runtime_ref="torch-distributed"}'
             value: 4
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="+Inf",runtime_ref="training-hub"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="+Inf",runtime_ref="training-hub"}'
             value: 2
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="4.0",runtime_ref="openmpi"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="4.0",runtime_ref="openmpi"}'
             value: 3
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="4.0",runtime_ref="torch-distributed"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="4.0",runtime_ref="torch-distributed"}'
             value: 3
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="4.0",runtime_ref="training-hub"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="4.0",runtime_ref="training-hub"}'
             value: 1
-      - expr: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket
-        eval_time: 0m
+      - expr: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket
+        eval_time: 5m
         exp_samples:
-          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket{le="+Inf"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket{le="+Inf"}'
             value: 7
-          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket{le="345600.0"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket{le="345600.0"}'
             value: 5
-          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket{le="43200.0"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket{le="43200.0"}'
             value: 3
       - expr: count({__name__=~"rhoai_kubeflow_trainer_trainjob_.*"})
-        eval_time: 0m
+        eval_time: 5m
         exp_samples:
           - labels: '{}'
             value: 10
@@ -102,59 +102,59 @@ tests:
     interval: 1m
     input_series:
       - series: 'kubeflow_trainer_trainjob_created_total{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1"}'
-        values: '2'
+        values: '0 120 240 360 480 600'
       - series: 'kubeflow_trainer_trainjob_created_total{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2"}'
-        values: '3'
+        values: '0 180 360 540 720 900'
       - series: 'kubeflow_trainer_trainjob_created_total{job="other",namespace="team-c",pod="manager-3"}'
-        values: '100'
+        values: '0 6000 12000 18000 24000 30000'
 
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed",le="4"}'
-        values: '2'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="kubeflow.org/torch-distributed",le="+Inf"}'
-        values: '2'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/torch-distributed-cuda",le="4"}'
-        values: '3'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/torch-distributed-cuda",le="+Inf"}'
-        values: '4'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="4"}'
+        values: '0 120 240 360 480 600'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="+Inf"}'
+        values: '0 120 240 360 480 600'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed-cuda",le="4"}'
+        values: '0 180 360 540 720 900'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed-cuda",le="+Inf"}'
+        values: '0 240 480 720 960 1200'
       - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="example.org/custom-runtime",le="4"}'
-        values: '100'
-      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="kubeflow.org/torch-distributed",le="3"}'
-        values: '100'
+        values: '0 6000 12000 18000 24000 30000'
+      - series: 'kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",runtime_ref="trainer.kubeflow.org/ClusterTrainingRuntime//torch-distributed",le="3"}'
+        values: '0 6000 12000 18000 24000 30000'
 
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",le="43200"}'
-        values: '2'
+        values: '0 120 240 360 480 600'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",le="345600"}'
-        values: '3'
+        values: '0 180 360 540 720 900'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-a",pod="manager-1",le="+Inf"}'
-        values: '3'
+        values: '0 180 360 540 720 900'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="43200"}'
-        values: '1'
+        values: '0 60 120 180 240 300'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="345600"}'
-        values: '2'
+        values: '0 120 240 360 480 600'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="+Inf"}'
-        values: '4'
+        values: '0 240 480 720 960 1200'
       - series: 'kubeflow_trainer_trainjob_lifetime_seconds_bucket{job="kubeflow-trainer-controller-manager",namespace="team-b",pod="manager-2",le="86400"}'
-        values: '100'
+        values: '0 6000 12000 18000 24000 30000'
 
     promql_expr_test:
-      - expr: rhoai_kubeflow_trainer_trainjob_created_total
-        eval_time: 0m
+      - expr: rhoai_kubeflow_trainer_trainjob_created_per_second
+        eval_time: 5m
         exp_samples:
-          - labels: 'rhoai_kubeflow_trainer_trainjob_created_total'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_created_per_second'
             value: 5
-      - expr: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket
-        eval_time: 0m
+      - expr: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket
+        eval_time: 5m
         exp_samples:
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="+Inf",runtime_ref="torch-distributed"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="+Inf",runtime_ref="torch-distributed"}'
             value: 6
-          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{le="4",runtime_ref="torch-distributed"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket{le="4.0",runtime_ref="torch-distributed"}'
             value: 5
-      - expr: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket
-        eval_time: 0m
+      - expr: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket
+        eval_time: 5m
         exp_samples:
-          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket{le="+Inf"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket{le="+Inf"}'
             value: 7
-          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket{le="345600"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket{le="345600.0"}'
             value: 5
-          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_bucket{le="43200"}'
+          - labels: 'rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket{le="43200.0"}'
             value: 3
