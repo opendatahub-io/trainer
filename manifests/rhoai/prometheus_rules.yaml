@@ -2,8 +2,6 @@ apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: kubeflow-trainer-telemetry
-  labels:
-    openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus
 spec:
   groups:
     - name: rhoai.trainer.telemetry
@@ -12,7 +10,7 @@ spec:
           expr: |
             sum(increase(kubeflow_trainer_trainjob_created_total[24h]))
 
-        - record: runtime:kubeflow_trainer_trainjob_requested_training_nodes:increase24hr
+        - record: runtime:rhoai_kubeflow_trainer_trainjob_requested_training_nodes:increase24hr
           expr: |
             label_replace(
               sum by (le) (
