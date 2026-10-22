@@ -60,6 +60,7 @@ resources:
 - kubeflow-training-roles.yaml
 - networkpolicy-ingress.yaml
 - networkpolicy-egress.yaml
+- rbac/prometheus_rules.yaml
 - rbac/tls
 - monitor.yaml
 
