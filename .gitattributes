@@ -4,3 +4,7 @@
 **/zz_generated.*.go linguist-generated=true
 api/** linguist-generated=true
 pkg/client/** linguist-generated=true
+
+# RHOAI
+# Treat all changes to OWNERS as a conflict. We want to keep our overrides.
+/OWNERS merge=binary
