@@ -6,29 +6,22 @@ metadata:
     openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus
 spec:
   groups:
-    - name: trainer.telemetry
+    - name: rhoai.trainer.telemetry
       rules:
-        - record: rhoai_kubeflow_trainer_trainjob_created_per_second
+        - record: cluster:rhoai_kubeflow_trainer_trainjob_created:increase24hr
           expr: |
-            sum(
-              rate(
-                kubeflow_trainer_trainjob_created_total{
-                  job="kubeflow-trainer-controller-manager"
-                }[5m]
-              )
-            )
+            sum(increase(kubeflow_trainer_trainjob_created_total[24h]))
 
-        - record: rhoai_kubeflow_trainer_trainjob_requested_training_nodes_per_job_per_second_bucket
+        - record: runtime:kubeflow_trainer_trainjob_requested_training_nodes:increase24hr
           expr: |
             label_replace(
               sum by (le) (
                 label_replace(
-                  rate(
+                  increase(
                     kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
-                      job="kubeflow-trainer-controller-manager",
                       runtime_ref=~"^trainer[.]kubeflow[.]org/ClusterTrainingRuntime//(torch-distributed|torch-distributed-with-cache|torch-distributed-cpu|torch-distributed-rocm|torch-distributed-cuda130-torch211-py312|torch-distributed-rocm714-torch211-py312|torch-distributed-cpu-torch211-py312)$",
                       le=~"^(4(\\.0)?|[+]Inf)$"
-                    }[5m]
+                    }[24h]
                   ),
                   "le", "4.0", "le", "^4(\\.0)?$"
                 )
@@ -38,12 +31,11 @@ spec:
             or label_replace(
               sum by (le) (
                 label_replace(
-                  rate(
+                  increase(
                     kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
-                      job="kubeflow-trainer-controller-manager",
                       runtime_ref=~"^trainer[.]kubeflow[.]org/ClusterTrainingRuntime//(training-hub|training-hub-cpu|training-hub-rocm|training-hub-th09-cpu-torch211-py312|training-hub-th09-cuda130-torch211-py312|training-hub-th09-rocm714-torch211-py312)$",
                       le=~"^(4(\\.0)?|[+]Inf)$"
-                    }[5m]
+                    }[24h]
                   ),
                   "le", "4.0", "le", "^4(\\.0)?$"
                 )
@@ -53,12 +45,11 @@ spec:
             or label_replace(
               sum by (le) (
                 label_replace(
-                  rate(
+                  increase(
                     kubeflow_trainer_trainjob_requested_training_nodes_per_job_bucket{
-                      job="kubeflow-trainer-controller-manager",
                       runtime_ref=~"^trainer[.]kubeflow[.]org/ClusterTrainingRuntime//(openmpi-cpu|openmpi-cuda)$",
                       le=~"^(4(\\.0)?|[+]Inf)$"
-                    }[5m]
+                    }[24h]
                   ),
                   "le", "4.0", "le", "^4(\\.0)?$"
                 )
@@ -66,16 +57,15 @@ spec:
               "runtime_ref", "openmpi", "le", ".*"
             )
 
-        - record: rhoai_kubeflow_trainer_trainjob_lifetime_seconds_per_second_bucket
+        - record: cluster:rhoai_kubeflow_trainer_trainjob_lifetime_seconds:increase24hr
           expr: |
             sum by (le) (
               label_replace(
                 label_replace(
-                  rate(
+                  increase(
                     kubeflow_trainer_trainjob_lifetime_seconds_bucket{
-                      job="kubeflow-trainer-controller-manager",
                       le=~"^(43200(\\.0)?|345600(\\.0)?|[+]Inf)$"
-                    }[5m]
+                    }[24h]
                   ),
                   "le", "43200.0", "le", "^43200(\\.0)?$"
                 ),
