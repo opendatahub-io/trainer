@@ -11,6 +11,7 @@ spec:
   endpoints:
     - port: monitoring-port
       scheme: https
+      honorLabels: true
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
         ca:

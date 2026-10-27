@@ -62,7 +62,6 @@ resources:
 - networkpolicy-egress.yaml
 - rbac/tls
 - monitor.yaml
-- prometheus_rules.yaml
 
 secretGenerator:
   - name: kubeflow-trainer-webhook-cert
