@@ -19,151 +19,89 @@ package tls
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/go-logr/logr"
+	frameworktls "github.com/opendatahub-io/odh-platform-utilities/framework/tls"
 	configv1 "github.com/openshift/api/config/v1"
-	tlspkg "github.com/openshift/controller-runtime-common/pkg/tls"
-	openshiftcrypto "github.com/openshift/library-go/pkg/crypto"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	commonTLS "github.com/openshift/controller-runtime-common/pkg/tls"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 const bootstrapTimeout = 10 * time.Second
 
-// Result holds the resolved TLS configuration from the cluster profile.
 type Result struct {
-	Profile          configv1.TLSProfileSpec
-	ProfileFetched   bool
-	ProfileHonored   bool
-	Adherence        configv1.TLSAdherencePolicy
-	AdherenceFetched bool
-	TLSOpts          []func(*tls.Config)
+	Profile        configv1.TLSProfileSpec
+	ProfileHonored bool
+	Adherence      configv1.TLSAdherencePolicy
+	UsedFallback   bool
+	Watchable      bool
+	TLSOpts        []func(*tls.Config)
 }
 
-// Resolve fetches the cluster TLS profile and adherence policy, returning TLS
-// options for controller-runtime servers.
-//
-// NoMatch / NotFound fall back to Intermediate (non-OpenShift or CRD absent).
-// Transient profile API errors use Intermediate and still register the watcher
-// so a later profile is not dropped. Adherence read errors fail closed because
-// the effective TLS profile cannot be determined safely.
-// Legacy or unset adherence uses Intermediate defaults; Strict adherence uses
-// the configured profile.
 func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (*Result, error) {
 	bootstrapCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 	defer cancel()
 
-	result := &Result{}
-
-	profile, err := tlspkg.FetchAPIServerTLSProfile(bootstrapCtx, k8sClient)
+	loaded, err := frameworktls.LoadWithAdherence(bootstrapCtx, k8sClient)
 	if err != nil {
-		if fallbackErr := handleProfileFetchError(err, result, logger); fallbackErr != nil {
-			return nil, fallbackErr
-		}
-		profile = *configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
-	} else {
-		result.ProfileFetched = true
-	}
-	result.Profile = profile
-
-	if err := fetchAdherence(bootstrapCtx, k8sClient, result, logger); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading APIServer TLS profile and adherence: %w", err)
 	}
 
-	result.ProfileHonored = result.ProfileFetched && openshiftcrypto.ShouldHonorClusterTLSProfile(result.Adherence)
-	effectiveProfile := profile
-	if !result.ProfileHonored {
+	profileHonored := frameworktls.ShouldHonorClusterTLSProfile(loaded.AdherencePolicy)
+	effectiveProfile := loaded.Spec
+	if !profileHonored {
 		effectiveProfile = *configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
 	}
-	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(effectiveProfile)
+
+	tlsConfigFn, unsupported, err := frameworktls.ConfigFromProfileWithError(effectiveProfile)
+	if err != nil {
+		return nil, fmt.Errorf("building TLS config from profile: %w", err)
+	}
 	if len(unsupported) > 0 {
 		logger.Info("TLS profile contains unsupported ciphers or groups", "unsupported", unsupported)
 	}
-	result.TLSOpts = append(result.TLSOpts, tlsConfigFn, tlspkg.SetNextProtos(tlspkg.HTTP2NextProtos...))
 
-	return result, nil
+	return &Result{
+		Profile:        loaded.Spec,
+		ProfileHonored: profileHonored,
+		Adherence:      loaded.AdherencePolicy,
+		UsedFallback:   loaded.UsedFallback,
+		Watchable:      loaded.Watchable,
+		TLSOpts: []func(*tls.Config){
+			tlsConfigFn,
+			commonTLS.SetNextProtos(commonTLS.HTTP2NextProtos...),
+		},
+	}, nil
 }
 
-func handleProfileFetchError(err error, result *Result, logger logr.Logger) error {
-	switch {
-	case apimeta.IsNoMatchError(err):
-		logger.Info("TLS profile not available (non-OpenShift cluster)")
-	case apierrors.IsNotFound(err):
-		logger.Info("APIServer resource not found, using Intermediate defaults")
-	case apierrors.IsServiceUnavailable(err),
-		apierrors.IsTimeout(err),
-		apierrors.IsServerTimeout(err),
-		apierrors.IsTooManyRequests(err),
-		errors.Is(err, context.DeadlineExceeded):
-		logger.Info("Transient API error, using Intermediate defaults", "error", err)
-		result.ProfileFetched = true
-	default:
-		return fmt.Errorf("reading APIServer TLS profile: %w", err)
-	}
-	return nil
-}
-
-func fetchAdherence(ctx context.Context, k8sClient client.Client, result *Result, logger logr.Logger) error {
-	adherence, err := tlspkg.FetchAPIServerTLSAdherencePolicy(ctx, k8sClient)
-	if err != nil {
-		switch {
-		case apimeta.IsNoMatchError(err):
-			logger.Info("TLS adherence API not available (non-OpenShift or pre-4.22 cluster)")
-		case apierrors.IsNotFound(err):
-			logger.Info("APIServer resource not found for adherence, skipping")
-		case apierrors.IsServiceUnavailable(err),
-			apierrors.IsTimeout(err),
-			apierrors.IsServerTimeout(err),
-			apierrors.IsTooManyRequests(err),
-			apierrors.IsInternalError(err),
-			errors.Is(err, context.DeadlineExceeded):
-			return fmt.Errorf("reading APIServer TLS adherence policy: %w", err)
-		default:
-			return fmt.Errorf("reading APIServer TLS adherence policy: %w", err)
-		}
-		return nil
-	}
-	result.AdherenceFetched = true
-	result.Adherence = adherence
-	return nil
-}
-
-// SetupWatcher registers a SecurityProfileWatcher that cancels the manager
-// context when the cluster TLS profile or adherence policy changes.
-// No-ops when ProfileFetched is false (non-OpenShift).
 func SetupWatcher(mgr manager.Manager, result *Result, cancel context.CancelFunc, logger logr.Logger) error {
-	if result == nil || !result.ProfileFetched {
+	if result == nil || !result.Watchable {
 		return nil
 	}
 
 	watcher := newSecurityProfileWatcher(mgr.GetClient(), result, cancel, logger)
-
 	if err := watcher.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up TLS profile watcher: %w", err)
 	}
 	return nil
 }
 
-func newSecurityProfileWatcher(k8sClient client.Client, result *Result, cancel context.CancelFunc, logger logr.Logger) *tlspkg.SecurityProfileWatcher {
-	watcher := &tlspkg.SecurityProfileWatcher{
-		Client:                k8sClient,
-		InitialTLSProfileSpec: result.Profile,
+func newSecurityProfileWatcher(k8sClient client.Client, result *Result, cancel context.CancelFunc, logger logr.Logger) *frameworktls.SecurityProfileWatcher {
+	watcher := &frameworktls.SecurityProfileWatcher{
+		Client:                    k8sClient,
+		InitialTLSProfileSpec:     result.Profile,
+		InitialTLSAdherencePolicy: result.Adherence,
+		OnAdherencePolicyChange: func(_ context.Context, _, _ configv1.TLSAdherencePolicy) {
+			logger.Info("TLS adherence policy changed, initiating shutdown to reload")
+			cancel()
+		},
 	}
-	if result.ProfileHonored {
+	if result.ProfileHonored || result.UsedFallback {
 		watcher.OnProfileChange = func(_ context.Context, _, _ configv1.TLSProfileSpec) {
 			logger.Info("TLS profile changed, initiating shutdown to reload")
-			cancel()
-		}
-	}
-	if result.AdherenceFetched {
-		watcher.InitialTLSAdherencePolicy = result.Adherence
-		watcher.OnAdherencePolicyChange = func(_ context.Context, _, _ configv1.TLSAdherencePolicy) {
-			logger.Info("TLS adherence policy changed, initiating shutdown to reload")
 			cancel()
 		}
 	}

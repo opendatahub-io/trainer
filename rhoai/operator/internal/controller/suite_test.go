@@ -309,11 +309,17 @@ odh-training-universal-workbench-image-cpu-3-5=quay.io/test/cpu:3.5
 	return dir, nil
 }
 
+// findModuleCRDPath returns the CRD directory of the kubeflow/trainer/v2
+// module this build resolves, so the envtest suite follows the go.mod pin
+// instead of a hardcoded module version.
 func findModuleCRDPath() string {
-	out, err := exec.Command("go", "env", "GOPATH").Output()
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/kubeflow/trainer/v2").Output()
 	if err != nil {
 		return ""
 	}
-	gopath := strings.TrimSpace(string(out))
-	return filepath.Join(gopath, "pkg", "mod", "github.com", "kubeflow", "trainer", "v2@v2.2.1", "manifests", "base", "crds")
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "manifests", "base", "crds")
 }

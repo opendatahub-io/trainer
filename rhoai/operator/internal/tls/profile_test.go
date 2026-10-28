@@ -24,9 +24,10 @@ import (
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/gomega"
-	"github.com/onsi/gomega/types"
+	frameworktls "github.com/opendatahub-io/odh-platform-utilities/framework/tls"
 	configv1 "github.com/openshift/api/config/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -35,11 +36,25 @@ import (
 )
 
 const testAPIServerName = "cluster"
+const testOpenSSLCipher = "ECDHE-RSA-AES128-GCM-SHA256"
+const testUnsupportedMappedCipher = "ECDHE-RSA-AES256-SHA384"
 
 func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = configv1.Install(s)
 	return s
+}
+
+func testAPIServerClient(profile *configv1.TLSSecurityProfile, policy configv1.TLSAdherencePolicy) client.Client {
+	return fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&configv1.APIServer{
+			ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
+			Spec: configv1.APIServerSpec{
+				TLSAdherence:       policy,
+				TLSSecurityProfile: profile,
+			},
+		},
+	).Build()
 }
 
 type getErrorClient struct {
@@ -51,230 +66,334 @@ func (c getErrorClient) Get(_ context.Context, _ client.ObjectKey, _ client.Obje
 	return c.err
 }
 
-type secondGetErrorClient struct {
-	client.Client
-	err  error
-	gets int
-}
-
-func (c *secondGetErrorClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	if c.gets == 0 {
-		c.gets++
-		return c.Client.Get(ctx, key, obj, opts...)
+func TestResolveProfiles(t *testing.T) {
+	custom := &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{
+			TLSProfileSpec: configv1.TLSProfileSpec{
+				MinTLSVersion: configv1.VersionTLS11,
+				Ciphers:       []string{testOpenSSLCipher, testUnsupportedMappedCipher},
+			},
+		},
 	}
-	return c.err
-}
-
-func TestResolve(t *testing.T) {
-	intermediate := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
-	modern := configv1.TLSProfiles[configv1.TLSProfileModernType]
-	apiserverGR := schema.GroupResource{Group: "config.openshift.io", Resource: "apiservers"}
-
 	tests := []struct {
-		name           string
-		client         client.Client
-		err            types.GomegaMatcher
-		profileFetched types.GomegaMatcher
-		profileHonored types.GomegaMatcher
-		profileVersion types.GomegaMatcher
-		appliedVersion uint16
+		name          string
+		profile       *configv1.TLSSecurityProfile
+		policy        configv1.TLSAdherencePolicy
+		wantHonored   bool
+		wantMin       uint16
+		wantCipherNum int
+		wantCiphers   []uint16
+		wantError     string
 	}{
 		{
-			name:           "APIServer not found uses Intermediate and skips watcher",
-			client:         fake.NewClientBuilder().WithScheme(testScheme()).Build(),
-			err:            Not(HaveOccurred()),
-			profileFetched: BeFalse(),
-			profileHonored: BeFalse(),
-			profileVersion: Equal(intermediate.MinTLSVersion),
-			appliedVersion: tls.VersionTLS12,
+			name:          "Old honors TLS 1.0 and configured ciphers",
+			profile:       &configv1.TLSSecurityProfile{Type: configv1.TLSProfileOldType},
+			policy:        configv1.TLSAdherencePolicyStrictAllComponents,
+			wantHonored:   true,
+			wantMin:       tls.VersionTLS10,
+			wantCipherNum: 18,
 		},
 		{
-			name: "APIServer with Modern profile is applied",
-			client: fake.NewClientBuilder().WithScheme(testScheme()).WithRuntimeObjects(
-				&configv1.APIServer{
-					ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
-					Spec: configv1.APIServerSpec{
-						TLSAdherence: configv1.TLSAdherencePolicyStrictAllComponents,
-						TLSSecurityProfile: &configv1.TLSSecurityProfile{
-							Type: configv1.TLSProfileModernType,
-						},
-					},
-				},
-			).Build(),
-			err:            Not(HaveOccurred()),
-			profileFetched: BeTrue(),
-			profileHonored: BeTrue(),
-			profileVersion: Equal(modern.MinTLSVersion),
-			appliedVersion: tls.VersionTLS13,
+			name:          "Intermediate",
+			profile:       &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType},
+			policy:        configv1.TLSAdherencePolicyStrictAllComponents,
+			wantHonored:   true,
+			wantMin:       tls.VersionTLS12,
+			wantCipherNum: 6,
 		},
 		{
-			name: "APIServer with unknown adherence honors the profile",
-			client: fake.NewClientBuilder().WithScheme(testScheme()).WithRuntimeObjects(
-				&configv1.APIServer{
-					ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
-					Spec: configv1.APIServerSpec{
-						TLSAdherence: configv1.TLSAdherencePolicy("FuturePolicy"),
-						TLSSecurityProfile: &configv1.TLSSecurityProfile{
-							Type: configv1.TLSProfileModernType,
-						},
-					},
-				},
-			).Build(),
-			err:            Not(HaveOccurred()),
-			profileFetched: BeTrue(),
-			profileHonored: BeTrue(),
-			profileVersion: Equal(modern.MinTLSVersion),
-			appliedVersion: tls.VersionTLS13,
+			name:          "Modern omits configurable TLS 1.3 ciphers",
+			profile:       &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			policy:        configv1.TLSAdherencePolicyStrictAllComponents,
+			wantHonored:   true,
+			wantMin:       tls.VersionTLS13,
+			wantCipherNum: 0,
 		},
 		{
-			name: "APIServer with unset adherence uses Intermediate defaults",
-			client: fake.NewClientBuilder().WithScheme(testScheme()).WithRuntimeObjects(
-				&configv1.APIServer{
-					ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
-					Spec: configv1.APIServerSpec{
-						TLSSecurityProfile: &configv1.TLSSecurityProfile{
-							Type: configv1.TLSProfileModernType,
-						},
-					},
-				},
-			).Build(),
-			err:            Not(HaveOccurred()),
-			profileFetched: BeTrue(),
-			profileHonored: BeFalse(),
-			profileVersion: Equal(modern.MinTLSVersion),
-			appliedVersion: tls.VersionTLS12,
+			name:          "Custom preserves TLS 1.1 and maps OpenSSL cipher name",
+			profile:       custom,
+			policy:        configv1.TLSAdherencePolicyStrictAllComponents,
+			wantHonored:   true,
+			wantMin:       tls.VersionTLS11,
+			wantCipherNum: 1,
+			wantCiphers:   []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
 		},
 		{
-			name: "APIServer with Legacy adherence uses Intermediate defaults",
-			client: fake.NewClientBuilder().WithScheme(testScheme()).WithRuntimeObjects(
-				&configv1.APIServer{
-					ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
-					Spec: configv1.APIServerSpec{
-						TLSAdherence: configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
-						TLSSecurityProfile: &configv1.TLSSecurityProfile{
-							Type: configv1.TLSProfileModernType,
-						},
-					},
-				},
-			).Build(),
-			err:            Not(HaveOccurred()),
-			profileFetched: BeTrue(),
-			profileHonored: BeFalse(),
-			profileVersion: Equal(modern.MinTLSVersion),
-			appliedVersion: tls.VersionTLS12,
+			name:          "nil profile resolves to Intermediate",
+			policy:        configv1.TLSAdherencePolicyStrictAllComponents,
+			wantHonored:   true,
+			wantMin:       tls.VersionTLS12,
+			wantCipherNum: 6,
 		},
 		{
-			name: "Forbidden fails closed",
-			client: getErrorClient{
-				Client: fake.NewClientBuilder().WithScheme(testScheme()).Build(),
-				err:    apierrors.NewForbidden(apiserverGR, testAPIServerName, errors.New("denied")),
-			},
-			err: MatchError(ContainSubstring("reading APIServer TLS profile")),
+			name:          "unknown type under NoOpinion uses Intermediate",
+			profile:       &configv1.TLSSecurityProfile{Type: configv1.TLSProfileType("FutureProfile")},
+			wantMin:       tls.VersionTLS12,
+			wantCipherNum: 6,
+		},
+		{
+			name:      "unknown type under Strict fails closed",
+			profile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileType("FutureProfile")},
+			policy:    configv1.TLSAdherencePolicyStrictAllComponents,
+			wantError: "unsupported TLS profile type",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-
-			result, err := Resolve(t.Context(), tt.client, logr.Discard())
-			g.Expect(err).Should(tt.err)
-			if tt.profileFetched == nil {
-				g.Expect(result).Should(BeNil())
+			result, err := Resolve(t.Context(), testAPIServerClient(tt.profile, tt.policy), logr.Discard())
+			if tt.wantError != "" {
+				g.Expect(err).To(MatchError(ContainSubstring(tt.wantError)))
+				g.Expect(result).To(BeNil())
 				return
 			}
-			g.Expect(result.ProfileFetched).Should(tt.profileFetched)
-			g.Expect(result.ProfileHonored).Should(tt.profileHonored)
-			g.Expect(result.Profile.MinTLSVersion).Should(tt.profileVersion)
-			g.Expect(result.TLSOpts).ShouldNot(BeEmpty())
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.ProfileHonored).To(Equal(tt.wantHonored))
+			g.Expect(result.Adherence).To(Equal(tt.policy))
+			g.Expect(result.TLSOpts).To(HaveLen(2))
 
 			cfg := &tls.Config{}
-			for _, fn := range result.TLSOpts {
-				fn(cfg)
+			for _, configure := range result.TLSOpts {
+				configure(cfg)
 			}
-			g.Expect(cfg.MinVersion).Should(Equal(tt.appliedVersion))
-			g.Expect(cfg.NextProtos).Should(Equal([]string{"h2", "http/1.1"}))
+			g.Expect(cfg.MinVersion).To(Equal(tt.wantMin))
+			g.Expect(cfg.CipherSuites).To(HaveLen(tt.wantCipherNum))
+			if tt.wantCiphers != nil {
+				g.Expect(cfg.CipherSuites).To(Equal(tt.wantCiphers))
+			}
+			g.Expect(cfg.NextProtos).To(Equal([]string{"h2", "http/1.1"}))
 		})
 	}
 }
 
-func TestResolveAppliesTLSGroups(t *testing.T) {
-	g := NewWithT(t)
-	k8sClient := fake.NewClientBuilder().WithScheme(testScheme()).WithRuntimeObjects(
-		&configv1.APIServer{
-			ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
-			Spec: configv1.APIServerSpec{
-				TLSAdherence: configv1.TLSAdherencePolicyStrictAllComponents,
-				TLSSecurityProfile: &configv1.TLSSecurityProfile{
-					Type: configv1.TLSProfileCustomType,
-					Custom: &configv1.CustomTLSProfile{
-						TLSProfileSpec: configv1.TLSProfileSpec{
-							Groups:        []configv1.TLSGroup{configv1.TLSGroupX25519, configv1.TLSGroupSecP256r1},
-							MinTLSVersion: configv1.VersionTLS12,
-						},
-					},
-				},
-			},
-		},
-	).Build()
+func TestShouldHonorClusterTLSProfile(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  configv1.TLSAdherencePolicy
+		honored bool
+	}{
+		{name: "NoOpinion", policy: configv1.TLSAdherencePolicyNoOpinion},
+		{name: "Legacy", policy: configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly},
+		{name: "Strict", policy: configv1.TLSAdherencePolicyStrictAllComponents, honored: true},
+		{name: "unknown policy fails secure", policy: configv1.TLSAdherencePolicy("FuturePolicy"), honored: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			NewWithT(t).Expect(frameworktls.ShouldHonorClusterTLSProfile(tt.policy)).To(Equal(tt.honored))
+		})
+	}
+}
 
-	result, err := Resolve(t.Context(), k8sClient, logr.Discard())
+func TestResolveFetchFallbacks(t *testing.T) {
+	apiserverGR := schema.GroupResource{Group: "config.openshift.io", Resource: "apiservers"}
+	tests := []struct {
+		name      string
+		err       error
+		watchable bool
+		wantErr   bool
+	}{
+		{
+			name: "NotFound disables watcher",
+			err:  apierrors.NewNotFound(apiserverGR, testAPIServerName),
+		},
+		{
+			name: "NoMatch disables watcher",
+			err:  &apimeta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "config.openshift.io", Kind: "APIServer"}},
+		},
+		{
+			name:      "transient error uses fallback and arms watcher",
+			err:       apierrors.NewServiceUnavailable("temporarily unavailable"),
+			watchable: true,
+		},
+		{
+			name:    "Forbidden fails closed",
+			err:     apierrors.NewForbidden(apiserverGR, testAPIServerName, errors.New("denied")),
+			wantErr: true,
+		},
+		{
+			name:      "deadline exceeded uses fallback and arms watcher",
+			err:       context.DeadlineExceeded,
+			watchable: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			k8sClient := getErrorClient{
+				Client: fake.NewClientBuilder().WithScheme(testScheme()).Build(),
+				err:    tt.err,
+			}
+			result, err := Resolve(t.Context(), k8sClient, logr.Discard())
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(result).To(BeNil())
+				return
+			}
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.UsedFallback).To(BeTrue())
+			g.Expect(result.Watchable).To(Equal(tt.watchable))
+			g.Expect(result.Adherence).To(Equal(configv1.TLSAdherencePolicyNoOpinion))
+			g.Expect(result.ProfileHonored).To(BeFalse())
+		})
+	}
+}
+
+func TestResolveRejectsUnusableStrictProfiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile *configv1.TLSSecurityProfile
+		wantErr error
+	}{
+		{
+			name: "all ciphers unsupported",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.VersionTLS12,
+					Ciphers:       []string{testUnsupportedMappedCipher},
+				}},
+			},
+			wantErr: frameworktls.ErrTLSProfileHasNoSupportedCipherSuites,
+		},
+		{
+			name: "all groups unsupported",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.VersionTLS12,
+					Ciphers:       []string{testOpenSSLCipher},
+					Groups:        []configv1.TLSGroup{"not-a-group"},
+				}},
+			},
+			wantErr: frameworktls.ErrTLSProfileHasNoSupportedGroups,
+		},
+		{
+			name: "invalid minimum version does not panic",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.TLSProtocolVersion("VersionTLS99"),
+					Ciphers:       []string{testOpenSSLCipher},
+				}},
+			},
+			wantErr: frameworktls.ErrUnsupportedTLSProfileVersion,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			result, err := Resolve(t.Context(), testAPIServerClient(tt.profile, configv1.TLSAdherencePolicyStrictAllComponents), logr.Discard())
+			g.Expect(result).To(BeNil())
+			g.Expect(err).To(MatchError(ContainSubstring(tt.wantErr.Error())))
+		})
+	}
+}
+
+func TestResolveMapsMLKEMGroups(t *testing.T) {
+	g := NewWithT(t)
+	profile := &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+			MinTLSVersion: configv1.VersionTLS12,
+			Ciphers:       []string{testOpenSSLCipher},
+			Groups: []configv1.TLSGroup{
+				configv1.TLSGroupX25519MLKEM768,
+				configv1.TLSGroupSecP256r1MLKEM768,
+			},
+		}},
+	}
+	result, err := Resolve(t.Context(), testAPIServerClient(profile, configv1.TLSAdherencePolicyStrictAllComponents), logr.Discard())
 	g.Expect(err).NotTo(HaveOccurred())
 
 	cfg := &tls.Config{}
-	for _, fn := range result.TLSOpts {
-		fn(cfg)
+	for _, configure := range result.TLSOpts {
+		configure(cfg)
 	}
-	g.Expect(cfg.CurvePreferences).To(Equal([]tls.CurveID{tls.X25519, tls.CurveP256}))
+	g.Expect(cfg.CurvePreferences).To(Equal([]tls.CurveID{tls.X25519MLKEM768, tls.SecP256r1MLKEM768}))
 }
 
-func TestResolveFailsClosedWhenAdherenceReadIsTransient(t *testing.T) {
+func TestResolveMapsOpenSSLCipherName(t *testing.T) {
 	g := NewWithT(t)
-	k8sClient := &secondGetErrorClient{
-		Client: fake.NewClientBuilder().WithScheme(testScheme()).WithRuntimeObjects(
-			&configv1.APIServer{
-				ObjectMeta: metav1.ObjectMeta{Name: testAPIServerName},
-				Spec: configv1.APIServerSpec{
-					TLSAdherence: configv1.TLSAdherencePolicyStrictAllComponents,
-					TLSSecurityProfile: &configv1.TLSSecurityProfile{
-						Type: configv1.TLSProfileModernType,
-					},
-				},
+	profile := &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{TLSProfileSpec: configv1.TLSProfileSpec{
+			MinTLSVersion: configv1.VersionTLS12,
+			Ciphers:       []string{testOpenSSLCipher},
+		}},
+	}
+	result, err := Resolve(t.Context(), testAPIServerClient(profile, configv1.TLSAdherencePolicyStrictAllComponents), logr.Discard())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	cfg := &tls.Config{}
+	for _, configure := range result.TLSOpts {
+		configure(cfg)
+	}
+	g.Expect(cfg.CipherSuites).To(Equal([]uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}))
+}
+
+func TestSetupWatcherSkipsUnwatchableResult(t *testing.T) {
+	NewWithT(t).Expect(SetupWatcher(nil, &Result{Watchable: false}, func() {}, logr.Discard())).NotTo(HaveOccurred())
+	NewWithT(t).Expect(SetupWatcher(nil, nil, func() {}, logr.Discard())).NotTo(HaveOccurred())
+}
+
+func TestNewSecurityProfileWatcherInitialStateAndCallbacks(t *testing.T) {
+	tests := []struct {
+		name              string
+		result            Result
+		profileCallback   bool
+		adherenceCallback bool
+		initialAdherence  configv1.TLSAdherencePolicy
+	}{
+		{
+			name: "honored profile watches profile and adherence",
+			result: Result{
+				ProfileHonored: true,
+				Adherence:      configv1.TLSAdherencePolicyStrictAllComponents,
 			},
-		).Build(),
-		err: apierrors.NewServiceUnavailable("adherence API unavailable"),
+			profileCallback:   true,
+			adherenceCallback: true,
+			initialAdherence:  configv1.TLSAdherencePolicyStrictAllComponents,
+		},
+		{
+			name: "transient fallback watches profile recovery from explicit NoOpinion",
+			result: Result{
+				UsedFallback: true,
+				Watchable:    true,
+				Adherence:    configv1.TLSAdherencePolicyNoOpinion,
+			},
+			profileCallback:   true,
+			adherenceCallback: true,
+			initialAdherence:  configv1.TLSAdherencePolicyNoOpinion,
+		},
+		{
+			name: "non-honored loaded profile only watches adherence",
+			result: Result{
+				Watchable: true,
+				Adherence: configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+			},
+			adherenceCallback: true,
+			initialAdherence:  configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+		},
 	}
-
-	result, err := Resolve(t.Context(), k8sClient, logr.Discard())
-	g.Expect(result).To(BeNil())
-	g.Expect(err).To(MatchError(ContainSubstring("reading APIServer TLS adherence policy")))
-}
-
-func TestSetupWatcherSkipsWhenProfileNotFetched(t *testing.T) {
-	g := NewWithT(t)
-	g.Expect(SetupWatcher(nil, &Result{ProfileFetched: false}, func() {}, logr.Discard())).
-		ShouldNot(HaveOccurred())
-}
-
-func TestSetupWatcherSkipsNilResult(t *testing.T) {
-	g := NewWithT(t)
-	g.Expect(SetupWatcher(nil, nil, func() {}, logr.Discard())).ShouldNot(HaveOccurred())
-}
-
-func TestNewSecurityProfileWatcherCallbacks(t *testing.T) {
-	g := NewWithT(t)
-
-	legacyWatcher := newSecurityProfileWatcher(nil, &Result{
-		AdherenceFetched: true,
-		ProfileHonored:   false,
-	}, func() {}, logr.Discard())
-	g.Expect(legacyWatcher.OnProfileChange).To(BeNil())
-	g.Expect(legacyWatcher.OnAdherencePolicyChange).NotTo(BeNil())
-
-	strictWatcher := newSecurityProfileWatcher(nil, &Result{
-		AdherenceFetched: true,
-		ProfileHonored:   true,
-	}, func() {}, logr.Discard())
-	g.Expect(strictWatcher.OnProfileChange).NotTo(BeNil())
-	g.Expect(strictWatcher.OnAdherencePolicyChange).NotTo(BeNil())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			watcher := newSecurityProfileWatcher(nil, &tt.result, func() {}, logr.Discard())
+			g := NewWithT(t)
+			if tt.profileCallback {
+				g.Expect(watcher.OnProfileChange).NotTo(BeNil())
+			} else {
+				g.Expect(watcher.OnProfileChange).To(BeNil())
+			}
+			if tt.adherenceCallback {
+				g.Expect(watcher.OnAdherencePolicyChange).NotTo(BeNil())
+			} else {
+				g.Expect(watcher.OnAdherencePolicyChange).To(BeNil())
+			}
+			g.Expect(watcher.InitialTLSAdherencePolicy).To(Equal(tt.initialAdherence))
+		})
+	}
 }
