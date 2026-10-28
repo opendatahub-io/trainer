@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -265,6 +266,28 @@ func TestRemoveRuntimeFinalizersStripsAllFinalizers(t *testing.T) {
 	got, err = dynamicClient.Resource(trGVR).Namespace("strip-finalizer-ns").Get(ctx, "tr-with-mixed", metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(got.GetFinalizers()).To(ConsistOf("another/finalizer"), "unrelated finalizer should be preserved")
+}
+
+func TestRemoveRuntimeFinalizersSkipsMissingRuntimeAPI(t *testing.T) {
+	g := NewWithT(t)
+
+	errorClient := listErrorDynamicClient{err: errors.NewNotFound(
+		schema.GroupResource{Group: trainerKubeflowGroup, Resource: clusterTrainingRuntimeResource},
+		clusterTrainingRuntimeResource,
+	)}
+	g.Expect(removeRuntimeFinalizers(context.Background(), errorClient)).To(Succeed())
+}
+
+func TestRemoveRuntimeFinalizersPropagatesListErrors(t *testing.T) {
+	g := NewWithT(t)
+
+	errorClient := listErrorDynamicClient{err: errors.NewForbidden(
+		schema.GroupResource{Group: trainerKubeflowGroup, Resource: clusterTrainingRuntimeResource},
+		clusterTrainingRuntimeResource,
+		fmt.Errorf("access denied"),
+	)}
+	g.Expect(removeRuntimeFinalizers(context.Background(), errorClient)).
+		To(MatchError(ContainSubstring("listing clustertrainingruntimes for finalizer removal")))
 }
 
 func TestGetComponentReleases(t *testing.T) {
@@ -677,6 +700,28 @@ func deleteJobSetCRDAndWait(ctx context.Context) {
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: jobSetCRDName}, &apiextensionsv1.CustomResourceDefinition{})
 		return errors.IsNotFound(err), nil
 	})
+}
+
+// listErrorDynamicClient simulates a dynamic client whose List calls fail,
+// e.g. because the requested runtime API is not installed.
+type listErrorDynamicClient struct {
+	dynamic.Interface
+	err error
+}
+
+func (c listErrorDynamicClient) Resource(schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+	return listErrorResource{err: c.err}
+}
+
+type listErrorResource struct {
+	dynamic.NamespaceableResourceInterface
+	err error
+}
+
+func (r listErrorResource) Namespace(string) dynamic.ResourceInterface { return r }
+
+func (r listErrorResource) List(context.Context, metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	return nil, r.err
 }
 
 func newUnstructured(gvk schema.GroupVersionKind, name, namespace string, objLabels map[string]string) *unstructured.Unstructured {

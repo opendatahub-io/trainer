@@ -621,6 +621,14 @@ func removeRuntimeFinalizers(ctx context.Context, dynClient dynamic.Interface) e
 			LabelSelector: selector,
 		})
 		if err != nil {
+			// The upstream trainer CRDs are only installed when the Trainer
+			// control plane is deployed. If dependencies were missing, the
+			// API does not exist and there is nothing to clean up; failing
+			// here would leave the Trainer CR stuck on its finalizer.
+			if errors.IsNotFound(err) {
+				log.V(1).Info("Runtime API not available, nothing to remove", "gvr", gvr)
+				continue
+			}
 			return fmt.Errorf("listing %s for finalizer removal: %w", gvr.Resource, err)
 		}
 
