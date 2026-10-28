@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	"github.com/kubeflow/trainer/v2/pkg/features"
 	"github.com/kubeflow/trainer/v2/pkg/runtime"
 )
 
@@ -47,9 +48,13 @@ func SetupControllers(mgr ctrl.Manager, runtimes map[string]runtime.Runtime, opt
 	).SetupWithManager(mgr, options); err != nil {
 		return trainer.TrainJobKind, err
 	}
+<<<<<<< HEAD
 	// disable OptimizationJob controller whilst it is under development.
 	// Do not re-enable without removing the tls compliance suppression in .github/semgrep-tls-excludes
 	if false {
+=======
+	if features.Enabled(features.OptimizationJob) {
+>>>>>>> upstream/master
 		if err := NewOptimizationJobReconciler(
 			mgr.GetClient(),
 			mgr.GetScheme(),

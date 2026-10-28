@@ -24,6 +24,7 @@ import (
 
 func init() {
 	runtime.Must(utilfeature.DefaultMutableFeatureGate.Add(defaultFeatureGates))
+	runtime.Must(utilfeature.DefaultMutableFeatureGate.AddDependencies(defaultFeatureGateDependencies))
 }
 
 const (
@@ -39,6 +40,13 @@ const (
 	// Enables Dynamic Resource Allocation (DRA) support: trainer.resourceClaimsPerNode and
 	// resourceClaims / resources.claims in runtimePatches.
 	TrainJobDynamicResourceAllocation featuregate.Feature = "TrainJobDynamicResourceAllocation"
+
+	// owner: akshaychitneni
+	// kep: https://github.com/kubeflow/trainer/blob/master/proposals/2605-optimization-job-crd/README.md
+	//
+	// Enables the OptimizationJob API for hyperparameter optimization. Requires TrainJobStatus,
+	// because trials report their objective metrics through the TrainJob status server.
+	OptimizationJob featuregate.Feature = "OptimizationJob"
 )
 
 // defaultFeatureGates consists of all known Trainer-specific feature keys.
@@ -51,6 +59,14 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	TrainJobStatus: {Default: false, PreRelease: featuregate.Alpha},
 
 	TrainJobDynamicResourceAllocation: {Default: false, PreRelease: featuregate.Alpha},
+
+	OptimizationJob: {Default: false, PreRelease: featuregate.Alpha},
+}
+
+// defaultFeatureGateDependencies lists the features that each feature depends on.
+// Enabling a feature while any of its dependencies is disabled fails when the feature gates are set.
+var defaultFeatureGateDependencies = map[featuregate.Feature][]featuregate.Feature{
+	OptimizationJob: {TrainJobStatus},
 }
 
 // Enabled is helper for `utilfeature.DefaultFeatureGate.Enabled()`

@@ -204,6 +204,14 @@ func TemplateSpecApply[A any](info *Info) (*A, bool) {
 	return spec, ok
 }
 
+// SetContainerImageFromTrainer sets the container image from the TrainJob trainer image.
+// It is a no-op if the container is nil or the TrainJob trainer image is not set.
+func SetContainerImageFromTrainer(container *Container, jobTrainer *trainer.Trainer) {
+	if container != nil && jobTrainer != nil && jobTrainer.Image != nil {
+		container.Image = *jobTrainer.Image
+	}
+}
+
 // FindContainerByPodSetAncestorContainerName finds runtime.Container from Info.TemplateSpec.PodSet by PodSet Ancestor and Container name.
 func (i *Info) FindContainerByPodSetAncestorContainerName(psAncestor, containerName string) *Container {
 	ps := i.FindPodSetByAncestor(psAncestor)
@@ -289,6 +297,33 @@ func ExtractResourcePerNodeFromRuntime(info *Info) *corev1.ResourceRequirements 
 		}
 	}
 	return nil
+}
+
+// TrainerReplicas returns the number of replicas for the trainer replicatedJob from the Info object.
+// It returns 1 if the trainer replicatedJob is not found or replicas are not set.
+func TrainerReplicas(info *Info) int32 {
+	if jobSetSpec, ok := TemplateSpecApply[jobsetv1alpha2ac.JobSetSpecApplyConfiguration](info); ok {
+		for _, rJob := range jobSetSpec.ReplicatedJobs {
+			if rJob.Template != nil && rJob.Template.ObjectMetaApplyConfiguration != nil &&
+				rJob.Template.Labels[constants.LabelTrainJobAncestor] == constants.AncestorTrainer {
+				return ptr.Deref(rJob.Replicas, constants.DefaultJobReplicas)
+			}
+		}
+	}
+	return constants.DefaultJobReplicas
+}
+
+// ReplicatedJobReplicas returns the number of replicas for the replicatedJob with the given name from the Info object.
+// It returns 1 if the replicatedJob is not found or replicas are not set.
+func ReplicatedJobReplicas(info *Info, rJobName string) int32 {
+	if jobSetSpec, ok := TemplateSpecApply[jobsetv1alpha2ac.JobSetSpecApplyConfiguration](info); ok {
+		for _, rJob := range jobSetSpec.ReplicatedJobs {
+			if ptr.Deref(rJob.Name, "") == rJobName {
+				return ptr.Deref(rJob.Replicas, constants.DefaultJobReplicas)
+			}
+		}
+	}
+	return constants.DefaultJobReplicas
 }
 
 // GetNumGPUPerNode returns the GPU count if found in container resources.

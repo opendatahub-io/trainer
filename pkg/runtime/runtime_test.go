@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/ptr"
 	jobsetv1alpha2ac "sigs.k8s.io/jobset/client-go/applyconfiguration/jobset/v1alpha2"
 
+	trainer "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	"github.com/kubeflow/trainer/v2/pkg/constants"
 	jobsetplgconsts "github.com/kubeflow/trainer/v2/pkg/runtime/framework/plugins/jobset/constants"
 )
@@ -496,6 +497,45 @@ func TestNewInfo(t *testing.T) {
 	}
 }
 
+func TestSetContainerImageFromTrainer(t *testing.T) {
+	cases := map[string]struct {
+		container     *Container
+		jobTrainer    *trainer.Trainer
+		wantContainer *Container
+	}{
+		"TrainJob image replaces the runtime image": {
+			container:     &Container{Name: constants.Node, Image: "test:runtime"},
+			jobTrainer:    &trainer.Trainer{Image: ptr.To("test:trainjob")},
+			wantContainer: &Container{Name: constants.Node, Image: "test:trainjob"},
+		},
+		"TrainJob image is set when the runtime has no image": {
+			container:     &Container{Name: constants.Node},
+			jobTrainer:    &trainer.Trainer{Image: ptr.To("test:trainjob")},
+			wantContainer: &Container{Name: constants.Node, Image: "test:trainjob"},
+		},
+		"runtime image is kept without a TrainJob image": {
+			container:     &Container{Name: constants.Node, Image: "test:runtime"},
+			jobTrainer:    &trainer.Trainer{},
+			wantContainer: &Container{Name: constants.Node, Image: "test:runtime"},
+		},
+		"runtime image is kept without a TrainJob trainer": {
+			container:     &Container{Name: constants.Node, Image: "test:runtime"},
+			wantContainer: &Container{Name: constants.Node, Image: "test:runtime"},
+		},
+		"nil container is ignored": {
+			jobTrainer: &trainer.Trainer{Image: ptr.To("test:trainjob")},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			SetContainerImageFromTrainer(tc.container, tc.jobTrainer)
+			if diff := cmp.Diff(tc.wantContainer, tc.container); len(diff) != 0 {
+				t.Errorf("Unexpected container (-want, +got): %s", diff)
+			}
+		})
+	}
+}
+
 func TestFindContainerByPodSetAncestorContainerName(t *testing.T) {
 	cases := map[string]struct {
 		info          *Info
@@ -611,6 +651,143 @@ func TestFindPodSetByName(t *testing.T) {
 			got := tc.info.FindPodSetByName(tc.psName)
 			if diff := cmp.Diff(tc.wantPodSet, got); len(diff) != 0 {
 				t.Errorf("Unexpected PodSet (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestTrainerReplicas(t *testing.T) {
+	cases := map[string]struct {
+		info         *Info
+		wantReplicas int32
+	}{
+		"template spec is not JobSet": {
+			info:         &Info{},
+			wantReplicas: 1,
+		},
+		"trainer replicatedJob does not exist": {
+			info: &Info{
+				TemplateSpec: TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.DatasetInitializer).
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{constants.LabelTrainJobAncestor: constants.DatasetInitializer}),
+								),
+						),
+				},
+			},
+			wantReplicas: 1,
+		},
+		"trainer replicatedJob without replicas": {
+			info: &Info{
+				TemplateSpec: TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{constants.LabelTrainJobAncestor: constants.AncestorTrainer}),
+								),
+						),
+				},
+			},
+			wantReplicas: 1,
+		},
+		"trainer replicatedJob with multiple replicas": {
+			info: &Info{
+				TemplateSpec: TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.DatasetInitializer).
+								WithReplicas(1).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{constants.LabelTrainJobAncestor: constants.DatasetInitializer}),
+								),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithReplicas(4).
+								WithTemplate(batchv1ac.JobTemplateSpec().
+									WithLabels(map[string]string{constants.LabelTrainJobAncestor: constants.AncestorTrainer}),
+								),
+						),
+				},
+			},
+			wantReplicas: 4,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := TrainerReplicas(tc.info); got != tc.wantReplicas {
+				t.Errorf("Unexpected trainer replicas, want: %d, got: %d", tc.wantReplicas, got)
+			}
+		})
+	}
+}
+
+func TestReplicatedJobReplicas(t *testing.T) {
+	cases := map[string]struct {
+		info         *Info
+		rJobName     string
+		wantReplicas int32
+	}{
+		"template spec is not JobSet": {
+			info:         &Info{},
+			rJobName:     constants.Node,
+			wantReplicas: 1,
+		},
+		"replicatedJob does not exist": {
+			info: &Info{
+				TemplateSpec: TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Launcher).
+								WithReplicas(2),
+						),
+				},
+			},
+			rJobName:     constants.Node,
+			wantReplicas: 1,
+		},
+		"replicatedJob without replicas": {
+			info: &Info{
+				TemplateSpec: TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node),
+						),
+				},
+			},
+			rJobName:     constants.Node,
+			wantReplicas: 1,
+		},
+		"replicatedJob with multiple replicas": {
+			info: &Info{
+				TemplateSpec: TemplateSpec{
+					ObjApply: jobsetv1alpha2ac.JobSetSpec().
+						WithReplicatedJobs(
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Launcher).
+								WithReplicas(1),
+							jobsetv1alpha2ac.ReplicatedJob().
+								WithName(constants.Node).
+								WithReplicas(3),
+						),
+				},
+			},
+			rJobName:     constants.Node,
+			wantReplicas: 3,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := ReplicatedJobReplicas(tc.info, tc.rJobName); got != tc.wantReplicas {
+				t.Errorf("Unexpected replicatedJob replicas, want: %d, got: %d", tc.wantReplicas, got)
 			}
 		})
 	}

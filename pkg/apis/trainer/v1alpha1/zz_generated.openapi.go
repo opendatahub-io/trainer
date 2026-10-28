@@ -1643,7 +1643,7 @@ func schema_pkg_apis_trainer_v1alpha1_Parameter(ref common.ReferenceCallback) co
 				Properties: map[string]spec.Schema{
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "name is the name of the hyperparameter.",
+							Description: "name is the name of the hyperparameter. Only letters, digits and underscores are allowed, and it cannot start with a digit.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -1752,6 +1752,13 @@ func schema_pkg_apis_trainer_v1alpha1_PodSpecPatch(ref common.ReferenceCallback)
 				Description: "PodSpecPatch contains the Pod spec fields that managers are permitted to patch.",
 				Type:        []string{"object"},
 				Properties: map[string]spec.Schema{
+					"schedulerName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "schedulerName patches the scheduler for the Pods in the target job templates. When omitted, the scheduler specified in the runtime template is preserved.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 					"serviceAccountName": {
 						SchemaProps: spec.SchemaProps{
 							Description: "serviceAccountName patches the service account for the Pods in the target job templates.",
@@ -1981,7 +1988,7 @@ func schema_pkg_apis_trainer_v1alpha1_RandomAlgorithm(ref common.ReferenceCallba
 				Properties: map[string]spec.Schema{
 					"seed": {
 						SchemaProps: spec.SchemaProps{
-							Description: "seed is the seed for the random search algorithm.",
+							Description: "seed is the seed for the random search algorithm. It must be between 0 and 4294967295.",
 							Type:        []string{"integer"},
 							Format:      "int64",
 						},
