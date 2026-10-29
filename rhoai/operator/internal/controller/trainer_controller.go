@@ -40,6 +40,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	configv1 "github.com/openshift/api/config/v1"
+
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/cluster"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/controller/gc"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
@@ -116,6 +118,9 @@ type ReconcilerConfig struct {
 	RuntimesPath     string
 	ImageStreamsPath string
 	WorkDir          string
+	// TLSProfile is the effective cluster TLS profile rendered into the
+	// operand's controller configuration.
+	TLSProfile configv1.TLSProfileSpec
 }
 
 type trainerActions struct {
@@ -124,6 +129,7 @@ type trainerActions struct {
 	runtimesPath     string
 	imageStreamsPath string
 	workDir          string
+	tlsProfile       configv1.TLSProfileSpec
 	reconciler       *reconciler.Reconciler
 }
 
@@ -187,6 +193,7 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 		runtimesPath:     cfg.RuntimesPath,
 		imageStreamsPath: cfg.ImageStreamsPath,
 		workDir:          cfg.WorkDir,
+		tlsProfile:       cfg.TLSProfile,
 	}
 
 	nsFn := func(_ context.Context, rr *types.ReconciliationRequest) (string, error) {
@@ -357,6 +364,7 @@ func (m *trainerActions) renderManifests(ctx context.Context, rr *types.Reconcil
 			staticParams: map[string]string{paramOperatorNamespace: namespace},
 			namespace:    namespace,
 			overlay:      defaultOverlay,
+			operandTLS:   true,
 		},
 		{
 			name:             "runtimes",
@@ -379,7 +387,7 @@ func (m *trainerActions) renderManifests(ctx context.Context, rr *types.Reconcil
 	}
 
 	for _, rs := range resourceSets {
-		rendered, err := m.renderResourceSet(rs)
+		rendered, err := m.renderResourceSet(ctx, rs)
 		if err != nil {
 			return err
 		}
@@ -391,7 +399,7 @@ func (m *trainerActions) renderManifests(ctx context.Context, rr *types.Reconcil
 	return nil
 }
 
-func (m *trainerActions) renderResourceSet(rs resourceSet) ([]unstructured.Unstructured, error) {
+func (m *trainerActions) renderResourceSet(ctx context.Context, rs resourceSet) ([]unstructured.Unstructured, error) {
 	workDir := filepath.Join(m.workDir, rs.subDir)
 
 	if err := ensureWorkDir(rs.templatePath, workDir); err != nil {
@@ -419,6 +427,12 @@ func (m *trainerActions) renderResourceSet(rs resourceSet) ([]unstructured.Unstr
 
 	if rs.filterConfigMaps {
 		rendered = filterConfigMaps(rendered)
+	}
+
+	if rs.operandTLS {
+		if err := applyOperandTLSOptions(ctx, rendered, m.tlsProfile); err != nil {
+			return nil, fmt.Errorf("applying operand TLS options to %s: %w", rs.name, err)
+		}
 	}
 
 	return rendered, nil
@@ -562,6 +576,10 @@ type resourceSet struct {
 	namespace        string
 	overlay          string
 	filterConfigMaps bool
+	// operandTLS injects the effective cluster TLS profile into the
+	// operand's controller_manager_config.yaml and rolls the operand
+	// deployment when the rendered configuration changes.
+	operandTLS bool
 }
 
 func cleanupTrainerResources(ctx context.Context, dynClient dynamic.Interface) {

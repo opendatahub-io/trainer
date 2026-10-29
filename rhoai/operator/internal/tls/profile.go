@@ -39,6 +39,9 @@ type Result struct {
 	UsedFallback   bool
 	Watchable      bool
 	TLSOpts        []func(*tls.Config)
+	// EffectiveProfile is the profile actually applied: the cluster
+	// profile when honored, hardened Intermediate defaults otherwise.
+	EffectiveProfile configv1.TLSProfileSpec
 }
 
 func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (*Result, error) {
@@ -65,11 +68,12 @@ func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (
 	}
 
 	return &Result{
-		Profile:        loaded.Spec,
-		ProfileHonored: profileHonored,
-		Adherence:      loaded.AdherencePolicy,
-		UsedFallback:   loaded.UsedFallback,
-		Watchable:      loaded.Watchable,
+		Profile:          loaded.Spec,
+		ProfileHonored:   profileHonored,
+		Adherence:        loaded.AdherencePolicy,
+		UsedFallback:     loaded.UsedFallback,
+		Watchable:        loaded.Watchable,
+		EffectiveProfile: effectiveProfile,
 		TLSOpts: []func(*tls.Config){
 			tlsConfigFn,
 			commonTLS.SetNextProtos(commonTLS.HTTP2NextProtos...),

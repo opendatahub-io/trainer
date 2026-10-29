@@ -190,6 +190,7 @@ func main() {
 		RuntimesPath:     runtimesPath,
 		ImageStreamsPath: imageStreamsPath,
 		WorkDir:          workDir,
+		TLSProfile:       tlsResult.EffectiveProfile,
 	}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Trainer")
 		os.Exit(1)
