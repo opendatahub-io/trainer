@@ -24,6 +24,7 @@ import (
 	"slices"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -176,7 +177,7 @@ func (j *JobSet) Validate(ctx context.Context, info *runtime.Info, oldObj, newOb
 
 	allErrs = append(allErrs, j.checkRuntimePatchesImmutability(ctx, oldObj, newObj)...)
 
-	// TODO (andreyvelich): Validate Volumes, VolumeMounts, and Tolerations.
+	// Validate per-patch: ensure patched resources exist in the runtime template
 	for _, runtimePatch := range newObj.Spec.RuntimePatches {
 		allErrs = append(allErrs, validation.IsDomainPrefixedPath(runtimePatchesPath.Child("manager"), runtimePatch.Manager)...)
 		if runtimePatch.TrainingRuntimeSpec == nil || runtimePatch.TrainingRuntimeSpec.Template == nil ||
@@ -195,6 +196,7 @@ func (j *JobSet) Validate(ctx context.Context, info *runtime.Info, oldObj, newOb
 				continue
 			}
 			podSpecPatch := rJobPatch.Template.Spec.Template.Spec
+
 			for _, c := range podSpecPatch.InitContainers {
 				if !containers.Has(c.Name) {
 					allErrs = append(allErrs, field.Invalid(runtimePatchesPath, newObj.Spec.RuntimePatches,
@@ -240,6 +242,9 @@ func (j *JobSet) Validate(ctx context.Context, info *runtime.Info, oldObj, newOb
 		}
 	}
 
+	// Validate volumeMounts and tolerations introduced by runtime patches.
+	allErrs = append(allErrs, validateRuntimePatchesPodSpec(jobSetSpec, runtimePatchesPath, newObj)...)
+
 	// numNodes is the total number of nodes across all trainer replicas, so it must be
 	// divisible by replicas to have the same number of nodes in every replicated Job.
 	if trainerReplicas := runtime.TrainerReplicas(info); trainerReplicas > 1 {
@@ -254,6 +259,100 @@ func (j *JobSet) Validate(ctx context.Context, info *runtime.Info, oldObj, newOb
 	}
 
 	return nil, allErrs
+}
+
+// validateRuntimePatchesPodSpec validates volumeMounts and tolerations introduced by each runtime patch.
+func validateRuntimePatchesPodSpec(jobSetSpec *jobsetv1alpha2ac.JobSetSpecApplyConfiguration, runtimePatchesPath *field.Path, trainJob *trainer.TrainJob) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if len(trainJob.Spec.RuntimePatches) == 0 {
+		return allErrs
+	}
+
+	// For each runtime patch, validate the fields it introduces
+	for i, patch := range trainJob.Spec.RuntimePatches {
+		patchPath := runtimePatchesPath.Index(i)
+
+		if patch.TrainingRuntimeSpec == nil || patch.TrainingRuntimeSpec.Template == nil ||
+			patch.TrainingRuntimeSpec.Template.Spec == nil || patch.TrainingRuntimeSpec.Template.Spec.ReplicatedJobs == nil {
+			continue
+		}
+
+		for j, patchRJob := range patch.TrainingRuntimeSpec.Template.Spec.ReplicatedJobs {
+			if patchRJob.Template == nil || patchRJob.Template.Spec == nil ||
+				patchRJob.Template.Spec.Template == nil || patchRJob.Template.Spec.Template.Spec == nil {
+				continue
+			}
+
+			patchPodSpec := patchRJob.Template.Spec.Template.Spec
+			replicatedJobPath := patchPath.Child("trainingRuntimeSpec", "template", "spec", "replicatedJobs").Index(j)
+			podSpecPath := replicatedJobPath.Child("template", "spec", "template", "spec")
+
+			// Validate InitContainers from this patch
+			allErrs = append(allErrs, validateVolumeMountsPatch(podSpecPath.Child("initContainers"), patchPodSpec.InitContainers)...)
+
+			// Validate Containers from this patch
+			allErrs = append(allErrs, validateVolumeMountsPatch(podSpecPath.Child("containers"), patchPodSpec.Containers)...)
+
+			// Validate Tolerations from this patch
+			for t, tol := range patchPodSpec.Tolerations {
+				tolerationPath := podSpecPath.Child("tolerations").Index(t)
+				// Validate operator (if specified)
+				if tol.Operator != "" && !slices.Contains([]corev1.TolerationOperator{corev1.TolerationOpEqual, corev1.TolerationOpExists, corev1.TolerationOpLt, corev1.TolerationOpGt}, tol.Operator) {
+					allErrs = append(allErrs, field.NotSupported(tolerationPath.Child("operator"), tol.Operator, []string{string(corev1.TolerationOpEqual), string(corev1.TolerationOpExists), string(corev1.TolerationOpLt), string(corev1.TolerationOpGt)}))
+				}
+				// Validate operator Exists must have empty value
+				if tol.Operator == corev1.TolerationOpExists && tol.Value != "" {
+					allErrs = append(allErrs, field.Forbidden(tolerationPath.Child("value"), "must be empty when operator is Exists"))
+				}
+				// Validate empty key must use operator Exists
+				if tol.Key == "" && tol.Operator != corev1.TolerationOpExists {
+					allErrs = append(allErrs, field.Invalid(tolerationPath.Child("operator"), tol.Operator, "must be Exists when key is empty"))
+				}
+				// Validate tolerationSeconds requires effect NoExecute
+				if tol.TolerationSeconds != nil && tol.Effect != corev1.TaintEffectNoExecute {
+					allErrs = append(allErrs, field.Invalid(tolerationPath.Child("effect"), tol.Effect, "must be NoExecute when tolerationSeconds is set"))
+				}
+				// Validate effect (if specified)
+				// Empty effect ("") is valid and matches any taint effect
+				if tol.Effect != "" && tol.Effect != corev1.TaintEffectNoSchedule && tol.Effect != corev1.TaintEffectPreferNoSchedule && tol.Effect != corev1.TaintEffectNoExecute {
+					allErrs = append(allErrs, field.NotSupported(tolerationPath.Child("effect"), tol.Effect, []string{string(corev1.TaintEffectNoSchedule), string(corev1.TaintEffectPreferNoSchedule), string(corev1.TaintEffectNoExecute), ""}))
+				}
+			}
+		}
+	}
+
+	return allErrs
+}
+
+// validateVolumeMountsPatch validates volumeMounts in containers (or initContainers).
+// It checks that volumeMounts have non-empty mountPath and no duplicate mountPaths.
+// Note: Volume existence is not validated here because plugins may inject volumes during
+// the EnforceMLPolicy stage (after ValidateObjects). Kubernetes will validate volume
+// references when the Pod is created.
+func validateVolumeMountsPatch(fldPath *field.Path, containers []trainer.ContainerPatch) field.ErrorList {
+	var allErrs field.ErrorList
+
+	for k, container := range containers {
+		containerPath := fldPath.Index(k)
+		mountPaths := sets.New[string]()
+		for l, vm := range container.VolumeMounts {
+			volumeMountPath := containerPath.Child("volumeMounts").Index(l)
+			// Validate mountPath is not empty
+			if vm.MountPath == "" {
+				allErrs = append(allErrs, field.Required(volumeMountPath.Child("mountPath"), ""))
+			}
+			// Validate duplicate mountPath within the same container
+			if vm.MountPath != "" {
+				if mountPaths.Has(vm.MountPath) {
+					allErrs = append(allErrs, field.Duplicate(volumeMountPath.Child("mountPath"), vm.MountPath))
+				}
+				mountPaths.Insert(vm.MountPath)
+			}
+		}
+	}
+
+	return allErrs
 }
 
 func (j *JobSet) checkRuntimePatchesImmutability(ctx context.Context, oldObj, newObj *trainer.TrainJob) field.ErrorList {
