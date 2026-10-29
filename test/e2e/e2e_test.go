@@ -42,12 +42,11 @@ import (
 
 const (
 	torchRuntime     = "torch-distributed"
+	openMPIRuntime   = "openmpi-cpu"
 	deepSpeedRuntime = "deepspeed-distributed"
 	jaxRuntime       = "jax-distributed"
 	xgboostRuntime   = "xgboost-distributed"
 	fluxRuntime      = "flux-distributed"
-
-	openMPI4Image = "mpioperator/mpi-pi:v0.6.0-openmpi@sha256:ed7ece27c8e909fa96664d09f920781a399c7ae7074c2460b18775fa4262c6a8"
 )
 
 //go:embed testdata/status_update.py
@@ -199,20 +198,20 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 	})
 
 	ginkgo.When("Creating TrainJob to perform OpenMPI 4.0 workload", func() {
-		// Use the DeepSpeed runtime, but set the OpenMPI 4.0 image.
-		ginkgo.It("should create TrainJob with DeepSpeed runtime reference and OpenMPI 4.0 image", func() {
+		// Verify the `openmpi-cpu` ClusterTrainingRuntime.
+		ginkgo.It("should create TrainJob with OpenMPI runtime reference", func() {
 			// Create a multi-node MPI TrainJob.
 			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-openmpi4").
-				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), deepSpeedRuntime).
+				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), openMPIRuntime).
 				Trainer(&trainer.Trainer{
-					Image:    ptr.To(openMPI4Image),
 					NumNodes: ptr.To(int32(2)),
-					// Verify MPI ranks run across both expected nodes.
-					Command: []string{"sh", "-c", `test "$(mpirun hostname | sort -u | wc -l)" -eq 2`},
+					// Verify MPI ranks run across both expected nodes. The runtime image doesn't ship
+					// hostname, so use uname instead.
+					Command: []string{"sh", "-c", `test "$(mpirun uname -n | sort -u | wc -l)" -eq 2`},
 				}).
 				Obj()
 
-			ginkgo.By("Create a TrainJob with deepspeed-distributed runtime reference and the OpenMPI 4.0 image", func() {
+			ginkgo.By("Create a TrainJob with openmpi-cpu runtime reference", func() {
 				gomega.Expect(k8sClient.Create(ctx, trainJob)).Should(gomega.Succeed())
 			})
 
