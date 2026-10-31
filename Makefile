@@ -267,13 +267,23 @@ test-rust: ## Run Rust unit test.
 test-e2e-setup-cluster: kind ## Setup Kind cluster for e2e test. (Set GPU_CLUSTER=gpu for GPU nodes)
 	CLUSTER_TYPE=$(CLUSTER_TYPE) KIND=$(KIND) K8S_VERSION=$(K8S_VERSION) INSTALL_METHOD=$(INSTALL_METHOD) ./hack/e2e-setup-cluster.sh
 
+<<<<<<< HEAD
 .PHONY: test-e2e-setup-gpu-cluster
 test-e2e-setup-gpu-cluster: kind ## Setup Kind cluster for GPU e2e test.
 	KIND=$(KIND) K8S_VERSION=$(K8S_VERSION) ./hack/e2e-setup-gpu-cluster.sh
+=======
+.PHONY: test-e2e-setup-cluster-was
+test-e2e-setup-cluster-was: kind ## Setup Kind cluster with Workload-Aware Scheduling for e2e test.
+	KIND=$(KIND) K8S_VERSION=$(K8S_VERSION) ./hack/e2e-setup-cluster-was.sh
+>>>>>>> upstream/master
 
 .PHONY: test-e2e
 test-e2e: ginkgo ## Run Go e2e test.
 	$(GINKGO) -v ./test/e2e/...
+
+.PHONY: test-e2e-was
+test-e2e-was: ginkgo ## Run Go e2e WAS test.
+	$(GINKGO) -v ./test/e2e-was/...
 
 # Input and output location for Notebooks executed with Papermill.
 NOTEBOOK_INPUT=$(PROJECT_DIR)/examples/pytorch/image-classification/mnist.ipynb
