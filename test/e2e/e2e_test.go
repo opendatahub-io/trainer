@@ -201,6 +201,9 @@ var _ = ginkgo.Describe("TrainJob e2e", func() {
 	ginkgo.When("Creating TrainJob to perform OpenMPI 4.0 workload", func() {
 		// Use the DeepSpeed runtime, but set the OpenMPI 4.0 image.
 		ginkgo.It("should create TrainJob with DeepSpeed runtime reference and OpenMPI 4.0 image", func() {
+			// TODO: Remove this skip once an OpenShift-compatible MPI runtime image is available.
+			ginkgo.Skip("MPI runtime image is not available")
+
 			// Create a multi-node MPI TrainJob.
 			trainJob := testingutil.MakeTrainJobWrapper(ns.Name, "e2e-test-openmpi4").
 				RuntimeRef(trainer.SchemeGroupVersion.WithKind(trainer.ClusterTrainingRuntimeKind), deepSpeedRuntime).
