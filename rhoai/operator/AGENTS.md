@@ -1,6 +1,6 @@
 # odh-trainer-operator
 
-Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reconciles the `Trainer` Module CR (`components.platform.opendatahub.io/v1alpha1`) and deploys upstream Kubeflow Trainer resources via kustomize rendering from `opendatahub-io/trainer` manifests.
+Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reconciles the `Trainer` Module CR (`components.platform.opendatahub.io/v1alpha1`) and deploys the in-repo Kubeflow Trainer manifests (`manifests/`) via kustomize rendering.
 
 ## Structure
 
@@ -8,7 +8,7 @@ Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reco
 - `internal/controller/` - Reconciler, manifest rendering, params.env handling
 - `cmd/main.go` - Operator entrypoint
 - `config/` - Kustomize manifests (CRDs, RBAC, manager deployment, samples)
-- `hack/` - Manifest collection script (`get_trainer_manifests.sh`)
+- `hack/` - License boilerplate for generated code
 - `manifests/runtimes/` - ClusterTrainingRuntime definitions (torch, training-hub)
 - `manifests/imagestreams/` - ImageStream definitions (CUDA, ROCm, CPU training images)
 - `test/e2e/` - End-to-end tests (Kind cluster)
@@ -22,7 +22,7 @@ Trainer v2 Module Controller for ODH modular architecture (RHAISTRAT-1064). Reco
 - `internal/controller/trainer_controller.go` - Reconciler: managed/removed/delete paths, finalizer, GC, conditions
 - `internal/controller/manifests.go` - Kustomize rendering pipeline, SSA apply via `resources.Apply`
 - `internal/controller/params.go` - [TEMPORARY] params.env parsing for RELATED_IMAGE override
-- `hack/get_trainer_manifests.sh` - Fetches upstream trainer manifests (ODH or RHOAI)
+- `../../manifests/` - In-repo Kubeflow Trainer manifests bundled into the operator image
 - `config/samples/components_v1alpha1_trainer.yaml` - Singleton CR `default-trainer`
 
 ## Architecture
@@ -39,8 +39,8 @@ The controller uses shared utilities from `opendatahub-io/odh-platform-utilities
 
 ### Manifest Pipeline
 
-1. Build time: `get_trainer_manifests.sh` fetches upstream manifests into `opt/manifests/`
-2. Dockerfile: copies upstream manifests into `/opt/manifests-template/`, runtimes into `/opt/runtimes-template/`, imagestreams into `/opt/imagestreams-template/`
+1. Build time: the image build bundles this repository's `manifests/` directory (no separate manifest fetch or vendored copy)
+2. Dockerfile: copies the bundled manifests into `/opt/manifests-template/`, operator runtimes into `/opt/runtimes-template/`, imagestreams into `/opt/imagestreams-template/`
 3. Runtime: copies templates to writable work dir, applies RELATED_IMAGE env var overrides to params.env, renders kustomize overlay, applies with SSA
 
 ### Reconcile Flow
@@ -53,7 +53,7 @@ The controller uses shared utilities from `opendatahub-io/odh-platform-utilities
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Podman (or Docker via `CONTAINER_TOOL=docker`)
 - kubectl v1.28+
 

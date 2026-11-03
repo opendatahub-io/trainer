@@ -27,7 +27,7 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
 	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 
-	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer/rhoai/operator/api/v1alpha1"
 )
 
 func TestControllerPodRunning(t *testing.T) {
@@ -107,6 +107,7 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 		g.Expect(d.Status.ReadyReplicas).To(Equal(d.Status.Replicas),
 			"Deployment %s should have all replicas ready", d.Name)
 	}
+	g.Eventually(verifyTrainerUsesLocalImage).Should(Succeed())
 
 	ctrNames, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -148,10 +149,32 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 		g.Expect(d.Status.ReadyReplicas).To(Equal(d.Status.Replicas),
 			"Deployment %s should have all replicas ready after re-provisioning", d.Name)
 	}
+	g.Eventually(verifyTrainerUsesLocalImage).Should(Succeed())
 
 	ctrNames, err = k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(ctrNames).NotTo(BeEmpty(), "ClusterTrainingRuntimes should be re-created after recreate")
+}
+
+func verifyTrainerUsesLocalImage(g Gomega) {
+	deployments, err := k8sClient.AppsV1().Deployments(trainerNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: platformPartOf + "=" + trainerPartOf,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(deployments.Items).NotTo(BeEmpty(), "Expected at least one Trainer deployment")
+
+	foundManager := false
+	for _, d := range deployments.Items {
+		for _, c := range d.Spec.Template.Spec.Containers {
+			if c.Name != "manager" {
+				continue
+			}
+			foundManager = true
+			g.Expect(c.Image).To(Equal(trainerImage),
+				"Deployment %s should use the locally built trainer image", d.Name)
+		}
+	}
+	g.Expect(foundManager).To(BeTrue(), "Expected a manager container in Trainer deployments")
 }
 
 func TestFinalizerStrippedFromRuntimes(t *testing.T) {

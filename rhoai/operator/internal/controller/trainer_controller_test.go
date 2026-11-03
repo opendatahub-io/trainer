@@ -44,7 +44,7 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/reconciler"
 	fwtypes "github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
 
-	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer/rhoai/operator/api/v1alpha1"
 )
 
 const (

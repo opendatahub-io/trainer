@@ -45,9 +45,9 @@ import (
 	platformcache "github.com/opendatahub-io/odh-platform-utilities/pkg/cache"
 	platformlabels "github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 
-	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
-	"github.com/opendatahub-io/trainer-operator/internal/controller"
-	operatortls "github.com/opendatahub-io/trainer-operator/internal/tls"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer/rhoai/operator/api/v1alpha1"
+	"github.com/opendatahub-io/trainer/rhoai/operator/internal/controller"
+	operatortls "github.com/opendatahub-io/trainer/rhoai/operator/internal/tls"
 	// +kubebuilder:scaffold:imports
 )
 

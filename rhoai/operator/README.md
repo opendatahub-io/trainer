@@ -1,13 +1,13 @@
 # trainer-operator
 
-Standalone operator for Kubeflow Trainer v2. Reconciles the `Trainer` CR (`components.platform.opendatahub.io/v1alpha1`) and deploys upstream Kubeflow Trainer resources via kustomize rendering from [opendatahub-io/trainer](https://github.com/opendatahub-io/trainer) manifests.
+Standalone operator for Kubeflow Trainer v2. Reconciles the `Trainer` CR (`components.platform.opendatahub.io/v1alpha1`) and deploys the in-repo Kubeflow Trainer manifests (`manifests/`) via kustomize rendering.
 
 ## Architecture
 
 ### Manifest Pipeline
 
-1. **Build time:** `hack/get_trainer_manifests.sh` fetches upstream trainer manifests into `opt/manifests/`
-2. **Dockerfile:** copies upstream manifests into `/opt/manifests-template/`, runtimes into `/opt/runtimes-template/`, and imagestreams into `/opt/imagestreams-template/`
+1. **Build time:** the image build bundles this repository's `manifests/` directory (no separate manifest fetch or vendored copy)
+2. **Dockerfile:** copies the bundled manifests into `/opt/manifests-template/`, operator runtimes into `/opt/runtimes-template/`, and imagestreams into `/opt/imagestreams-template/`
 3. **Runtime:** copies templates to a writable work dir, applies `RELATED_IMAGE` env var overrides to `params.env`, renders the kustomize overlay, applies with Server-Side Apply
 
 ### Reconcile Flow
@@ -32,7 +32,7 @@ api/v1alpha1/           CRD types implementing common.PlatformObject
 internal/controller/    Reconciler, manifest rendering, params.env handling
 cmd/main.go             Operator entrypoint
 config/                 Kustomize manifests (CRDs, RBAC, manager deployment, samples)
-hack/                   Manifest collection script (get_trainer_manifests.sh)
+hack/                   License boilerplate for generated code
 manifests/runtimes/     ClusterTrainingRuntime definitions (torch, training-hub)
 manifests/imagestreams/ ImageStream definitions (CUDA, ROCm, CPU training images)
 test/e2e/               End-to-end tests (Kind cluster)
@@ -45,7 +45,7 @@ test/utils/             Shell command utilities (make, kind, cert-manager)
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Podman (or Docker via `CONTAINER_TOOL=docker`)
 - kubectl v1.28+
 - Access to a Kubernetes v1.28+ cluster
@@ -135,7 +135,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+<http://www.apache.org/licenses/LICENSE-2.0>
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,

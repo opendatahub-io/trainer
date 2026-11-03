@@ -36,6 +36,9 @@ spec:
         image: REPLACED_BY_KUSTOMIZE
         name: manager
         ports:
+        - name: health-probe
+          containerPort: 8081
+          protocol: TCP
         - name: metrics
           containerPort: 8443
           protocol: TCP

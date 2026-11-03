@@ -51,7 +51,7 @@ func TestRenderDefaultOverlayPlacesPrometheusRuleInOperatorNamespace(t *testing.
 // injection tests exercise the shipped content.
 func operandTestConfig(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "manifests", "trainer", "rhoai", "controller_manager_config.yaml"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "manifests", "rhoai", "controller_manager_config.yaml"))
 	if err != nil {
 		t.Fatalf("reading operand config: %v", err)
 	}

@@ -27,7 +27,7 @@ import (
 	"github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/opendatahub-io/trainer-operator/test/support"
+	"github.com/opendatahub-io/trainer/rhoai/operator/test/support"
 )
 
 var (

@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
-	operatortls "github.com/opendatahub-io/trainer-operator/internal/tls"
+	operatortls "github.com/opendatahub-io/trainer/rhoai/operator/internal/tls"
 
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 	"github.com/opendatahub-io/odh-platform-utilities/pkg/render/kustomize"

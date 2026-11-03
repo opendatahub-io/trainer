@@ -36,15 +36,18 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/opendatahub-io/trainer-operator/test/support"
-	"github.com/opendatahub-io/trainer-operator/test/utils"
+	"github.com/opendatahub-io/trainer/rhoai/operator/test/support"
+	"github.com/opendatahub-io/trainer/rhoai/operator/test/utils"
 )
 
 var (
 	skipCertManagerInstall        = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
 	isCertManagerAlreadyInstalled = false
 
-	projectImage = "example.com/odh-trainer-operator:v0.0.1"
+	operatorImage = "example.com/odh-trainer-operator:v0.0.1"
+	trainerImage  = "example.com/kubeflow-trainer:v0.0.1"
+
+	operatorDeploymentName = "trainer-operator-controller-manager"
 
 	k8sClient *support.Client
 	ctx       = context.Background()
@@ -65,13 +68,22 @@ func TestMain(m *testing.M) {
 	gomega.SetDefaultEventuallyTimeout(5 * time.Minute)
 	gomega.SetDefaultEventuallyPollingInterval(time.Second)
 
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", operatorImage))
 	if _, err := utils.Run(cmd); err != nil {
 		log.Fatalf("Failed to build the manager(Operator) image: %v", err)
 	}
 
-	if err := utils.LoadImageToKindClusterWithName(projectImage); err != nil {
+	if err := utils.LoadImageToKindClusterWithName(operatorImage); err != nil {
 		log.Fatalf("Failed to load the manager(Operator) image into Kind: %v", err)
+	}
+
+	cmd = exec.Command("make", "trainer-image-build", fmt.Sprintf("TRAINER_IMAGE=%s", trainerImage))
+	if _, err := utils.Run(cmd); err != nil {
+		log.Fatalf("Failed to build the trainer controller image: %v", err)
+	}
+
+	if err := utils.LoadImageToKindClusterWithName(trainerImage); err != nil {
+		log.Fatalf("Failed to load the trainer controller image into Kind: %v", err)
 	}
 
 	if !skipCertManagerInstall {
@@ -124,9 +136,23 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to install ImageStream CRD: %v", err)
 	}
 
-	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", operatorImage))
 	if _, err := utils.Run(cmd); err != nil {
 		log.Fatalf("Failed to deploy the controller-manager: %v", err)
+	}
+
+	cmd = exec.Command("kubectl", "set", "env",
+		fmt.Sprintf("deployment/%s", operatorDeploymentName),
+		fmt.Sprintf("RELATED_IMAGE_ODH_TRAINER_IMAGE=%s", trainerImage),
+		"-n", namespace)
+	if _, err := utils.Run(cmd); err != nil {
+		log.Fatalf("Failed to configure the trainer controller image: %v", err)
+	}
+
+	cmd = exec.Command("kubectl", "rollout", "status",
+		fmt.Sprintf("deployment/%s", operatorDeploymentName), "-n", namespace, "--timeout=5m")
+	if _, err := utils.Run(cmd); err != nil {
+		log.Fatalf("Failed waiting for the operator rollout: %v", err)
 	}
 
 	if err := installJobSetCRD(); err != nil {

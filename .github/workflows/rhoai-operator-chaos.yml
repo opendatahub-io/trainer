@@ -11,7 +11,7 @@ on:
       - "manifests/base/webhook/**"
       - "manifests/rhoai/**"
       - "chaos/knowledge/**"
-      - ".github/workflows/operator-chaos.yml"
+      - ".github/workflows/rhoai-operator-chaos.yml"
 
 env:
   OPERATOR_CHAOS_VERSION: "9e6ac9668b9aaca2f0f2ddf169867862b7925b80"

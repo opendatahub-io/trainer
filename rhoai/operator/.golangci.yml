@@ -35,7 +35,7 @@ linters:
           files:
             - "!**_test.go"
           deny:
-            - pkg: "github.com/opendatahub-io/trainer-operator/test"
+            - pkg: "github.com/opendatahub-io/trainer/rhoai/operator/test"
               desc: "Test support packages must not be imported from production code"
     revive:
       rules:

@@ -51,6 +51,9 @@ endif
 OPERATOR_SDK_VERSION ?= v1.42.2
 # Image URL to use all building/pushing image targets
 IMG ?= quay.io/opendatahub/odh-trainer-operator:odh-stable
+TRAINER_IMAGE ?= example.com/kubeflow-trainer:v0.0.1
+# Namespace the operator is deployed to.
+NAMESPACE ?= trainer-operator-system
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -143,7 +146,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -timeout 30m
+	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -count=1 -timeout 30m
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: test-e2e-ocp
@@ -174,6 +177,10 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
+.PHONY: lint-manifests
+lint-manifests: kustomize kube-linter ## Lint rendered manifests with kube-linter.
+	$(KUSTOMIZE) build config/default | $(KUBE_LINTER) lint -
+
 ##@ Build
 
 .PHONY: build
@@ -189,33 +196,26 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build -f Dockerfile -t ${IMG} ../..
+
+.PHONY: trainer-image-build
+trainer-image-build: ## Build the trainer controller image from the repository root.
+	$(CONTAINER_TOOL) build -f ../../cmd/trainer-controller-manager/Dockerfile.odh -t ${TRAINER_IMAGE} ../..
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-comma := ,
-.PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	$(CONTAINER_TOOL) manifest create $(IMG)
-	$(foreach platform,$(subst $(comma), ,$(PLATFORMS)),\
-		$(CONTAINER_TOOL) build --platform $(platform) --tag $(IMG)-$(subst /,-,$(platform)) -f Dockerfile.cross . && \
-		$(CONTAINER_TOOL) manifest add $(IMG) $(IMG)-$(subst /,-,$(platform)) ;)
-	$(CONTAINER_TOOL) manifest push $(IMG)
-	rm Dockerfile.cross
-
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	@printf -- '---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: trainer-operator-system\n---\n' > dist/install.yaml
-	$(KUSTOMIZE) build config/default | sed 's|image: controller:latest|image: ${IMG}|g' >> dist/install.yaml
+	@printf -- '---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: $(NAMESPACE)\n---\n' > dist/install.yaml
+	@out="$(CURDIR)/dist/install.yaml"; tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+		cp -r config "$$tmp/config"; \
+		cd "$$tmp" && sed -i 's|TRAINER_OPERATOR_IMAGE=.*|TRAINER_OPERATOR_IMAGE=$(IMG)|' config/default/params.env && \
+		grep -qF 'TRAINER_OPERATOR_IMAGE=$(IMG)' config/default/params.env || { echo "ERROR: failed to set TRAINER_OPERATOR_IMAGE"; exit 1; } && \
+		cd config/default && $(KUSTOMIZE) edit set namespace $(NAMESPACE) && cd "$$tmp" && \
+		$(KUSTOMIZE) build config/default >> "$$out"
 
 ##@ Deployment
 
@@ -233,16 +233,20 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	$(KUBECTL) create namespace trainer-operator-system --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@tmp="$$(mktemp -d)"; [ -n "$$tmp" ] || { echo "mktemp failed"; exit 1; }; trap 'rm -rf "$$tmp"' EXIT; \
 		cp -r config "$$tmp/config"; \
 		cd "$$tmp" && sed -i 's|TRAINER_OPERATOR_IMAGE=.*|TRAINER_OPERATOR_IMAGE=$(IMG)|' config/default/params.env && \
 		grep -qF 'TRAINER_OPERATOR_IMAGE=$(IMG)' config/default/params.env || { echo "ERROR: failed to set TRAINER_OPERATOR_IMAGE"; exit 1; } && \
+		cd config/default && $(KUSTOMIZE) edit set namespace $(NAMESPACE) && cd "$$tmp" && \
 		$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+	@tmp="$$(mktemp -d)"; [ -n "$$tmp" ] || { echo "mktemp failed"; exit 1; }; trap 'rm -rf "$$tmp"' EXIT; \
+		cp -r config "$$tmp/config"; \
+		cd "$$tmp/config/default" && $(KUSTOMIZE) edit set namespace $(NAMESPACE) && cd "$$tmp" && \
+		$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 
@@ -258,6 +262,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+KUBE_LINTER ?= $(LOCALBIN)/kube-linter
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -267,6 +272,7 @@ ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.13.0
+KUBE_LINTER_VERSION ?= v0.7.1
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -295,6 +301,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: kube-linter
+kube-linter: $(KUBE_LINTER) ## Download kube-linter locally if necessary.
+$(KUBE_LINTER): $(LOCALBIN)
+	$(call go-install-tool,$(KUBE_LINTER),golang.stackrox.io/kube-linter/cmd/kube-linter,$(KUBE_LINTER_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

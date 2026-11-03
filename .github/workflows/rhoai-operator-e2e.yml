@@ -1,10 +1,26 @@
-name: E2E Tests
+name: Operator E2E Tests
 
 on:
   push:
     branches:
       - main
+    paths:
+      - "rhoai/operator/**"
+      - "pkg/**"
+      - "cmd/trainer-controller-manager/**"
+      - "manifests/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/rhoai-operator-e2e.yml"
   pull_request:
+    paths:
+      - "rhoai/operator/**"
+      - "pkg/**"
+      - "cmd/trainer-controller-manager/**"
+      - "manifests/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/rhoai-operator-e2e.yml"
 
 jobs:
   test-e2e:
@@ -12,14 +28,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: rhoai/operator
     steps:
       - name: Clone the code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version-file: go.mod
+          go-version-file: rhoai/operator/go.mod
+
+      - name: Verify generated files are up to date
+        run: |
+          make manifests generate fmt
+          git diff --exit-code
 
       - name: Install kind
         run: |
@@ -38,5 +64,5 @@ jobs:
 
       - name: Running Test e2e
         run: |
-          go mod tidy
+          go mod tidy -diff
           make test-e2e CONTAINER_TOOL=docker

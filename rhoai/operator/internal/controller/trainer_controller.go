@@ -58,7 +58,7 @@ import (
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/reconciler"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
 
-	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer/rhoai/operator/api/v1alpha1"
 )
 
 const (
@@ -143,7 +143,7 @@ type trainerActions struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups="",resources=services;configmaps,verbs=get;list;watch;create;update;patch;delete
-// ServiceAccount mutate verbs are limited to accounts rendered from manifests/trainer.
+// ServiceAccount mutate verbs are limited to accounts rendered from manifests/.
 // create/list/watch stay unscoped (create ignores resourceNames; GC uses list).
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=create;list;watch
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-cache-initializer
@@ -152,7 +152,7 @@ type trainerActions struct {
 // Mutate verbs on cluster RBAC objects are limited to names this operator manages.
 // create/list/watch stay unscoped: resourceNames is not enforced on create, and GC
 // discovers owned objects via label-based list. Keep resourceNames aligned with
-// manifests/trainer/ when those object names change.
+// manifests/ when those object names change.
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=create;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;training-admin;training-edit;training-view;kubeflow-trainer-admin;kubeflow-trainer-edit;kubeflow-trainer-view;kubeflow-trainer-cache-initializer;trainer-metrics-reader;trainer-tls-profile
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;update;patch;delete,resourceNames=kubeflow-trainer-controller-manager;kubeflow-trainer-view;trainer-metrics-reader;trainer-tls-profile

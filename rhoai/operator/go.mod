@@ -1,4 +1,4 @@
-module github.com/opendatahub-io/trainer-operator
+module github.com/opendatahub-io/trainer/rhoai/operator
 
 go 1.26.0
 
@@ -139,4 +139,4 @@ require (
 	volcano.sh/apis v1.13.1-0.20251028070205-46d20c0699e7 // indirect
 )
 
-replace github.com/kubeflow/trainer/v2 => github.com/opendatahub-io/trainer/v2 v2.0.0-20261028141650-aa9769ac66d5
+replace github.com/kubeflow/trainer/v2 => ../../

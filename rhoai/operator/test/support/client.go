@@ -39,7 +39,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	componentsv1alpha1 "github.com/opendatahub-io/trainer-operator/api/v1alpha1"
+	componentsv1alpha1 "github.com/opendatahub-io/trainer/rhoai/operator/api/v1alpha1"
 )
 
 const (
