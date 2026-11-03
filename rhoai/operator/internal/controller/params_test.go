@@ -1,0 +1,129 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	. "github.com/onsi/gomega"
+)
+
+func TestReadParams(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("key1=value1\nkey2=value2\n# comment\n\nkey3=value3\n"), 0o644)).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params).To(HaveLen(3))
+	g.Expect(params["key1"]).To(Equal("value1"))
+	g.Expect(params["key2"]).To(Equal("value2"))
+	g.Expect(params["key3"]).To(Equal("value3"))
+}
+
+func TestWriteParams(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+
+	params := map[string]string{"a": "1", "b": "2"}
+	g.Expect(writeParams(paramsFile, params)).To(Succeed())
+
+	readBack, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(readBack).To(Equal(params))
+}
+
+func TestApplyParamOverridesFromEnv(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte(imageParamControllerImage+"=default-image\n"), 0o644)).To(Succeed())
+
+	t.Setenv("RELATED_IMAGE_ODH_TRAINER_IMAGE", "override-image")
+
+	g.Expect(applyParamOverrides(dir, trainerImageParamMap)).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params[imageParamControllerImage]).To(Equal("override-image"))
+}
+
+func TestApplyParamOverridesMissingParamsEnv(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(applyParamOverrides(t.TempDir(), trainerImageParamMap)).To(Succeed())
+}
+
+func TestApplyStaticParams(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("operator-namespace=opendatahub\nsome-image=quay.io/example:latest\n"), 0o644)).To(Succeed())
+
+	g.Expect(applyStaticParams(dir, map[string]string{paramOperatorNamespace: "redhat-ods-applications"})).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params[paramOperatorNamespace]).To(Equal("redhat-ods-applications"))
+	g.Expect(params["some-image"]).To(Equal("quay.io/example:latest"))
+}
+
+func TestApplyStaticParamsMissingParamsEnv(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(applyStaticParams(t.TempDir(), map[string]string{paramOperatorNamespace: "redhat-ods-applications"})).To(Succeed())
+}
+
+func TestApplyParamOverridesOpenMPICUDAImage(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("odh-openmpi-cuda-image=quay.io/opendatahub/odh-th-torch-cuda-py312:odh-stable\n"), 0o644)).To(Succeed())
+
+	t.Setenv("RELATED_IMAGE_ODH_TH_TORCH_CUDA_PY312_IMAGE", "quay.io/custom/universal-cuda@sha256:abc")
+
+	g.Expect(applyParamOverrides(dir, runtimesParamMap)).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params["odh-openmpi-cuda-image"]).To(Equal("quay.io/custom/universal-cuda@sha256:abc"))
+}
+
+func TestApplyParamOverridesOpenMPICPUImage(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	paramsFile := filepath.Join(dir, "params.env")
+	g.Expect(os.WriteFile(paramsFile, []byte("odh-openmpi-cpu-image=quay.io/opendatahub/odh-th-torch-cpu-py312:odh-stable\n"), 0o644)).To(Succeed())
+
+	t.Setenv("RELATED_IMAGE_ODH_TH_TORCH_CPU_PY312_IMAGE", "quay.io/custom/universal-cpu@sha256:abc")
+
+	g.Expect(applyParamOverrides(dir, runtimesParamMap)).To(Succeed())
+
+	params, err := readParams(paramsFile)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(params["odh-openmpi-cpu-image"]).To(Equal("quay.io/custom/universal-cpu@sha256:abc"))
+}
