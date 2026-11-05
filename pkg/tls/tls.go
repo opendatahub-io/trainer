@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	tlspkg "github.com/openshift/controller-runtime-common/pkg/tls"
+	libgocrypto "github.com/openshift/library-go/pkg/crypto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,16 +63,103 @@ func Resolve(ctx context.Context, k8sClient client.Client, logger logr.Logger) (
 	}
 	result.Profile = profile
 
-	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(profile)
+	validated, err := validateProfileSpec(logger, profile)
+	if err != nil {
+		return nil, fmt.Errorf("validating TLS profile: %w", err)
+	}
+	tlsConfigFn, unsupported := tlspkg.NewTLSConfigFromProfile(validated)
 	if len(unsupported) > 0 {
 		logger.Info("TLS profile contains unsupported ciphers", "unsupported", unsupported)
 	}
-	result.TLSOpts = append(result.TLSOpts, tlsConfigFn, tlspkg.SetNextProtos(tlspkg.HTTP2NextProtos...))
+	result.TLSOpts = append(result.TLSOpts, tlsConfigFn, tlspkg.SetNextProtos(nextProtosForProfile(validated)...))
 
 	if err := fetchAdherence(bootstrapCtx, k8sClient, result, logger); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// validateProfileSpec rejects TLS profiles that cannot be honored without a
+// silent substitution: an unknown minimum version, or a cipher list with no
+// suite usable for TLS <= 1.2 handshakes, is an error. Partially unusable
+// cipher lists are pruned with a log line. The returned spec is safe to pass
+// to tlspkg.NewTLSConfigFromProfile: it cannot panic on the minimum version
+// and its ciphers cannot all resolve to nothing.
+func validateProfileSpec(logger logr.Logger, profile configv1.TLSProfileSpec) (configv1.TLSProfileSpec, error) {
+	minVersion, err := libgocrypto.TLSVersion(string(profile.MinTLSVersion))
+	if err != nil {
+		return profile, fmt.Errorf("invalid minimum TLS version %q: %w", profile.MinTLSVersion, err)
+	}
+	// Go 1.22+ defaults the server minimum to TLS 1.2 only when tls.Config.MinVersion
+	// is unset; the explicit minimum set here needs no GODEBUG.
+	if minVersion >= tls.VersionTLS13 || len(profile.Ciphers) == 0 {
+		return profile, nil
+	}
+
+	usable := make([]string, 0, len(profile.Ciphers))
+	var dropped []string
+	for _, cipher := range profile.Ciphers {
+		if cipherUsableForTLS12(cipher) {
+			usable = append(usable, cipher)
+		} else {
+			dropped = append(dropped, cipher)
+		}
+	}
+	if len(usable) == 0 {
+		return profile, fmt.Errorf("no cipher suite usable with minimum TLS version %q: requested ciphers %v", profile.MinTLSVersion, profile.Ciphers)
+	}
+	if len(dropped) > 0 {
+		logger.Info("Dropping TLS profile ciphers not usable for TLS <= 1.2 handshakes", "dropped", dropped)
+		profile.Ciphers = usable
+	}
+	return profile, nil
+}
+
+func nextProtosForProfile(profile configv1.TLSProfileSpec) []string {
+	if profileSupportsHTTP2(profile) {
+		return tlspkg.HTTP2NextProtos
+	}
+	return []string{"http/1.1"}
+}
+
+func profileSupportsHTTP2(profile configv1.TLSProfileSpec) bool {
+	minVersion, err := libgocrypto.TLSVersion(string(profile.MinTLSVersion))
+	if err != nil {
+		return false
+	}
+	if minVersion >= tls.VersionTLS13 || len(profile.Ciphers) == 0 {
+		return true
+	}
+
+	for _, cipher := range profile.Ciphers {
+		id, ok := cipherSuiteID(cipher)
+		if ok && (id == tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 || id == tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256) {
+			return true
+		}
+	}
+	return false
+}
+
+// cipherUsableForTLS12 reports whether name, in IANA or OpenSSL form, resolves
+// to a cipher suite ID that a TLS <= 1.2 handshake can negotiate. TLS 1.3-only
+// suites (IDs 0x1300-0x13ff) never qualify.
+func cipherUsableForTLS12(name string) bool {
+	id, ok := cipherSuiteID(name)
+	return ok && (id < 0x1300 || id > 0x13ff)
+}
+
+func cipherSuiteID(name string) (uint16, bool) {
+	id, err := libgocrypto.CipherSuite(name)
+	if err != nil {
+		iana := libgocrypto.OpenSSLToIANACipherSuites([]string{name})
+		if len(iana) != 1 {
+			return 0, false
+		}
+		if id, err = libgocrypto.CipherSuite(iana[0]); err != nil {
+			return 0, false
+		}
+	}
+	return id, id != 0
 }
 
 func handleProfileFetchError(err error, result *Result, logger logr.Logger) error {

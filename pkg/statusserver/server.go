@@ -25,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -107,6 +108,11 @@ func NewServer(c client.Client, cfg *configapi.StatusServer, tlsConfig *tls.Conf
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
+	}
+	if tlsConfig != nil && !slices.Contains(tlsConfig.NextProtos, "h2") {
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		httpServer.Protocols = protocols
 	}
 
 	s.httpServer = &httpServer

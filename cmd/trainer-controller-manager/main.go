@@ -23,6 +23,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	zaplog "go.uber.org/zap"
@@ -31,6 +32,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlpkg "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -121,7 +123,11 @@ func main() {
 	config.ApplyClientConnection(restCfg, &cfg)
 	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
 	defer cancel()
-	bootstrapClient, err := client.New(restCfg, client.Options{Scheme: scheme})
+	// Bound the bootstrap client's requests, including REST mapper discovery,
+	// which the resolve context does not cover.
+	bootstrapCfg := rest.CopyConfig(restCfg)
+	bootstrapCfg.Timeout = 10 * time.Second
+	bootstrapClient, err := client.New(bootstrapCfg, client.Options{Scheme: scheme})
 	if err != nil {
 		setupLog.Error(err, "Unable to create TLS bootstrap client")
 		os.Exit(1)

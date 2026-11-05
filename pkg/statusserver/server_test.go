@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -116,6 +117,70 @@ func TestServerStartReturnsAfterContextCancel(t *testing.T) {
 		}
 	case <-time.After(serverLifecycleTimeout):
 		t.Fatal("Start() did not return after its context was cancelled")
+	}
+}
+
+func TestServerServeTLSStartsWithTLS12AES256Only(t *testing.T) {
+	certSrv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(certSrv.Close)
+
+	tlsConfig := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384},
+		Certificates: certSrv.TLS.Certificates,
+		NextProtos:   []string{"http/1.1"},
+	}
+	srv, err := NewServer(
+		utiltesting.NewClientBuilder().Build(),
+		&configapi.StatusServer{Port: ptr.To[int32](0)},
+		tlsConfig,
+		fakeAuthorizer{authorized: true},
+	)
+	if err != nil {
+		t.Fatalf("NewServer() error: %v", err)
+	}
+	if srv.httpServer.Protocols == nil || !srv.httpServer.Protocols.HTTP1() || srv.httpServer.Protocols.HTTP2() {
+		t.Fatalf("Protocols = %v, want HTTP/1 only", srv.httpServer.Protocols)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error: %v", err)
+	}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.httpServer.ServeTLS(listener, "", "") }()
+
+	clientTransport := certSrv.Client().Transport.(*http.Transport).Clone()
+	clientTransport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+	client := &http.Client{Transport: clientTransport, Timeout: time.Second}
+	defer clientTransport.CloseIdleConnections()
+
+	deadline := time.Now().Add(serverLifecycleTimeout)
+	for {
+		select {
+		case err := <-serveDone:
+			t.Fatalf("ServeTLS() returned before serving: %v", err)
+		default:
+		}
+
+		resp, requestErr := client.Get("https://" + listener.Addr().String())
+		if requestErr == nil {
+			_ = resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status server did not start serving TLS: %v", requestErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), serverLifecycleTimeout)
+	defer cancel()
+	if err := srv.httpServer.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error: %v", err)
+	}
+	if err := <-serveDone; !errors.Is(err, http.ErrServerClosed) {
+		t.Errorf("ServeTLS() error after shutdown = %v, want %v", err, http.ErrServerClosed)
 	}
 }
 
