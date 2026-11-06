@@ -596,6 +596,21 @@ test-upgrade-post-rhai: ## Upgrade Trainer to the Stream version and run the pos
 		DW_UPGRADE_POST_TEST_LOG="$(DW_UPGRADE_POST_TEST_LOG)" \
 		DW_UPGRADE_POST_JUNIT_FILE="$(DW_UPGRADE_POST_JUNIT_FILE)"
 
+.PHONY: merge-dw-upgrade-junit
+merge-dw-upgrade-junit: ## Merge the pre/post-upgrade JUnit reports into a single report.
+	@mkdir -p "$(ARTIFACT_DIR)"
+	junit_reports=()
+	for report in "$(DW_UPGRADE_PRE_JUNIT_FILE)" "$(DW_UPGRADE_POST_JUNIT_FILE)"; do
+		if [[ -s "$$report" ]]; then
+			junit_reports+=("$$report")
+		fi
+	done
+	if (( $${#junit_reports[@]} == 0 )); then
+		echo "No upgrade JUnit reports to merge"
+	else
+		junitparser merge "$${junit_reports[@]}" "$(JUNIT_REPORT)"
+	fi
+
 .PHONY: test-integration-rhai
 test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	@mkdir -p "$(ARTIFACT_DIR)" "$$(dirname "$(JUNIT_REPORT)")"
