@@ -2,7 +2,7 @@
 #
 # This file is intentionally separate from the upstream Makefile. Use it with:
 #
-#   make -f Makefile.rhai deploy-rhoai
+#   make -f Makefile.rhai deploy-trainer-operator
 
 include Makefile
 
@@ -14,19 +14,18 @@ SHELL := /bin/bash
 
 # Kubernetes CLI tool (kubectl or oc).
 KUBECTL ?= $(shell command -v oc 2>/dev/null || command -v kubectl 2>/dev/null)
-RHOAI_MANIFESTS_DIR ?= $(PROJECT_DIR)/manifests/rhoai
 RHAI_TEST_MANIFESTS_DIR ?= $(PROJECT_DIR)/odh_utils/tests/manifests
 APPLICATIONS_NAMESPACE ?= opendatahub
 NFS_PROVISIONER_OPERATOR_MANIFEST ?= $(RHAI_TEST_MANIFESTS_DIR)/nfs-provisioner-operator.yaml
 NFS_PROVISIONER_MANIFEST ?= $(RHAI_TEST_MANIFESTS_DIR)/nfs-provisioner.yaml
-TRAINER_IMAGE ?=
-TRAINER_OPERATOR_RUNTIME_REF ?= main
-TRAINER_OPERATOR_SOURCE_URL ?= https://github.com/opendatahub-io/trainer-operator.git
-TRAINER_OPERATOR_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/trainer-operator
-export ODH_TH_TORCH_CUDA_IMAGE ?=
-export ODH_TH_TORCH_ROCM_IMAGE ?=
-export ODH_TH_TORCH_CPU_IMAGE ?=
-export ODH_OPENMPI_CUDA_IMAGE ?=
+TRAINER_OPERATOR_SOURCE_DIR ?= $(PROJECT_DIR)/rhoai/operator
+# PR-built images resolved by the integration test pipeline, as a JSON array of
+# image references.
+TEST_IMAGES ?=
+# Image repository -> environment variable consumed by the operator. Only the
+# repositories present in TEST_IMAGES are applied, so a component that was not
+# rebuilt for the pull request simply keeps the operator default.
+TEST_IMAGE_ENVS_FILE ?= $(PROJECT_DIR)/odh_utils/tests/test-images.env
 ARTIFACT_DIR ?= $(PROJECT_DIR)/artifacts
 UPSTREAM_JUNIT_REPORT ?= upstream-trainer-junit.xml
 DW_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/distributed-workloads
@@ -255,99 +254,104 @@ install-s4: check-kubectl ## Install S4 S3-compatible storage for distributed-wo
 	echo "S4 internal endpoint: http://$(S4_RELEASE).$(S4_NAMESPACE).svc.cluster.local:7480"
 	echo "S4 bucket '$(S4_S3_BUCKET)' is ready"
 
-.PHONY: deploy-rhoai
-deploy-rhoai: install-jobset-operator ## Install Trainer using RHOAI manifests with kustomize.
-	if [[ -n "$(TRAINER_IMAGE)" ]]; then
-		echo "Using Trainer image: $(TRAINER_IMAGE)"
-		$(SED) -i "s|odh-kubeflow-trainer-controller-image=.*|odh-kubeflow-trainer-controller-image=$(TRAINER_IMAGE)|" "$(RHOAI_MANIFESTS_DIR)/params.env"
+.PHONY: deploy-trainer-operator
+deploy-trainer-operator: install-jobset-operator ## Deploy Trainer through the trainer-operator module controller.
+	# The JSON is only expanded by Bash, not by make, so keep it single quoted.
+	images_json='$(TEST_IMAGES)'
+	if [[ -z "$${images_json}" ]]; then
+		echo "TEST_IMAGES is required (JSON array of image references)" >&2
+		exit 1
 	fi
-	@echo "Deploying RHOAI Training Operator to namespace: opendatahub"
-	$(KUBECTL) create namespace opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
-	$(KUBECTL) label namespace opendatahub openshift.io/cluster-monitoring=true --overwrite
+	if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$${images_json}"; then
+		echo "TEST_IMAGES must be a JSON array of image references" >&2
+		exit 1
+	fi
+	if [[ ! -f "$(TEST_IMAGE_ENVS_FILE)" ]]; then
+		echo "Missing $(TEST_IMAGE_ENVS_FILE) (image repository to env var map)" >&2
+		exit 1
+	fi
+	# Map the images built for this pull request to the variables the operator
+	# consumes. Repositories without an entry fail instead of being ignored.
+	declare -A known=()
+	while IFS='=' read -r repo var; do
+		[[ -z "$${repo}" || "$${repo}" == \#* ]] && continue
+		known["$${repo}"]="$${var}"
+	done < "$(TEST_IMAGE_ENVS_FILE)"
+	declare -A resolved=()
+	unknown=()
+	while IFS= read -r image; do
+		[[ -z "$${image}" ]] && continue
+		var=""
+		for repo in "$${!known[@]}"; do
+			case "$${image}" in
+				"$${repo}"|"$${repo}"@*|"$${repo}":*)
+					var="$${known[$$repo]}"
+					break
+					;;
+			esac
+		done
+		if [[ -z "$${var}" ]]; then
+			unknown+=("$${image}")
+			continue
+		fi
+		resolved["$${var}"]="$${image}"
+	done < <(jq -r '.[]' <<<"$${images_json}")
+	if (( $${#unknown[@]} > 0 )); then
+		echo "No image mapping in $(TEST_IMAGE_ENVS_FILE) for: $${unknown[*]}; add the repository to that file" >&2
+		exit 1
+	fi
+	if [[ -z "$${resolved[OPERATOR_IMAGE]:-}" ]]; then
+		echo "No trainer-operator image was resolved" >&2
+		exit 1
+	fi
+	if [[ -z "$${resolved[RELATED_IMAGE_ODH_TRAINER_IMAGE]:-}" ]]; then
+		echo "No Trainer controller image was resolved" >&2
+		exit 1
+	fi
+	echo "Resolved test images:"
+	for var in "$${!resolved[@]}"; do
+		echo "  $${var}=$${resolved[$$var]}"
+		export "$${var}=$${resolved[$$var]}"
+	done
+	@echo "Deploying trainer-operator with image: $${OPERATOR_IMAGE}"
+	$(MAKE) -C $(TRAINER_OPERATOR_SOURCE_DIR) deploy \
+		IMG="$${OPERATOR_IMAGE}" \
+		NAMESPACE="$(APPLICATIONS_NAMESPACE)"
+	$(KUBECTL) label namespace $(APPLICATIONS_NAMESPACE) openshift.io/cluster-monitoring=true --overwrite
 	# The PR environment deploys Trainer without the full RHOAI operator bundle,
 	# so provide the namespace-scoped discovery permissions normally installed by RHOAI.
 	$(KUBECTL) create role prometheus-k8s-monitoring \
 		--verb=get --verb=list --verb=watch \
 		--resource=pods,services,endpoints \
-		-n opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
+		-n $(APPLICATIONS_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
 	$(KUBECTL) create rolebinding prometheus-k8s-monitoring \
 		--role=prometheus-k8s-monitoring \
 		--serviceaccount=openshift-monitoring:prometheus-k8s \
-		-n opendatahub --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
-	echo "Applying CRDs first..."
-	$(KUBECTL) apply --server-side=true -k $(RHOAI_MANIFESTS_DIR)/../base/crds
-	echo "Waiting for CRDs to be established..."
-	$(KUBECTL) wait --for condition=established --timeout=60s \
-		crd/clustertrainingruntimes.trainer.kubeflow.org \
-		crd/trainingruntimes.trainer.kubeflow.org \
-		crd/trainjobs.trainer.kubeflow.org
-	echo "Applying operator and resources..."
-	$(KUBECTL) apply -k $(RHOAI_MANIFESTS_DIR) --server-side=true --force-conflicts
-	echo "Waiting for deployment to be ready..."
+		-n $(APPLICATIONS_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
+	# Forward every RELATED_IMAGE_* resolved for this pull request.
+	related_images=()
+	for var in $${!RELATED_IMAGE_@}; do
+		related_images+=("$${var}=$${!var}")
+	done
+	if (( $${#related_images[@]} > 0 )); then
+		$(KUBECTL) -n $(APPLICATIONS_NAMESPACE) set env \
+			deployment/trainer-operator-controller-manager "$${related_images[@]}"
+		$(KUBECTL) -n $(APPLICATIONS_NAMESPACE) rollout status \
+			deployment/trainer-operator-controller-manager --timeout=300s
+	fi
+	$(KUBECTL) apply -k $(TRAINER_OPERATOR_SOURCE_DIR)/config/samples
+	echo "Waiting for the Trainer module to be Ready..."
+	$(KUBECTL) wait --for=jsonpath='{.status.phase}'=Ready trainer/default-trainer --timeout=600s
 	$(KUBECTL) wait --for=condition=available --timeout=300s \
-		deployment/kubeflow-trainer-controller-manager -n opendatahub 2>/dev/null
-	echo "RHOAI Training Operator deployed successfully!"
-
-.PHONY: prepare-trainer-operator-source
-prepare-trainer-operator-source: ## Clone trainer-operator and inject any runtime image overrides.
-	@if [[ -d "$(TRAINER_OPERATOR_SOURCE_DIR)/manifests" ]]; then
-		echo "Using existing trainer-operator source: $(TRAINER_OPERATOR_SOURCE_DIR)"
-	else
-		mkdir -p "$$(dirname "$(TRAINER_OPERATOR_SOURCE_DIR)")"
-		git clone --depth 1 --branch "$(TRAINER_OPERATOR_RUNTIME_REF)" \
-			"$(TRAINER_OPERATOR_SOURCE_URL)" "$(TRAINER_OPERATOR_SOURCE_DIR)"
-	fi
-	# Reset the params.env files so an empty override cannot keep values from a
-	# previous preparation of a reused checkout.
-	git -C "$(TRAINER_OPERATOR_SOURCE_DIR)" checkout -- \
-		manifests/runtimes/params.env manifests/imagestreams/params.env
-	replace_param() {
-		local key="$$1" value="$$2" file="$$3"
-		if ! grep -q "^$${key}=" "$$file"; then
-			echo "Error: key '$${key}' not found in $$file" >&2
-			return 1
-		fi
-		$(SED) -i "s|^$${key}=.*|$${key}=$${value}|" "$$file"
-	}
-	if [[ -n "$${ODH_TH_TORCH_CUDA_IMAGE:-}" ]]; then
-		replace_param odh-th-torch-cuda-py312-image "$${ODH_TH_TORCH_CUDA_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
-		replace_param odh-training-universal-workbench-image-cuda-3-6 "$${ODH_TH_TORCH_CUDA_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams/params.env"
-	fi
-	if [[ -n "$${ODH_TH_TORCH_ROCM_IMAGE:-}" ]]; then
-		replace_param odh-th-torch-rocm-py312-image "$${ODH_TH_TORCH_ROCM_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
-		replace_param odh-training-universal-workbench-image-rocm-3-6 "$${ODH_TH_TORCH_ROCM_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams/params.env"
-	fi
-	if [[ -n "$${ODH_TH_TORCH_CPU_IMAGE:-}" ]]; then
-		replace_param odh-th-torch-cpu-py312-image "$${ODH_TH_TORCH_CPU_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
-		replace_param odh-training-universal-workbench-image-cpu-3-6 "$${ODH_TH_TORCH_CPU_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams/params.env"
-	fi
-	if [[ -n "$${ODH_OPENMPI_CUDA_IMAGE:-}" ]]; then
-		replace_param odh-openmpi-cuda-image "$${ODH_OPENMPI_CUDA_IMAGE}" \
-			"$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes/params.env"
-	fi
+		deployment/kubeflow-trainer-controller-manager -n $(APPLICATIONS_NAMESPACE)
 
 .PHONY: install-test-runtimes
-install-test-runtimes: check-kubectl prepare-trainer-operator-source ## Install Trainer runtimes required by the integration tests.
-	@echo "Installing midstream Trainer runtimes..."
-	$(KUBECTL) apply --server-side -k "$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/runtimes"
+install-test-runtimes: check-kubectl ## Install upstream Trainer runtimes required by the integration tests.
 	echo "Installing upstream E2E-only runtimes..."
 	$(KUBECTL) apply --server-side \
 		-f manifests/base/runtimes/jax_distributed.yaml \
 		-f manifests/base/runtimes/xgboost_distributed.yaml \
 		-f examples/flux/flux-runtime.yaml
-
-.PHONY: install-test-imagestreams
-install-test-imagestreams: check-kubectl prepare-trainer-operator-source ## Install ImageStreams required by the integration tests.
-	@echo "Installing Trainer test ImageStreams..."
-	$(KUBECTL) create namespace $(APPLICATIONS_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null 2>&1
-	$(KUBECTL) apply --server-side -n $(APPLICATIONS_NAMESPACE) \
-		-k "$(TRAINER_OPERATOR_SOURCE_DIR)/manifests/imagestreams"
 
 .PHONY: test-e2e-rhai
 test-e2e-rhai: ginkgo ## Run the upstream Trainer RHAI E2E suite.
@@ -521,8 +525,8 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	command -v junitparser >/dev/null 2>&1 || { echo "Error: junitparser not found in PATH"; exit 1; }
 
 	setup_passed=true
-	$(MAKE) -f Makefile.rhai deploy-rhoai \
-		TRAINER_IMAGE="$(TRAINER_IMAGE)" \
+	$(MAKE) -f Makefile.rhai deploy-trainer-operator \
+		TEST_IMAGES='$(TEST_IMAGES)' \
 		|| setup_passed=false
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-rhbok || setup_passed=false
@@ -532,9 +536,6 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-test-runtimes || setup_passed=false
-	fi
-	if [[ "$$setup_passed" = true ]]; then
-		$(MAKE) -f Makefile.rhai install-test-imagestreams || setup_passed=false
 	fi
 	if [[ "$$setup_passed" = true ]]; then
 		$(MAKE) -f Makefile.rhai install-s4 || setup_passed=false
@@ -637,14 +638,3 @@ test-integration-rhai: ## Run the complete RHOAI Trainer integration test suite.
 		exit 1
 	fi
 	echo "Trainer integration tests passed"
-
-.PHONY: undeploy-rhoai
-undeploy-rhoai: check-kubectl ## Undeploy Trainer using RHOAI manifests.
-	@echo "Undeploying RHOAI Training Operator from namespace: opendatahub"
-	echo "Deleting all TrainJob and TrainingRuntime CRs..."
-	$(KUBECTL) delete trainjobs.trainer.kubeflow.org --all --all-namespaces --ignore-not-found=true --timeout=60s
-	$(KUBECTL) delete trainingruntimes.trainer.kubeflow.org --all --all-namespaces --ignore-not-found=true --timeout=60s
-	$(KUBECTL) delete clustertrainingruntimes.trainer.kubeflow.org --all --ignore-not-found=true --timeout=60s
-	echo "Deleting operator and resources..."
-	$(KUBECTL) delete -k $(RHOAI_MANIFESTS_DIR) --ignore-not-found=true
-	echo "RHOAI Training Operator undeployed successfully!"
