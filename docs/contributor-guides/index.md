@@ -21,6 +21,13 @@ How to contribute to the Kubeflow Trainer project
 Join the Kubeflow Trainer community, meetings, and communication channels
 ::::
 
+::::{grid-item-card} OpenShift TLS and PQC Presubmit
+:link: openshift-tls-scanner-ci
+:link-type: doc
+
+Understand and maintain the ODH Trainer runtime TLS/PQC presubmit
+::::
+
 :::::
 
 ---
@@ -31,4 +38,5 @@ Join the Kubeflow Trainer community, meetings, and communication channels
 
 Contributing Guide <contributing>
 community
+openshift-tls-scanner-ci
 ```
