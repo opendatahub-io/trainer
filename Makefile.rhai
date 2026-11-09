@@ -308,23 +308,23 @@ deploy-trainer-operator: install-jobset-operator ## Deploy Trainer through the t
 		echo "No image mapping in $(TEST_IMAGE_ENVS_FILE) for: $${unknown[*]}; add the repository to that file" >&2
 		exit 1
 	fi
-	if [[ -z "$${resolved[OPERATOR_IMAGE]:-}" ]]; then
-		echo "No trainer-operator image was resolved" >&2
-		exit 1
-	fi
-	if [[ -z "$${resolved[RELATED_IMAGE_ODH_TRAINER_IMAGE]:-}" ]]; then
-		echo "No Trainer controller image was resolved" >&2
-		exit 1
-	fi
+	# Images absent from TEST_IMAGES keep the defaults the deployment
+	# manifests carry, so e.g. the distributed-workloads ITS, which builds
+	# only the universal runtime images, deploys the manifest-default
+	# trainer-operator and Trainer controller images.
 	echo "Resolved test images:"
 	for var in "$${!resolved[@]}"; do
 		echo "  $${var}=$${resolved[$$var]}"
 		export "$${var}=$${resolved[$$var]}"
 	done
-	@echo "Deploying trainer-operator with image: $${OPERATOR_IMAGE}"
-	$(MAKE) -C $(TRAINER_OPERATOR_SOURCE_DIR) deploy \
-		IMG="$${OPERATOR_IMAGE}" \
-		NAMESPACE="$(APPLICATIONS_NAMESPACE)"
+	deploy_args=(NAMESPACE="$(APPLICATIONS_NAMESPACE)")
+	if [[ -n "$${OPERATOR_IMAGE:-}" ]]; then
+		echo "Deploying trainer-operator with image: $${OPERATOR_IMAGE}"
+		deploy_args+=("IMG=$${OPERATOR_IMAGE}")
+	else
+		echo "No trainer-operator image in TEST_IMAGES; deploying the manifest default image"
+	fi
+	$(MAKE) -C $(TRAINER_OPERATOR_SOURCE_DIR) deploy "$${deploy_args[@]}"
 	$(KUBECTL) label namespace $(APPLICATIONS_NAMESPACE) openshift.io/cluster-monitoring=true --overwrite
 	# The PR environment deploys Trainer without the full RHOAI operator bundle,
 	# so provide the namespace-scoped discovery permissions normally installed by RHOAI.
@@ -336,14 +336,23 @@ deploy-trainer-operator: install-jobset-operator ## Deploy Trainer through the t
 		--role=prometheus-k8s-monitoring \
 		--serviceaccount=openshift-monitoring:prometheus-k8s \
 		-n $(APPLICATIONS_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
-	# Forward every RELATED_IMAGE_* resolved for this pull request.
-	related_images=()
-	for var in $${!RELATED_IMAGE_@}; do
-		related_images+=("$${var}=$${!var}")
+	# Forward every RELATED_IMAGE_* resolved for this pull request, and drop
+	# the overrides of the images absent from it: env vars set with
+	# `kubectl set env` survive a later `kubectl apply` (they are in neither
+	# the applied manifest nor last-applied), so e.g. the Lake override of
+	# the upgrade test would otherwise survive into the Stream deployment.
+	env_updates=()
+	for var in "$${known[@]}"; do
+		[[ "$$var" == RELATED_IMAGE_* ]] || continue
+		if [[ -n "$${resolved[$$var]:-}" ]]; then
+			env_updates+=("$$var=$${resolved[$$var]}")
+		else
+			env_updates+=("$$var-")
+		fi
 	done
-	if (( $${#related_images[@]} > 0 )); then
+	if (( $${#env_updates[@]} > 0 )); then
 		$(KUBECTL) -n $(APPLICATIONS_NAMESPACE) set env \
-			deployment/trainer-operator-controller-manager "$${related_images[@]}"
+			deployment/trainer-operator-controller-manager "$${env_updates[@]}"
 		$(KUBECTL) -n $(APPLICATIONS_NAMESPACE) rollout status \
 			deployment/trainer-operator-controller-manager --timeout=300s
 	fi
