@@ -56,7 +56,11 @@ S4_NAMESPACE ?= s4
 S4_RELEASE ?= s4
 S4_SOURCE_DIR ?= $(PROJECT_DIR)/.test-data/s4
 S4_SOURCE_URL ?= https://github.com/rh-aiservices-bu/s4
-S4_SOURCE_REF ?= v0.3.2
+S4_SOURCE_REF ?= v0.4.0
+# The chart defaults to the mutable "latest" tag (pullPolicy Always), which
+# tracks the s4 repository main branch; pin the image to the release the
+# chart is taken from instead.
+S4_IMAGE_TAG ?= 0.4.0
 S4_S3_BUCKET ?= training-kubeflow-e2e
 JUNIT_REPORT ?= $(ARTIFACT_DIR)/junit.xml
 GOTESTSUM ?= gotestsum
@@ -240,24 +244,44 @@ install-s4: check-kubectl ## Install S4 S3-compatible storage for distributed-wo
 	auth: {enabled: true, username: s4admin, password: $$s4_ui_password}
 	s3: {accessKeyId: $$s4_access_key_id, secretAccessKey: $$s4_secret_access_key}
 	route: {enabled: false, s3Api: {enabled: true}}
+	image: {tag: "$(S4_IMAGE_TAG)"}
 	EOF
 	s4_pod=$$($(KUBECTL) get pods -n "$(S4_NAMESPACE)" \
 		-l "app.kubernetes.io/instance=$(S4_RELEASE),app.kubernetes.io/name=s4" \
 		-o jsonpath='{.items[0].metadata.name}')
-	s4_secret_name="$(S4_RELEASE)-credentials"
-	s4_access_key_id=$$($(KUBECTL) get secret "$$s4_secret_name" -n "$(S4_NAMESPACE)" \
-		-o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
-	s4_secret_access_key=$$($(KUBECTL) get secret "$$s4_secret_name" -n "$(S4_NAMESPACE)" \
-		-o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
-	if ! $(KUBECTL) exec -n "$(S4_NAMESPACE)" "$$s4_pod" -- \
-		env AWS_ACCESS_KEY_ID="$$s4_access_key_id" AWS_SECRET_ACCESS_KEY="$$s4_secret_access_key" \
-		/usr/local/bin/s5cmd --endpoint-url http://localhost:7480 \
-		ls "s3://$(S4_S3_BUCKET)" >/dev/null 2>&1; then
-		$(KUBECTL) exec -n "$(S4_NAMESPACE)" "$$s4_pod" -- \
-			env AWS_ACCESS_KEY_ID="$$s4_access_key_id" AWS_SECRET_ACCESS_KEY="$$s4_secret_access_key" \
-			/usr/local/bin/s5cmd --endpoint-url http://localhost:7480 \
-			mb "s3://$(S4_S3_BUCKET)"
-	fi
+	# s4 0.4 ships no S3 CLI in its image; create the test bucket through
+	# the AWS SDK bundled with the s4 backend instead (see
+	# docs/architecture/container.md in the s4 repository). The pod
+	# environment already carries the S3 credentials (envFrom the chart
+	# secret), which the SDK default credential chain picks up; passing
+	# them on the exec command line would leak them into the API server
+	# audit log. `node -` (not `node /dev/stdin`) reads the piped script:
+	# /dev/stdin resolves to /proc/<pid>/fd/pipe:[...], which the file
+	# loader cannot open.
+	$(KUBECTL) exec -i -n "$(S4_NAMESPACE)" "$$s4_pod" -- \
+		env S4_BUCKET="$(S4_S3_BUCKET)" \
+		node - <<'NODE'
+	const { S3Client, HeadBucketCommand, CreateBucketCommand } =
+		require("/opt/app-root/bin/s4/backend/node_modules/@aws-sdk/client-s3");
+	const s3 = new S3Client({
+		endpoint: "http://localhost:7480",
+		region: "us-east-1",
+		forcePathStyle: true,
+	});
+	const bucket = process.env.S4_BUCKET;
+	(async () => {
+		try {
+			await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+			console.log("Bucket " + bucket + " already exists");
+		} catch (_headError) {
+			await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+			console.log("Bucket " + bucket + " created");
+		}
+	})().catch((err) => {
+		console.error(err);
+		process.exit(1);
+	});
+	NODE
 	echo "S4 S3 endpoint: https://$$($(KUBECTL) get route $(S4_RELEASE)-api -n "$(S4_NAMESPACE)" -o jsonpath='{.spec.host}')"
 	echo "S4 internal endpoint: http://$(S4_RELEASE).$(S4_NAMESPACE).svc.cluster.local:7480"
 	echo "S4 bucket '$(S4_S3_BUCKET)' is ready"
