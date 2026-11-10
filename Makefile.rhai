@@ -60,7 +60,7 @@ S4_SOURCE_REF ?= v0.4.0
 # The chart defaults to the mutable "latest" tag (pullPolicy Always), which
 # tracks the s4 repository main branch; pin the image to the release the
 # chart is taken from instead.
-S4_IMAGE_TAG ?= 0.4.0
+S4_IMAGE_TAG ?= $(patsubst v%,%,$(S4_SOURCE_REF))
 S4_S3_BUCKET ?= training-kubeflow-e2e
 JUNIT_REPORT ?= $(ARTIFACT_DIR)/junit.xml
 GOTESTSUM ?= gotestsum
