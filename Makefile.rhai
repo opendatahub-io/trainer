@@ -380,7 +380,14 @@ deploy-trainer-operator: install-jobset-operator ## Deploy Trainer through the t
 		$(KUBECTL) -n $(APPLICATIONS_NAMESPACE) rollout status \
 			deployment/trainer-operator-controller-manager --timeout=300s
 	fi
-	$(KUBECTL) apply -k $(TRAINER_OPERATOR_SOURCE_DIR)/config/samples
+	# The sample CR hardcodes appNamespace: opendatahub; align it with
+	# APPLICATIONS_NAMESPACE before applying so the operator, already
+	# running at this point, reconciles the right namespace (manifests,
+	# ImageStreams, trainer controller) from the very first pass.
+	$(KUBECTL) kustomize $(TRAINER_OPERATOR_SOURCE_DIR)/config/samples \
+		| $(KUBECTL) patch --local -f - --type merge \
+			-p '{"spec":{"appNamespace":"$(APPLICATIONS_NAMESPACE)"}}' -o yaml \
+		| $(KUBECTL) apply -f -
 	echo "Waiting for the Trainer module to be Ready..."
 	$(KUBECTL) wait --for=jsonpath='{.status.phase}'=Ready trainer/default-trainer --timeout=600s
 	$(KUBECTL) wait --for=condition=available --timeout=300s \
