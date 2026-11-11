@@ -8,7 +8,7 @@ require (
 	github.com/kubeflow/trainer/v2 v2.3.0
 	github.com/onsi/gomega v1.44.0
 	github.com/opendatahub-io/odh-platform-utilities v0.5.0
-	github.com/opendatahub-io/odh-platform-utilities/framework v0.3.1
+	github.com/opendatahub-io/odh-platform-utilities/framework v0.4.0
 	github.com/openshift/api v0.0.0-20261002115817-f8795cdde518
 	github.com/openshift/controller-runtime-common v0.0.0-20261026124434-bdfc411d93cd
 	github.com/openshift/library-go v0.0.0-20261001144932-192662696fc7
