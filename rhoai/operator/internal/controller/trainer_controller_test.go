@@ -290,6 +290,133 @@ func TestRemoveRuntimeFinalizersPropagatesListErrors(t *testing.T) {
 		To(MatchError(ContainSubstring("listing clustertrainingruntimes for finalizer removal")))
 }
 
+const (
+	monitoringGroup         = "monitoring.coreos.com"
+	prometheusRulesResource = "prometheusrules"
+)
+
+type deleteTrackingDynamicClient struct {
+	dynamic.Interface
+	rule        *unstructured.Unstructured
+	getErr      error
+	deleteErr   error
+	getCalls    int
+	deleteCalls int
+}
+
+func (c *deleteTrackingDynamicClient) Resource(schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+	return &deleteTrackingResource{client: c}
+}
+
+type deleteTrackingResource struct {
+	dynamic.NamespaceableResourceInterface
+	client *deleteTrackingDynamicClient
+}
+
+func (r *deleteTrackingResource) Namespace(string) dynamic.ResourceInterface { return r }
+
+func (r *deleteTrackingResource) Get(_ context.Context, _ string, _ metav1.GetOptions, _ ...string) (*unstructured.Unstructured, error) {
+	r.client.getCalls++
+	if r.client.getErr != nil {
+		return nil, r.client.getErr
+	}
+	if r.client.rule == nil {
+		return nil, errors.NewNotFound(
+			schema.GroupResource{Group: monitoringGroup, Resource: prometheusRulesResource},
+			legacyTelemetryRuleName,
+		)
+	}
+	return r.client.rule.DeepCopy(), nil
+}
+
+func (r *deleteTrackingResource) Delete(_ context.Context, _ string, _ metav1.DeleteOptions, _ ...string) error {
+	r.client.deleteCalls++
+	return r.client.deleteErr
+}
+
+func legacyRuleWithLabels(objLabels map[string]string) *unstructured.Unstructured {
+	rule := &unstructured.Unstructured{}
+	rule.SetAPIVersion("monitoring.coreos.com/v1")
+	rule.SetKind("PrometheusRule")
+	rule.SetName(legacyTelemetryRuleName)
+	rule.SetNamespace("trainer-operator-system")
+	rule.SetLabels(objLabels)
+	return rule
+}
+
+func TestDeleteLegacyTelemetryRuleNoNamespace(t *testing.T) {
+	g := NewWithT(t)
+
+	dynClient := &deleteTrackingDynamicClient{}
+	g.Expect(deleteLegacyTelemetryRule(context.Background(), dynClient)).To(Succeed())
+	g.Expect(dynClient.getCalls).To(Equal(0), "no lookup should be attempted without POD_NAMESPACE")
+	g.Expect(dynClient.deleteCalls).To(Equal(0))
+}
+
+func TestDeleteLegacyTelemetryRuleDeletes(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv(podNamespaceEnv, "trainer-operator-system")
+
+	dynClient := &deleteTrackingDynamicClient{rule: legacyRuleWithLabels(nil)}
+	g.Expect(deleteLegacyTelemetryRule(context.Background(), dynClient)).To(Succeed())
+	g.Expect(dynClient.deleteCalls).To(Equal(1))
+}
+
+func TestDeleteLegacyTelemetryRuleToleratesMissingRule(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv(podNamespaceEnv, "trainer-operator-system")
+
+	dynClient := &deleteTrackingDynamicClient{}
+	g.Expect(deleteLegacyTelemetryRule(context.Background(), dynClient)).To(Succeed())
+	g.Expect(dynClient.deleteCalls).To(Equal(0))
+}
+
+func TestDeleteLegacyTelemetryRuleSkipsOwnedRule(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv(podNamespaceEnv, "trainer-operator-system")
+
+	// Rules carrying the trainer part-of label are managed by this
+	// operator's render pipeline and must never be deleted here.
+	dynClient := &deleteTrackingDynamicClient{rule: legacyRuleWithLabels(
+		map[string]string{labels.PlatformPartOf: trainerPartOf})}
+	g.Expect(deleteLegacyTelemetryRule(context.Background(), dynClient)).To(Succeed())
+	g.Expect(dynClient.deleteCalls).To(Equal(0), "owned PrometheusRule should not be deleted")
+}
+
+func TestDeleteLegacyTelemetryRulePropagatesGetErrors(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv(podNamespaceEnv, "trainer-operator-system")
+
+	dynClient := &deleteTrackingDynamicClient{getErr: errors.NewForbidden(
+		schema.GroupResource{Group: monitoringGroup, Resource: prometheusRulesResource},
+		legacyTelemetryRuleName,
+		fmt.Errorf("access denied"),
+	)}
+	g.Expect(deleteLegacyTelemetryRule(context.Background(), dynClient)).
+		To(MatchError(ContainSubstring("getting legacy telemetry PrometheusRule")))
+}
+
+func TestDeleteLegacyTelemetryRulePropagatesDeleteErrors(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv(podNamespaceEnv, "trainer-operator-system")
+
+	dynClient := &deleteTrackingDynamicClient{
+		rule: legacyRuleWithLabels(nil),
+		deleteErr: errors.NewForbidden(
+			schema.GroupResource{Group: monitoringGroup, Resource: prometheusRulesResource},
+			legacyTelemetryRuleName,
+			fmt.Errorf("access denied"),
+		),
+	}
+	g.Expect(deleteLegacyTelemetryRule(context.Background(), dynClient)).
+		To(MatchError(ContainSubstring("deleting legacy telemetry PrometheusRule")))
+}
+
 func TestGetComponentReleases(t *testing.T) {
 	g := NewWithT(t)
 

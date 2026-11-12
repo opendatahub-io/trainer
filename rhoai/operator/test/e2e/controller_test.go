@@ -60,6 +60,9 @@ const (
 	trainerPartOf    = "trainer"
 	platformPartOf   = "platform.opendatahub.io/part-of"
 
+	telemetryRuleName       = "kubeflow-trainer-telemetry"
+	legacyTelemetryRuleName = "trainer-operator-kubeflow-trainer-telemetry"
+
 	jobSetCRDName      = "jobsets.jobset.x-k8s.io"
 	jobSetVersion      = "v1alpha2"
 	jobSetResourceName = "jobsets"
@@ -71,7 +74,13 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g := NewWithT(t)
 	k8sClient.RegisterDebugCleanup(t, ctx, namespace)
 
-	err := k8sClient.CreateTrainer(ctx, trainerNamespace)
+	// Simulate a cluster upgraded from a release where the telemetry
+	// PrometheusRule was deployed by the platform operator from the
+	// Trainer operator installation manifest.
+	err := k8sClient.CreatePrometheusRule(ctx, legacyTelemetryRuleName, namespace)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to create legacy telemetry PrometheusRule")
+
+	err = k8sClient.CreateTrainer(ctx, trainerNamespace)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to create Trainer CR")
 
 	// Phase 1: CR created → Ready
@@ -113,6 +122,21 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(ctrNames).To(HaveLen(16), "Expected 16 ClusterTrainingRuntimes")
 
+	// The telemetry PrometheusRule is managed by the Trainer CR lifecycle.
+	verifyTelemetryRuleManaged := func(g Gomega) {
+		rule, err := k8sClient.GetPrometheusRule(ctx, telemetryRuleName, trainerNamespace)
+		g.Expect(err).NotTo(HaveOccurred(), "Telemetry PrometheusRule should exist in the Trainer namespace")
+		g.Expect(rule.GetLabels()).To(HaveKeyWithValue(platformPartOf, trainerPartOf))
+	}
+	g.Eventually(verifyTelemetryRuleManaged).Should(Succeed())
+
+	// The legacy rule from the operator installation manifest is removed.
+	verifyLegacyRuleRemoved := func(g Gomega) {
+		_, err := k8sClient.GetPrometheusRule(ctx, legacyTelemetryRuleName, namespace)
+		g.Expect(errors.IsNotFound(err)).To(BeTrue(), "Legacy telemetry PrometheusRule should be removed")
+	}
+	g.Eventually(verifyLegacyRuleRemoved).Should(Succeed())
+
 	// Phase 2: Delete CR (platform removes module)
 	err = k8sClient.DeleteTrainer(ctx)
 	g.Expect(err).NotTo(HaveOccurred(), "Failed to delete Trainer CR")
@@ -131,6 +155,9 @@ func TestTrainerModuleLifecycle(t *testing.T) {
 		ctrs, err := k8sClient.ListClusterTrainingRuntimes(ctx, platformPartOf+"="+trainerPartOf)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(ctrs).To(BeEmpty(), "ClusterTrainingRuntimes should be cleaned up after deletion")
+
+		_, err = k8sClient.GetPrometheusRule(ctx, telemetryRuleName, trainerNamespace)
+		g.Expect(errors.IsNotFound(err)).To(BeTrue(), "Telemetry PrometheusRule should be cleaned up after deletion")
 	}
 	g.Eventually(verifyResourcesCleanedUp).Should(Succeed())
 
