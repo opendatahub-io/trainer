@@ -196,8 +196,12 @@ func TestResolveFetchFallbacks(t *testing.T) {
 		wantErr   bool
 	}{
 		{
-			name: "NotFound disables watcher",
-			err:  apierrors.NewNotFound(apiserverGR, testAPIServerName),
+			// With framework v0.4.0, NotFound (the API is served but the
+			// APIServer object is missing) returns Watchable=true so the
+			// watcher registers and catches the object's creation.
+			name:      "NotFound arms watcher",
+			err:       apierrors.NewNotFound(apiserverGR, testAPIServerName),
+			watchable: true,
 		},
 		{
 			name: "NoMatch disables watcher",

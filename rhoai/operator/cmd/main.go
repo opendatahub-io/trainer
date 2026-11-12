@@ -40,6 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
 	platformcache "github.com/opendatahub-io/odh-platform-utilities/pkg/cache"
@@ -113,6 +114,7 @@ func main() {
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsOpts,
+		WebhookServer:          webhook.NewServer(operatortls.WebhookServerOptions(tlsResult.TLSOpts)),
 		HealthProbeBindAddress: probeAddr,
 		// Cache hardening: label selectors ensure only trainer-managed
 		// resources are cached. ConfigMaps are excluded from the label
