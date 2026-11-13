@@ -1,0 +1,6 @@
+# API contract configuration: the descriptor, the workflow, and the pinned
+# baseline decide what the compatibility checks protect, so changes need an
+# owner's review (RHOAIENG-103150). Owners are the repo's maintainer team;
+# membership is managed in GitHub, not in this file.
+/.rhoai/                             @opendatahub-io/trainer-maintainers
+/.github/workflows/api-contract.yml  @opendatahub-io/trainer-maintainers
