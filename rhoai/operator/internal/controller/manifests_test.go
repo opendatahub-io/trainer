@@ -12,6 +12,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
+
+	"github.com/opendatahub-io/odh-platform-utilities/pkg/metadata/labels"
 )
 
 func TestFilterConfigMaps(t *testing.T) {
@@ -31,15 +33,16 @@ func TestFilterConfigMaps(t *testing.T) {
 	g.Expect(filtered[1].GetKind()).To(Equal("Service"))
 }
 
-func TestRenderDefaultOverlayPlacesPrometheusRuleInOperatorNamespace(t *testing.T) {
+func TestRenderRhoaiOverlayIncludesTelemetryPrometheusRule(t *testing.T) {
 	g := NewWithT(t)
 
-	rendered, err := renderOverlay(filepath.Join("..", "..", "config", "default"), "")
+	rendered, err := renderOverlay(filepath.Join("..", "..", "..", "..", "manifests", "rhoai"), "test-app-ns")
 	g.Expect(err).NotTo(HaveOccurred())
 
 	for _, resource := range rendered {
-		if resource.GetKind() == "PrometheusRule" && resource.GetName() == "trainer-operator-kubeflow-trainer-telemetry" {
-			g.Expect(resource.GetNamespace()).To(Equal("trainer-operator-system"))
+		if resource.GetKind() == "PrometheusRule" && resource.GetName() == "kubeflow-trainer-telemetry" {
+			g.Expect(resource.GetNamespace()).To(Equal("test-app-ns"))
+			g.Expect(resource.GetLabels()).To(HaveKeyWithValue(labels.PlatformPartOf, trainerPartOf))
 			return
 		}
 	}

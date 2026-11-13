@@ -81,6 +81,12 @@ const (
 	platformConfigMapName = "odh-trainer-config"
 	platformVersionKey    = "platformVersion"
 	platformReleaseName   = "platform"
+
+	// legacyTelemetryRuleName is the PrometheusRule that the platform
+	// operator deployed from the Trainer operator installation manifest
+	// before telemetry rules moved under the Trainer CR lifecycle.
+	legacyTelemetryRuleName = "trainer-operator-kubeflow-trainer-telemetry"
+	podNamespaceEnv         = "POD_NAMESPACE"
 )
 
 var (
@@ -221,6 +227,7 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *ReconcilerConfig)
 		))).
 		WithAction(fwdeployments.NewAction(fwdeployments.InNamespaceFn(nsFn))).
 		WithAction(m.stripRuntimeFinalizers).
+		WithAction(m.cleanupLegacyTelemetryRule).
 		// GC deletes stale resources from previous versions that are no longer
 		// rendered. OnlyCollectOwned is false because cluster-scoped resources
 		// (e.g. ClusterTrainingRuntimes) can't have owner references to the
@@ -565,6 +572,18 @@ func (m *trainerActions) stripRuntimeFinalizers(ctx context.Context, rr *types.R
 	return removeRuntimeFinalizers(ctx, rr.Controller.GetDynamicClient())
 }
 
+// cleanupLegacyTelemetryRule deletes the PrometheusRule that earlier
+// releases provisioned from the Trainer operator installation manifest.
+// The platform operator's garbage collector only removes resources it
+// still deploys, so without this the stale rule would survive the move
+// of telemetry rules under the Trainer CR lifecycle.
+//
+// TODO: remove in RHOAI 3.8 — the upgrade path is 3.6 → 3.7 → 3.8, so
+// every cluster carrying the legacy rule passes through this cleanup.
+func (m *trainerActions) cleanupLegacyTelemetryRule(ctx context.Context, rr *types.ReconciliationRequest) error {
+	return deleteLegacyTelemetryRule(ctx, rr.Controller.GetDynamicClient())
+}
+
 // --- Helpers ---
 
 type resourceSet struct {
@@ -680,6 +699,52 @@ func filterFinalizer(finalizers []string, toRemove string) []string {
 		}
 	}
 	return result
+}
+
+// deleteLegacyTelemetryRule removes the legacy telemetry PrometheusRule
+// from the namespace the operator runs in. It is a no-op when
+// POD_NAMESPACE is not set (e.g. local unit-test runs) and tolerates a
+// missing rule or missing monitoring API so fresh installs and clusters
+// without the Prometheus CRDs are unaffected. Rules carrying the
+// trainer part-of label are never deleted: everything this operator
+// renders is labeled that way, so a name collision can never put the
+// render pipeline and this cleanup into a delete/recreate loop.
+func deleteLegacyTelemetryRule(ctx context.Context, dynClient dynamic.Interface) error {
+	ns := os.Getenv(podNamespaceEnv)
+	if ns == "" {
+		return nil
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "monitoring.coreos.com",
+		Version:  "v1",
+		Resource: "prometheusrules",
+	}
+
+	rule, err := dynClient.Resource(gvr).Namespace(ns).Get(ctx, legacyTelemetryRuleName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Already removed (or the monitoring API is not installed).
+			return nil
+		}
+		return fmt.Errorf("getting legacy telemetry PrometheusRule %s/%s: %w", ns, legacyTelemetryRuleName, err)
+	}
+
+	// Ownership guard: only the platform operator's legacy deployment is
+	// unlabeled; anything this operator manages is left to its own
+	// deploy/GC pipeline.
+	if rule.GetLabels()[labels.PlatformPartOf] == trainerPartOf {
+		return nil
+	}
+
+	err = dynClient.Resource(gvr).Namespace(ns).Delete(ctx, legacyTelemetryRuleName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting legacy telemetry PrometheusRule %s/%s: %w", ns, legacyTelemetryRuleName, err)
+	}
+	logf.FromContext(ctx).Info("Deleted legacy telemetry PrometheusRule",
+		"name", legacyTelemetryRuleName, "namespace", ns)
+
+	return nil
 }
 
 func (m *trainerActions) getPlatformVersion(ctx context.Context, namespace string) (string, error) {

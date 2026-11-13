@@ -262,6 +262,28 @@ var jobSetGVR = schema.GroupVersionResource{
 	Resource: "jobsets",
 }
 
+var prometheusRuleGVR = schema.GroupVersionResource{
+	Group:    "monitoring.coreos.com",
+	Version:  "v1",
+	Resource: "prometheusrules",
+}
+
+func (c *Client) CreatePrometheusRule(ctx context.Context, name, namespace string) error {
+	rule := &unstructured.Unstructured{}
+	rule.SetAPIVersion("monitoring.coreos.com/v1")
+	rule.SetKind("PrometheusRule")
+	rule.SetName(name)
+	rule.SetNamespace(namespace)
+	// spec is required by the PrometheusRule CRD; groups is optional.
+	rule.Object["spec"] = map[string]any{}
+	_, err := c.DynamicClient.Resource(prometheusRuleGVR).Namespace(namespace).Create(ctx, rule, metav1.CreateOptions{})
+	return err
+}
+
+func (c *Client) GetPrometheusRule(ctx context.Context, name, namespace string) (*unstructured.Unstructured, error) {
+	return c.DynamicClient.Resource(prometheusRuleGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
 func (c *Client) ListClusterTrainingRuntimes(ctx context.Context, labelSelector string) ([]string, error) {
 	list, err := c.DynamicClient.Resource(clusterTrainingRuntimeGVR).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
