@@ -71,6 +71,10 @@ func (f *Framework) Init() *rest.Config {
 		},
 		ErrorIfCRDPathMissing: true,
 	}
+	// Serve the Workload and PodGroup APIs for Workload-Aware Scheduling, as in hack/kind-config-was.yaml.
+	f.testEnv.ControlPlane.GetAPIServer().Configure().
+		Set("runtime-config", "scheduling.k8s.io/v1beta1=true").
+		Set("feature-gates", "GenericWorkload=true,TopologyAwareWorkloadScheduling=true,DRAWorkloadResourceClaims=true")
 	cfg, err := f.testEnv.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(cfg).NotTo(gomega.BeNil())
@@ -111,6 +115,7 @@ func (f *Framework) RunManager(cfg *rest.Config, startControllers bool) (context
 		string(features.TrainJobDynamicResourceAllocation): true,
 		string(features.TrainJobStatus):                    false,
 		string(features.OptimizationJob):                   false,
+		string(features.TrainJobWorkloadAwareScheduling):   true,
 	})).To(gomega.Succeed())
 
 	runtimes, err := runtimecore.New(ctx, mgr.GetClient(), mgr.GetFieldIndexer(), nil)
