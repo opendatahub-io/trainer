@@ -121,7 +121,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	helm.sh/helm/v4 v4.1.1 // indirect
+	helm.sh/helm/v4 v4.1.4 // indirect
 	k8s.io/apiserver v0.37.1 // indirect
 	k8s.io/component-base v0.37.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
@@ -132,8 +132,8 @@ require (
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0 // indirect
 	sigs.k8s.io/jobset v0.12.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
-	sigs.k8s.io/kustomize/api v0.20.1 // indirect
-	sigs.k8s.io/kustomize/kyaml v0.21.0 // indirect
+	sigs.k8s.io/kustomize/api v0.21.1 // indirect
+	sigs.k8s.io/kustomize/kyaml v0.21.1 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	volcano.sh/apis v1.13.1-0.20251028070205-46d20c0699e7 // indirect
