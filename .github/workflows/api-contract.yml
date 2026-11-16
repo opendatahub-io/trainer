@@ -1,0 +1,63 @@
+# API contract compatibility checks (RHOAIENG-103150, RHOAIENG-103156).
+# Reusable workflows come from the central repository, pinned to @latest;
+# see
+# https://github.com/red-hat-data-services/api-contract-tests/blob/main/docs/releasing.md
+# for the other pinning choices and how to upgrade.
+# Requires an api-contract-tests release containing
+# https://github.com/red-hat-data-services/api-contract-tests/pull/15
+# (exclusion-only ContractSets); v2.1.0 does not have it.
+name: API contract
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # CRD compatibility for the trainer CRDs (trainer.kubeflow.org).
+  crd-contract:
+    uses: red-hat-data-services/api-contract-tests/.github/workflows/provider-crd-check.yml@latest
+    with:
+      crd-glob: manifests/base/crds/trainer.kubeflow.org_*.yaml
+      # 1d0c3d05bafaf55586e6abd93f05492755a182e6: merge of #322 that
+      # imported the trainer-operator; the trainer CRDs there are
+      # byte-identical to the RHOAI 3.6 release base (aa9769ac, merge base
+      # of rhoai-3.6 and main). Verified 2026-11-13. Moving the baseline
+      # forward needs approval from someone other than the author.
+      baseline-refs: 1d0c3d05bafaf55586e6abd93f05492755a182e6
+      mode: enforce
+
+  # CRD compatibility for the trainer-operator CRD
+  # (components.platform.opendatahub.io/Trainer), covering RHOAIENG-103156:
+  # the operator moved into this repository after the 3.6 release
+  # (opendatahub-io/trainer-operator is archived; history was imported
+  # with the rhoai/operator/ prefix by #322). At this baseline the CRD is
+  # byte-identical to the trainer-operator repository's odh-3.6.0 release
+  # tag (fe2cdae7), so what shipped in 3.6 is what is protected.
+  crd-contract-trainer-operator:
+    uses: red-hat-data-services/api-contract-tests/.github/workflows/provider-crd-check.yml@latest
+    with:
+      crd-glob: rhoai/operator/config/crd/bases/*.yaml
+      # Same repository default baseline as the trainer CRD job above.
+      baseline-refs: 1d0c3d05bafaf55586e6abd93f05492755a182e6
+      mode: enforce
+
+  # Every OpenAPI document and CRD manifest must be a contract, a generator
+  # input, or a recorded exclusion.
+  api-contract-coverage:
+    uses: red-hat-data-services/api-contract-tests/.github/workflows/provider-coverage-check.yml@latest
+    with:
+      contract-set: .rhoai/contracts.yaml
+      # Same repository default baseline as the CRD jobs above.
+      baseline-refs: 1d0c3d05bafaf55586e6abd93f05492755a182e6
+      yq-version: "4.45.1"
+      crd-globs: >-
+        manifests/base/crds/trainer.kubeflow.org_*.yaml
+        rhoai/operator/config/crd/bases/*.yaml
+      # CRD manifests deliberately not checked:
+      # charts/kubeflow-trainer/templates/crd/*.yaml: Helm template copies
+      # of the manifests/base CRDs.
+      crd-exclude-globs: charts/kubeflow-trainer/templates/crd/*.yaml
+      mode: enforce
